@@ -1,2 +1,2 @@
 # Antigen
-## Reduction Pipelines for VIRUS-P and VIRUS-W
+## Reduction Pipelines for GCMS (VIRUS-P) and VIRUS-W
