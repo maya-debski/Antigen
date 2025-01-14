@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed May 12 10:04:09 2021
-
 @author: gregz
+@author: mayad
 """
 
 import argparse as ap
@@ -104,83 +103,189 @@ def get_script_path():
     return op.dirname(op.realpath(sys.argv[0]))
 
 def identify_sky_pixels(sky, per=50, size=50):
+    """
+    Identifies sky pixels by applying a percentile filter and sigma-clipping.
+
+    Parameters:
+        sky (array-like): Input sky intensity values.
+        per (int, optional): Percentile value for the filter. Default is 50 (median).
+        size (int, optional): Size of the filter window. Default is 50.
+
+    Returns:
+        tuple: A boolean mask array indicating sky pixels and the filtered continuum array.
+    """
+    # Apply a percentile filter to smooth the sky data and estimate the continuum
     cont = percentile_filter(sky, per, size=size)
+
     try:
+        # Apply sigma-clipping to identify outliers (sky pixels)
+        # Use MAD-based standard deviation for robust statistics
         mask = sigma_clip(sky - cont, masked=True, maxiters=None,
                           stdfunc=mad_std, sigma=5)
     except:
-        mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std,
-                          sigma=5) 
+        # Fallback for older versions of sigma_clip where maxiters was iters
+        mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std, sigma=5)
+    
+    # Return the mask (True for sky pixels) and the filtered continuum
     return mask.mask, cont
 
+
 def get_skymask(sky, per=50, size=50, niter=3):
-    sky_orig = sky * 1.
+    """
+    Iteratively identifies and masks sky pixels in an input array by applying
+    a percentile filter and sigma-clipping.
+
+    Parameters:
+        sky (array-like): Input sky intensity values.
+        per (int, optional): Percentile value for the filter. Default is 50 (median).
+        size (int, optional): Size of the filter window. Default is 50.
+        niter (int, optional): Number of iterations for refining the sky mask. Default is 3.
+
+    Returns:
+        tuple: A boolean mask array indicating sky pixels and the final filtered continuum array.
+    """
+    # Keep a copy of the original sky data for final comparison
+    sky_orig = sky * 1.0
+
+    # Iteratively refine the sky mask
     for i in np.arange(niter):
+        # Apply a percentile filter to estimate the continuum
         cont = percentile_filter(sky, per, size=size)
+
         try:
+            # Apply sigma-clipping to identify sky pixels using robust statistics
             mask = sigma_clip(sky - cont, masked=True, maxiters=None,
                               stdfunc=mad_std, sigma=5, sigma_lower=500)
         except:
+            # Fallback for older versions of sigma_clip
             mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std,
                               sigma=5, sigma_lower=500)
+
+        # Update the sky values for masked pixels using the continuum
         sky[mask.mask] = cont[mask.mask]
+
+    # Perform a final sigma-clipping pass using the original sky data
     try:
         mask = sigma_clip(sky_orig - cont, masked=True, maxiters=None,
                           stdfunc=mad_std, sigma=5, sigma_lower=500)
     except:
         mask = sigma_clip(sky_orig - cont, iters=None, stdfunc=mad_std,
-                              sigma=5, sigma_lower=500)
+                          sigma=5, sigma_lower=500)
+
+    # Return the final mask and continuum array
     return mask.mask, cont
 
+
 def rectify(scispectra, errspectra, wave_all, def_wave):
+    """
+    Rectifies scientific and error spectra by interpolating them onto a common wavelength grid.
+
+    Parameters:
+        scispectra (2D array): Array of scientific spectra to be rectified.
+        errspectra (2D array): Corresponding error spectra for each scientific spectrum.
+        wave_all (2D array): Wavelength grids corresponding to each input spectrum.
+        def_wave (1D array): Target wavelength grid for interpolation.
+
+    Returns:
+        tuple:
+            - scirect (2D array): Rectified scientific spectra on the target wavelength grid.
+            - errorrect (2D array): Rectified error spectra on the target wavelength grid.
+    """
+    # Initialize arrays to store rectified scientific spectra and errors
     scirect = np.zeros((scispectra.shape[0], len(def_wave)))
     errorrect = np.zeros((scispectra.shape[0], len(def_wave)))
 
+    # Placeholder for wavelength grid indices (used in optional refinement)
     indices1 = np.ones(scirect.shape, dtype=int)
+
+    # Loop through each spectrum to interpolate onto the target wavelength grid
     for i in np.arange(scispectra.shape[0]):
+        # Compute wavelength bin sizes for flux normalization
         dw = np.diff(wave_all[i])
-        dw = np.hstack([dw[0], dw])
+        dw = np.hstack([dw[0], dw])  # Ensure length matches the wavelength array
+
+        # Interpolate the scientific spectrum, normalizing by wavelength bin size
         scirect[i] = np.interp(def_wave, wave_all[i], scispectra[i] / dw,
                                left=np.nan, right=np.nan)
+
+        # Interpolate the error spectrum, normalizing by wavelength bin size
         errorrect[i] = np.interp(def_wave, wave_all[i], errspectra[i] / dw,
-                               left=np.nan, right=np.nan)
+                                 left=np.nan, right=np.nan)
+
+        # Store indices for possible further refinement (optional block below)
         indices1[i] = np.searchsorted(wave_all[i], def_wave) + i * 1032
-    
-#    x_var = (def_wave[np.newaxis, :] * np.ones((scirect.shape[0],1))).ravel()
-#    x_fix = wave_all.ravel()
-#    indices1 = indices1.ravel()
-#    indices2 = indices1 - 1
-#    indices2[indices2 < 0] = 0
-#    indices1[indices1 >= len(x_fix)] = len(x_fix) - 1
-#    
-#    distances1 = np.abs(x_fix[indices1] - x_var)
-#    distances2 = np.abs(x_fix[indices2] - x_var)
-#    total_distance = distances1 + distances2
-#    weight1 = distances1 / total_distance
-#    weight2 = distances2 / total_distance
-#    errorrect = (weight2**2 * errspectra.ravel()[indices1]**2 +
-#                 weight1**2 * errspectra.ravel()[indices2]**2)
-#    errorrect = np.sqrt(errorrect)
-#    errorrect = np.reshape(errorrect, scirect.shape)
-#    errorrect[np.isnan(scirect)] = np.nan
+
+    # Optional: Weighted error interpolation for more accurate error propagation
+    # Uncomment the following block if needed for error refinement:
+    #
+    # x_var = (def_wave[np.newaxis, :] * np.ones((scirect.shape[0], 1))).ravel()
+    # x_fix = wave_all.ravel()
+    # indices1 = indices1.ravel()
+    # indices2 = indices1 - 1
+    # indices2[indices2 < 0] = 0
+    # indices1[indices1 >= len(x_fix)] = len(x_fix) - 1
+    #
+    # distances1 = np.abs(x_fix[indices1] - x_var)
+    # distances2 = np.abs(x_fix[indices2] - x_var)
+    # total_distance = distances1 + distances2
+    # weight1 = distances1 / total_distance
+    # weight2 = distances2 / total_distance
+    # errorrect = (weight2**2 * errspectra.ravel()[indices1]**2 +
+    #              weight1**2 * errspectra.ravel()[indices2]**2)
+    # errorrect = np.sqrt(errorrect)
+    # errorrect = np.reshape(errorrect, scirect.shape)
+    # errorrect[np.isnan(scirect)] = np.nan
+
+    # Return the rectified scientific and error spectra
     return scirect, errorrect
 
+
 def get_fiber_to_fiber(spectrum, n_chunks=100):
+    """
+    Computes the fiber-to-fiber correction by normalizing each fiber's spectrum
+    to the average spectrum across all fibers, then smooths the correction factor
+    using interpolation.
+
+    Parameters:
+        spectrum (2D array): Array of spectra from multiple fibers (fibers x wavelength).
+        n_chunks (int, optional): Number of chunks to split the wavelength range into 
+                                  for smoothing. Default is 100.
+
+    Returns:
+        tuple:
+            - initial_ftf (2D array): Initial fiber-to-fiber correction factors.
+            - ftf (2D array): Smoothed fiber-to-fiber correction factors.
+    """
+    # Compute the average spectrum across all fibers using a robust biweight statistic
     average = biweight(spectrum, axis=0)
+
+    # Calculate the initial fiber-to-fiber correction by dividing each fiber by the average spectrum
     initial_ftf = spectrum / average[np.newaxis, :]
+
+    # Create a wavelength grid and divide it into chunks for smoothing
     X = np.arange(spectrum.shape[1])
-    x = np.array([np.mean(chunk) 
-                  for chunk in np.array_split(X, n_chunks)])
+    x = np.array([np.mean(chunk) for chunk in np.array_split(X, n_chunks)])
+
+    # Initialize the smoothed correction array
     ftf = spectrum * 0.
+
+    # Loop through each fiber to compute the smoothed correction factor
     for i in np.arange(len(spectrum)):
-        y = np.array([biweight(chunk) 
-                      for chunk in np.array_split(initial_ftf[i], n_chunks)])  
-        sel = np.isfinite(y)
-        I = interp1d(x[sel], y[sel], kind='quadratic', bounds_error=False,
-                     fill_value='extrapolate')
-        ftf[i] = I(X)
+        # Compute the biweight statistic for each chunk of the initial correction factor
+        y = np.array([biweight(chunk) for chunk in np.array_split(initial_ftf[i], n_chunks)])
         
+        # Select valid (finite) values for interpolation
+        sel = np.isfinite(y)
+
+        # Interpolate the correction factor using quadratic interpolation
+        I = interp1d(x[sel], y[sel], kind='quadratic', bounds_error=False, fill_value='extrapolate')
+
+        # Apply the interpolation to the full wavelength range
+        ftf[i] = I(X)
+
+    # Return both the initial and smoothed fiber-to-fiber correction factors
     return initial_ftf, ftf
+
     
 def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
     init_fiber = fiberref
