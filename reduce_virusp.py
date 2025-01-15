@@ -287,116 +287,208 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
     
+import numpy as np
+
 def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
+    """
+    Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
+
+    Args:
+        spectrum (ndarray): 2D array of spectra, each row corresponding to a fiber.
+        trace (ndarray): 2D array with trace positions for each fiber.
+        good (ndarray): Boolean array indicating which fibers have valid data.
+        use_kernel (bool): Whether to apply kernel smoothing when identifying arc lines. Default is True.
+        limit (float): Limit on how far to search for matching arc lines. Default is 100.
+
+    Returns:
+        tuple: (wavelength, res, X, W)
+            - wavelength (ndarray): Wavelength solution for each fiber.
+            - res (ndarray): Residuals from the biweight mean calculation.
+            - X (ndarray): Adjusted positions in trace space for arc lines.
+            - W (ndarray): Arc line positions for each fiber.
+    """
+    
+    # Initialize wavelength array and starting fiber position
     init_fiber = fiberref
-    wavelength = 0. * spectrum
-    loc = xref * 1.
+    wavelength = np.zeros_like(spectrum)
+    loc = xref.copy()
+
+    # W will store arc line positions for each fiber
     W = np.zeros((trace.shape[0], len(lines)))
     W[init_fiber] = loc
+
+    # Process fibers before the reference fiber in reverse order
     for i in np.arange(init_fiber)[::-1]:
+        mask, cont = identify_sky_pixels(spectrum[i])  # Identify sky lines
+        y = spectrum[i] - cont  # Subtract continuum
+        if good[i]:  # Only process if the fiber is marked as good
+            loc = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
+            W[i] = loc
+
+    # Reset location and process fibers after the reference fiber
+    loc = xref.copy()
+    for i in np.arange(init_fiber + 1, spectrum.shape[0]):
         mask, cont = identify_sky_pixels(spectrum[i])
         y = spectrum[i] - cont
         if good[i]:
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                 use_kernel=use_kernel)
+            loc = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
             W[i] = loc
-    loc = xref * 1.
-    for i in np.arange(init_fiber+1, spectrum.shape[0]):
-        mask, cont = identify_sky_pixels(spectrum[i])
-        y = spectrum[i] - cont
-        if good[i]:
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                 use_kernel=use_kernel)
-            W[i] = loc
-    X = W * 0.
+
+    # Initialize X (adjusted trace positions) and residuals array
+    X = np.zeros_like(W)
     xall = np.arange(trace.shape[1])
-    res = W[0, :] * 0.
-    for i in np.arange(W.shape[1]):
-        x = 0. * W[:, i]
+    res = np.zeros(W.shape[1])
+
+    # Interpolate missing values and fit polynomial to each arc line
+    for i in range(W.shape[1]):
+        x = np.zeros(W.shape[0])
         bad = np.where(~good)[0]
         gind = np.where(good)[0]
+
+        # Fill in missing arc line positions for bad fibers
         for b in bad:
-            W[b, i] = W[gind[np.argmin(np.abs(b-gind))], i]
-        for j in np.arange(W.shape[0]):
+            W[b, i] = W[gind[np.argmin(np.abs(b - gind))], i]
+
+        # Interpolate positions in trace space
+        for j in range(W.shape[0]):
             x[j] = np.interp(W[j, i], xall, trace[j])
-        
-        sel = W[:, i] > 0.
+
+        # Fit a 4th-order polynomial to arc line positions
+        sel = W[:, i] > 0
         X[:, i] = np.polyval(np.polyfit(x[sel], W[sel, i], 4), x)
-        dummy, res[i] = biweight(X[:, i] - W[:, i], calc_std=True)
-    for j in np.arange(W.shape[0]):
+
+        # Compute residuals using biweight mean
+        _, res[i] = biweight(X[:, i] - W[:, i], calc_std=True)
+
+    # Compute final wavelength solution for each fiber
+    for j in range(W.shape[0]):
         wavelength[j] = np.polyval(np.polyfit(X[j], lines, 3), xall)
+
     return wavelength, res, X, W
 
+
 def get_arclines_fiber(spectrum, init_loc=None, limit=1000, use_kernel=True):
+    """
+    Identifies arc line positions in a given spectrum by detecting peaks.
+
+    Args:
+        spectrum (ndarray): 1D array representing the spectrum of a fiber.
+        init_loc (ndarray, optional): Initial guess locations for arc lines. Default is None.
+        limit (float): Minimum peak value to consider a valid arc line. Default is 1000.
+        use_kernel (bool): Whether to apply a box kernel convolution to smooth the spectrum. Default is True.
+
+    Returns:
+        ndarray: Array of arc line positions (pixel indices) in the spectrum.
+    """
+
+    # Apply box kernel convolution to smooth the spectrum if use_kernel is True
     if use_kernel:
         B = Box1DKernel(9.5)
         y1 = convolve(spectrum, B)
     else:
-        y1 = spectrum * 1.
+        y1 = spectrum.copy()
+
+    # Identify peaks in the spectrum by finding zero-crossings in the first derivative
     diff_array = y1[1:] - y1[:-1]
-    loc = np.where((diff_array[:-1] > 0.) * (diff_array[1:] < 0.))[0]
-    peaks = y1[loc+1]
-    loc = loc[peaks > limit] + 1        
+    loc = np.where((diff_array[:-1] > 0) & (diff_array[1:] < 0))[0]
+
+    # Filter peaks based on the limit threshold
+    peaks = y1[loc + 1]
+    loc = loc[peaks > limit] + 1
     peaks = y1[loc]
+
+    # Helper function to refine peak positions using quadratic interpolation
     def get_trace_chunk(flat, XN):
-            YM = np.arange(flat.shape[0])
-            inds = np.zeros((3, len(XN)))
-            inds[0] = XN - 1.
-            inds[1] = XN + 0.
-            inds[2] = XN + 1.
-            inds = np.array(inds, dtype=int)
-            Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
-                     (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
-            return Trace
+        YM = np.arange(flat.shape[0])
+        inds = np.zeros((3, len(XN)))
+        inds[0] = XN - 1
+        inds[1] = XN
+        inds[2] = XN + 1
+        inds = inds.astype(int)
+
+        # Quadratic interpolation to refine peak positions
+        Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
+                 (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
+        return Trace
+
+    # Refine peak positions using quadratic interpolation
     loc = get_trace_chunk(y1, loc)
+
+    # Match refined peak positions with initial guess locations, if provided
     if init_loc is not None:
         final_loc = []
         for i in init_loc:
-            final_loc.append(loc[np.argmin(np.abs(np.array(loc)-i))])
+            final_loc.append(loc[np.argmin(np.abs(np.array(loc) - i))])
         loc = final_loc
+
     return loc
 
+
 def get_spectra(array_flt, array_trace, npix=5):
-    '''
-    Extract spectra by dividing the flat field and averaging the central
-    two pixels
-    
+    """
+    Extract spectra by dividing the flat field and averaging the central pixels.
+
     Parameters
     ----------
-    array_flt : 2d numpy array
-        twilight image
-    array_trace : 2d numpy array
-        trace for each fiber
-    wave : 2d numpy array
-        wavelength for each fiber
-    def_wave : 1d numpy array [GLOBAL]
-        rectified wavelength
-    
+    array_flt : 2D numpy array
+        Twilight image.
+    array_trace : 2D numpy array
+        Trace for each fiber.
+    npix : int, optional
+        Number of pixels to extract around the trace center. Default is 5.
+
     Returns
     -------
-    twi_spectrum : 2d numpy array
-        rectified twilight spectrum for each fiber  
-    '''
+    spec : 2D numpy array
+        Extracted and rectified spectrum for each fiber.
+    """
+
+    # Initialize the output spectrum array
     spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
+
+    # Get the number of rows in the flat field image
     N = array_flt.shape[0]
+
+    # Create an array of x-axis pixel indices
     x = np.arange(array_flt.shape[1])
-    LB = int((npix+1)/2)
-    HB = -LB + npix + 1
+
+    # Calculate the lower and upper bounds for pixel extraction
+    LB = int((npix + 1) / 2)  # Lower bound
+    HB = -LB + npix + 1       # Upper bound
+
+    # Iterate through each fiber
     for fiber in np.arange(array_trace.shape[0]):
+
+        # Skip fibers with trace positions too close to the image edges
         if np.round(array_trace[fiber]).min() < LB:
             continue
-        if np.round(array_trace[fiber]).max() >= (N-LB):
+        if np.round(array_trace[fiber]).max() >= (N - LB):
             continue
+
+        # Convert trace positions to integer indices
         indv = np.round(array_trace[fiber]).astype(int)
+
+        # Iterate through pixels around the trace center
         for j in np.arange(-LB, HB):
+
+            # Calculate weight for the lower boundary pixel
             if j == -LB:
-                w = indv + j + 1 - (array_trace[fiber] - npix/2.)
-            elif j == HB-1:
-                w = (npix/2. + array_trace[fiber]) - (indv + j) 
+                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
+
+            # Calculate weight for the upper boundary pixel
+            elif j == HB - 1:
+                w = (npix / 2. + array_trace[fiber]) - (indv + j)
+
+            # Assign weight 1 for central pixels
             else:
                 w = 1.
-            spec[fiber] += array_flt[indv+j, x] * w
+
+            # Add the weighted pixel values to the spectrum
+            spec[fiber] += array_flt[indv + j, x] * w
+
+    # Normalize the spectrum by the number of extracted pixels
     return spec / npix
+
 
 def get_spectra_error(array_flt, array_trace, npix=5):
     '''
@@ -406,43 +498,62 @@ def get_spectra_error(array_flt, array_trace, npix=5):
     Parameters
     ----------
     array_flt : 2d numpy array
-        twilight image
+        Twilight image
     array_trace : 2d numpy array
-        trace for each fiber
-    wave : 2d numpy array
-        wavelength for each fiber
-    def_wave : 1d numpy array [GLOBAL]
-        rectified wavelength
+        Trace for each fiber
+    npix : int, optional
+        Number of pixels for averaging (default is 5)
     
     Returns
     -------
     twi_spectrum : 2d numpy array
-        rectified twilight spectrum for each fiber  
+        Rectified twilight spectrum for each fiber  
     '''
-
+    
+    # Initialize spectrum array to store extracted spectra
     spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
+
+    # Get number of rows in the flat field image
     N = array_flt.shape[0]
+
+    # Create an array of x-coordinates for the flat field image
     x = np.arange(array_flt.shape[1])
-    LB = int((npix+1)/2)
+
+    # Calculate bounds for pixel averaging
+    LB = int((npix + 1) / 2)
     HB = -LB + npix + 1
+
+    # Iterate over each fiber to extract its spectrum
     for fiber in np.arange(array_trace.shape[0]):
+        # Skip fibers with traces too close to image edges
         if np.round(array_trace[fiber]).min() < LB:
             continue
-        if np.round(array_trace[fiber]).max() >= (N-LB):
+        if np.round(array_trace[fiber]).max() >= (N - LB):
             continue
+
+        # Convert trace positions to integer indices
         indv = np.round(array_trace[fiber]).astype(int)
+
+        # Loop over neighboring pixels for averaging
         for j in np.arange(-LB, HB):
             if j == -LB:
-                w = indv + j + 1 - (array_trace[fiber] - npix/2.)
-            elif j == HB-1:
-                w = (npix/2. + array_trace[fiber]) - (indv + j) 
+                # Calculate weight for lower boundary pixels
+                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
+            elif j == HB - 1:
+                # Calculate weight for upper boundary pixels
+                w = (npix / 2. + array_trace[fiber]) - (indv + j)
             else:
+                # Set weight to 1 for central pixels
                 w = 1.
-            spec[fiber] += array_flt[indv+j, x]**2 * w
+
+            # Accumulate weighted sum of squared values from the flat field
+            spec[fiber] += array_flt[indv + j, x] ** 2 * w
+
+    # Return the root mean square error normalized by npix
     return np.sqrt(spec) / npix
 
-def get_spectra_chi2(array_flt, array_sci, array_err,
-                     array_trace, npix=5):
+
+def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
     '''
     Extract spectra by dividing the flat field and averaging the central
     two pixels
@@ -450,264 +561,753 @@ def get_spectra_chi2(array_flt, array_sci, array_err,
     Parameters
     ----------
     array_flt : 2d numpy array
-        twilight image
+        Twilight image
+    array_sci : 2d numpy array
+        Science image
+    array_err : 2d numpy array
+        Error estimate for each pixel
     array_trace : 2d numpy array
-        trace for each fiber
-    wave : 2d numpy array
-        wavelength for each fiber
-    def_wave : 1d numpy array [GLOBAL]
-        rectified wavelength
+        Trace for each fiber
+    npix : int, optional
+        Number of pixels for averaging (default is 5)
     
     Returns
     -------
-    twi_spectrum : 2d numpy array
-        rectified twilight spectrum for each fiber  
+    spec : 2d numpy array
+        Chi-squared spectra for each fiber  
     '''
+
+    # Initialize spectrum array to hold chi-squared values
     spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
+
+    # Get the number of rows in the flat field image
     N = array_flt.shape[0]
+
+    # Create an array of x-coordinates for the images
     x = np.arange(array_flt.shape[1])
-    LB = int((npix+1)/2)
+
+    # Calculate bounds for pixel averaging
+    LB = int((npix + 1) / 2)
     HB = -LB + npix + 1
+
+    # Iterate over each fiber to extract its chi-squared spectrum
     for fiber in np.arange(array_trace.shape[0]):
-        chi2 = np.zeros((npix+1, 3, len(x)))
+        # Initialize a chi-squared array with shape (npix+1, 3, len(x))
+        chi2 = np.zeros((npix + 1, 3, len(x)))
+
+        # Skip fibers with traces too close to the image edges
         if np.round(array_trace[fiber]).min() < LB:
             continue
-        if np.round(array_trace[fiber]).max() >= (N-LB):
+        if np.round(array_trace[fiber]).max() >= (N - LB):
             continue
+
+        # Convert trace positions to integer indices
         indv = np.round(array_trace[fiber]).astype(int)
+
+        # Loop over neighboring pixels for averaging
         for j in np.arange(-LB, HB):
+            # Calculate weights for boundary pixels
             if j == -LB:
-                w = indv + j + 1 - (array_trace[fiber] - npix/2.)
-            elif j == HB-1:
-                w = (npix/2. + array_trace[fiber]) - (indv + j) 
+                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
+            elif j == HB - 1:
+                w = (npix / 2. + array_trace[fiber]) - (indv + j)
             else:
+                # Use a weight of 1 for central pixels
                 w = 1.
-            chi2[j+LB, 0] = array_sci[indv+j, x] * w
-            chi2[j+LB, 1] = array_flt[indv+j, x] * w
-            chi2[j+LB, 2] = array_err[indv+j, x] * w
+
+            # Apply weights to science, flat field, and error images
+            chi2[j + LB, 0] = array_sci[indv + j, x] * w
+            chi2[j + LB, 1] = array_flt[indv + j, x] * w
+            chi2[j + LB, 2] = array_err[indv + j, x] * w
+
+        # Compute the normalization factor for the flux
         norm = chi2[:, 0].sum(axis=0) / chi2[:, 1].sum(axis=0)
-        num = (chi2[:, 0] - chi2[:, 1] * norm[np.newaxis, :])**2
-        denom = (chi2[:, 2] + 0.01*chi2[:, 0].sum(axis=0)[np.newaxis, :])**2
+
+        # Calculate the chi-squared numerator: (data - model)^2
+        num = (chi2[:, 0] - chi2[:, 1] * norm[np.newaxis, :]) ** 2
+
+        # Calculate the denominator: (error + regularization term)^2
+        denom = (chi2[:, 2] + 0.01 * chi2[:, 0].sum(axis=0)[np.newaxis, :]) ** 2
+
+        # Compute the chi-squared value for each fiber
         spec[fiber] = 1. / (1. + npix) * np.sum(num / denom, axis=0)
+
+    # Return the final chi-squared spectrum array
     return spec
 
+
 def get_trace(twilight):
+    """
+    Extract fiber traces from a twilight flat field image.
+
+    Parameters
+    ----------
+    twilight : 2d numpy array
+        Twilight flat field image used to determine fiber locations.
+
+    Returns
+    -------
+    trace : 2d numpy array
+        The calculated trace positions for each fiber across the image.
+    good : 1d numpy array (boolean)
+        Boolean mask indicating which fibers are valid (non-missing).
+    """
+
+    # Load reference fiber locations from a predefined file
     ref = np.loadtxt(op.join(DIRNAME, 'Fiber_Locations/20210512/virusp_fibloc.txt'))
+
+    # Determine the number of valid (good) fibers
     N1 = (ref[:, 1] == 0.).sum()
-    good = np.where(ref[:, 1] == 0.)[0]
+    good = np.where(ref[:, 1] == 0.)[0]  # Indices of good fibers
+
+    # Helper function to calculate trace positions for a chunk of the image
     def get_trace_chunk(flat, XN):
+        # YM represents the y-axis pixel coordinates
         YM = np.arange(flat.shape[0])
+
+        # Create a 3-row array for XN-1, XN, and XN+1 indices
         inds = np.zeros((3, len(XN)))
         inds[0] = XN - 1.
         inds[1] = XN + 0.
         inds[2] = XN + 1.
         inds = np.array(inds, dtype=int)
+
+        # Calculate the trace using a second-order derivative method
         Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
                  (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
         return Trace
+
+    # Assign the input image to a variable
     image = twilight
-    if args.binned:
-        N = 40
-    else:
-        N = 80
-    xchunks = np.array([np.mean(x) for x in
-                        np.array_split(np.arange(image.shape[1]), N)])
+
+    # Determine the number of chunks based on whether the image is binned
+    N = 40 if args.binned else 80
+
+    # Split the x-axis into chunks and calculate the mean x-position for each chunk
+    xchunks = np.array([np.mean(x) for x in np.array_split(np.arange(image.shape[1]), N)])
+
+    # Split the image into vertical chunks
     chunks = np.array_split(image, N, axis=1)
+
+    # Calculate the mean flat field for each chunk
     flats = [np.mean(chunk, axis=1) for chunk in chunks]
+
+    # Initialize an array to hold the trace positions for each fiber
     Trace = np.zeros((len(ref), len(chunks)))
+
+    # Initialize a counter and a list to store peak positions
     k = 0
     P = []
+
+    # Iterate over each chunk to calculate the fiber traces
     for flat, x in zip(flats, xchunks):
+        # Calculate the difference between adjacent pixels
         diff_array = flat[1:] - flat[:-1]
-        loc = np.where((diff_array[:-1] > 0.) * (diff_array[1:] < 0.))[0]
-        loc = loc[loc>2]
-        peaks = flat[loc+1]
-        loc = loc[peaks > 0.3 * np.median(peaks)]+1
+
+        # Identify peaks by finding zero-crossings in the difference array
+        loc = np.where((diff_array[:-1] > 0.) & (diff_array[1:] < 0.))[0]
+        loc = loc[loc > 2]  # Ignore peaks near the image edges
+
+        # Filter out weak peaks
+        peaks = flat[loc + 1]
+        loc = loc[peaks > 0.3 * np.median(peaks)] + 1
+
+        # Store the detected peak positions
         P.append(loc)
+
+        # Get the trace positions for the detected peaks
         trace = get_trace_chunk(flat, loc)
+
+        # Initialize an array to hold the trace for this chunk
         T = np.zeros((len(ref)))
+
+        # If the number of detected peaks exceeds the number of good fibers, trim the excess
         if len(trace) > N1:
             trace = trace[-N1:]
+
+        # If the number of detected peaks matches the number of good fibers
         if len(trace) == N1:
             T[good] = trace
+            # Interpolate missing fibers based on nearby good fibers
             for missing in np.where(ref[:, 1] == 1.)[0]:
                 gind = np.argmin(np.abs(missing - good))
-                T[missing] = (T[good[gind]] + ref[missing, 0] -
-                              ref[good[gind], 0])
+                T[missing] = T[good[gind]] + ref[missing, 0] - ref[good[gind], 0]
+
+        # If the number of detected peaks matches the total number of fibers
         if len(trace) == len(ref):
             T = trace
+
+        # Store the calculated trace for this chunk
         Trace[:, k] = T
         k += 1
+
+    # Fit a 7th-order polynomial to smooth the traces across the x-axis
     x = np.arange(twilight.shape[1])
     trace = np.zeros((Trace.shape[0], twilight.shape[1]))
     for i in np.arange(Trace.shape[0]):
         sel = Trace[i, :] != 0.
         trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
+
+    # Return the final trace array and the good fiber mask
     return trace, (ref[:, 1] == 0.)
 
+
 def prep_image(data):
+    """
+    Preprocesses an input image by subtracting a biweighted background and 
+    adding padding rows at the top.
+
+    Parameters
+    ----------
+    data : 2d numpy array
+        Raw input image to be preprocessed.
+
+    Returns
+    -------
+    new_image : 2d numpy array
+        Preprocessed image with background subtracted and padded rows added.
+    """
+
+    # Subtract the biweighted background based on whether the image is binned
     if args.binned:
+        # For binned images, use the first 1024 columns and subtract the biweight of columns 1026 onward
         image = data[:, :1024] - biweight(data[:, 1026:])
     else:
+        # For unbinned images, use the first 2048 columns and subtract the biweight of columns 2052 onward
         image = data[:, :2048] - biweight(data[:, 2052:])
-    new_image = np.zeros((len(image)+addrows, image.shape[1]))
+
+    # Initialize a new image array with additional rows for padding
+    new_image = np.zeros((len(image) + addrows, image.shape[1]))
+
+    # Copy the processed image into the new array, leaving the top rows as padding
     new_image[addrows:, :] = image
+
+    # Return the preprocessed and padded image
     return new_image
 
+
 def base_reduction(data, masterbias):
+    """
+    Perform basic image reduction by applying bias subtraction, gain correction, 
+    and calculating the error estimate.
+
+    Parameters
+    ----------
+    data : 2d numpy array
+        Raw input image to be reduced.
+    masterbias : 2d numpy array
+        Master bias frame to be subtracted from the image.
+
+    Returns
+    -------
+    image : 2d numpy array
+        Reduced image with bias subtracted and gain applied.
+    E : 2d numpy array
+        Error estimate for each pixel, including read noise and photon noise.
+    """
+
+    # Preprocess the raw image (e.g., background subtraction, padding)
     image = prep_image(data)
+
+    # Subtract the master bias from the image
     image[:] -= masterbias
+
+    # Apply gain correction to convert counts to electrons
     image[:] *= gain
+
+    # Calculate the error estimate (read noise + photon noise)
     E = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
+
+    # Return the reduced image and the error estimate
     return image, E
 
+
 def subtract_sky(spectra, good):
+    """
+    Subtract the sky background from spectra by identifying sky fibers 
+    and performing a biweight calculation.
+
+    Parameters
+    ----------
+    spectra : 2d numpy array
+        The input spectra data where rows represent fibers and columns represent wavelengths.
+    good : 1d numpy array of bools
+        Boolean mask indicating which fibers are good (non-sky).
+
+    Returns
+    -------
+    2d numpy array
+        Spectra with the sky background subtracted for each fiber.
+    """
+    
+    # Get the number of fibers and number of wavelength bins
     nfibs, N = spectra.shape
+
+    # Define range for biweight calculation (middle third of the data)
     n1 = int(1. / 3. * N)
     n2 = int(2. / 3. * N)
+
+    # Calculate the biweight of spectra over the middle third of each fiber's data
     y = biweight(spectra[:, n1:n2], axis=1)
+
+    # Identify sky pixels based on the biweighted data and apply a mask
     mask, cont = identify_sky_pixels(y[good], size=15)
+
+    # Create a mask for fibers that are not good and are sky fibers
     m1 = ~good
     m1[good] = mask
     skyfibers = ~m1
+
+    # Compute the biweighted sky spectrum based on sky fibers
     init_sky = biweight(spectra[skyfibers], axis=0)
+
+    # Subtract the sky spectrum from the original spectra
     return spectra - init_sky[np.newaxis, :]
 
+
 def get_pca_sky_residuals(data, ncomponents=5):
+    """
+    Perform PCA on the input data to extract the principal components and 
+    reconstruct the data using a specified number of components.
+
+    Parameters
+    ----------
+    data : 2d numpy array
+        Input data where rows represent samples (e.g., spectra) and columns represent features (e.g., wavelengths).
+    ncomponents : int, optional
+        The number of principal components to retain for reconstruction. Default is 5.
+
+    Returns
+    -------
+    pca : PCA object
+        The fitted PCA model.
+    A : 2d numpy array
+        The reconstructed data using the first `ncomponents` principal components.
+    """
+
+    # Initialize PCA with the specified number of components
     pca = PCA(n_components=ncomponents)
+
+    # Fit the PCA model and transform the data into the principal components space
     H = pca.fit_transform(data)
+
+    # Reconstruct the data using the principal components
     A = np.dot(H, pca.components_)
+
+    # Return the PCA model and the reconstructed data
     return pca, A
 
+
 def get_residual_map(data, pca):
+    """
+    Compute the residual map by subtracting a PCA-based model from the input data.
+    
+    Parameters
+    ----------
+    data : 2d numpy array
+        Input data where rows represent samples (e.g., spectra) and columns represent features.
+    pca : PCA object
+        Fitted PCA model used for reconstruction of the data.
+    
+    Returns
+    -------
+    res : 2d numpy array
+        The residual map, which is the difference between the input data and the PCA model.
+    """
+
+    # Initialize the residual map with zeros
     res = data * 0.
+
+    # Loop over each column (feature) in the input data
     for i in np.arange(data.shape[1]):
+
+        # Compute the absolute deviation from the median for each column
         A = np.abs(data[:, i] - np.nanmedian(data[:, i]))
+
+        # Identify the "good" data points (those within 3 times the median deviation)
         good = A < (3. * np.nanmedian(A))
+
+        # Select finite values and good points for the model fitting
         sel = np.isfinite(data[:, i]) * good
+
+        # Compute the PCA coefficients for the selected data points
         coeff = np.dot(data[sel, i], pca.components_.T[sel])
+
+        # Reconstruct the model based on the computed coefficients
         model = np.dot(coeff, pca.components_)
+
+        # Store the residual (difference) for this feature in the residual map
         res[:, i] = model
+
+    # Return the computed residual map
     return res
 
 
+
 def get_arc_pca(arcskysub, good, mask, components=15):
+    """
+    Perform PCA on the arc-sky-subtracted data with preprocessing to remove 
+    bad data points and mask the non-relevant pixels.
+
+    Parameters
+    ----------
+    arcskysub : 2d numpy array
+        The arc-sky-subtracted data to be processed.
+    good : 1d numpy array of bools
+        Boolean mask indicating which fibers are good (non-bad).
+    mask : 1d numpy array of bools
+        Mask indicating the relevant pixels (e.g., fiber locations).
+    components : int, optional
+        Number of PCA components to retain. Default is 15.
+
+    Returns
+    -------
+    pca : PCA object
+        The fitted PCA model.
+    """
+
+    # Initialize X as the arc-sky-subtracted data
     X = arcskysub
+
+    # Set values outside the mask to 0 and apply the "good" fiber mask
     X[:, ~mask] = 0.
     X[~good] = 0.
+
+    # Transpose X to have samples in rows and features in columns
     X = X.swapaxes(0, 1)
+
+    # Calculate the mean and standard deviation along the rows (fiber axis)
     M = np.nanmean(X, axis=1)
     Var = np.nanstd(X, axis=1)
-    Var[Var==0.] = 1.
-    X = (X-M[:, np.newaxis]) / Var[:, np.newaxis]
+
+    # Prevent division by zero by setting variance of zero to 1
+    Var[Var == 0.] = 1.
+
+    # Normalize the data by subtracting the mean and dividing by the variance
+    X = (X - M[:, np.newaxis]) / Var[:, np.newaxis]
+
+    # Replace NaN values in the normalized data with 0
     X[np.isnan(X)] = 0.
+
+    # Perform PCA on the normalized data
     pca, A = get_pca_sky_residuals(X, ncomponents=components)
+
+    # Return the fitted PCA model
     return pca
 
+
 def get_continuum(skysub, masksky, nbins=50):
+    """
+    Compute the continuum by interpolating the biweighted median of 
+    sky-subtracted data, with masked values excluded.
+
+    Parameters
+    ----------
+    skysub : 2d numpy array
+        Sky-subtracted data where each row represents a spectrum.
+    masksky : 1d numpy array of bools
+        Mask indicating which sky pixels should be excluded in the continuum calculation.
+    nbins : int, optional
+        Number of bins to divide the spectrum into for the biweight calculation. Default is 50.
+
+    Returns
+    -------
+    bigcont : 2d numpy array
+        The continuum for each spectrum in the sky-subtracted data.
+    """
+
+    # Initialize the output array for the continuum with zeros
     bigcont = skysub * 0.
+
+    # Loop over each row (spectrum) in the sky-subtracted data
     for j in np.arange(skysub.shape[0]):
+        # Copy the current spectrum and mask the sky pixels
         y = skysub[j] * 1.
         y[masksky] = np.nan
+
+        # Divide the spectrum into bins and calculate the mean of each bin
         x = np.array([np.mean(chunk) for chunk in np.array_split(np.arange(len(y)), nbins)])
+
+        # Calculate the biweighted median for each bin
         z = np.array([biweight(chunk) for chunk in np.array_split(y, nbins)])
+
+        # Select bins with finite values for interpolation
         sel = np.isfinite(z)
-        if sel.sum()>5:
+
+        # If there are enough valid bins, perform quadratic interpolation
+        if sel.sum() > 5:
             I = interp1d(x[sel], z[sel], kind='quadratic', bounds_error=False, 
                          fill_value='extrapolate')
+
+            # Store the interpolated continuum for the current spectrum
             bigcont[j] = I(np.arange(len(y)))
+
+    # Return the computed continuum for all spectra
     return bigcont
+
     
 def reduce(fn, biastime_list, masterbias_list, flttime_list,
-                 trace_list, wave_time, wave_list, ftf_list, pca=None):
+           trace_list, wave_time, wave_list, ftf_list, pca=None):
+    """
+    Reduce the raw data by performing a series of processing steps, 
+    including bias subtraction, flat-fielding, sky subtraction, 
+    and PCA-based residuals analysis.
+
+    Parameters
+    ----------
+    fn : str
+        The filename of the FITS file containing the data.
+    biastime_list : list
+        List of times associated with bias frames.
+    masterbias_list : list
+        List of master bias frames for bias correction.
+    flttime_list : list
+        List of times associated with flat field frames.
+    trace_list : list
+        List of fiber trace data.
+    wave_time : list
+        List of times associated with wavelength calibration.
+    wave_list : list
+        List of wavelength calibration data.
+    ftf_list : list
+        List of flat-field corrections.
+    pca : PCA object, optional
+        A pre-fitted PCA model for residual map analysis. Default is None.
+
+    Returns
+    -------
+    pca : PCA object
+        The fitted PCA model, returned if `pca` is None.
+    continuum : 1d numpy array
+        The computed continuum for the spectrum.
+    """
+
+    # Open the FITS file and extract the observation time
     f = fits.open(fn)
-    t = Time(f[0].header['DATE-OBS']+'T'+f[0].header['UT'])
+    t = Time(f[0].header['DATE-OBS'] + 'T' + f[0].header['UT'])
     mtime = t.mjd
+
+    # Select appropriate master bias frame based on observation time
     masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
+
+    # Perform basic image reduction (bias subtraction, gain adjustment)
     image, E = base_reduction(f[0].data, masterbias)
+
+    # Get the fiber trace and selection mask for the current observation
     trace, good = trace_list[get_cal_index(mtime, flttime_list)]
+
+    # Extract spectra from the image using the trace data
     spec = get_spectra(image, trace)
+
+    # Calculate the spectrum error using the flat-field and error image
     specerr = get_spectra_error(E, trace)
-    chi2 = get_spectra_chi2(masterflt-masterbias, image, E, trace)
-    badpix = chi2 > 20.
+
+    # Compute the chi-square of the spectrum to identify bad pixels
+    chi2 = get_spectra_chi2(masterflt - masterbias, image, E, trace)
+    badpix = chi2 > 20.  # Pixels with chi2 > 20 are considered bad
     specerr[badpix] = np.nan
     spec[badpix] = np.nan
+
+    # Retrieve the wavelength calibration data for the current observation
     wavelength = wave_list[get_cal_index(mtime, wave_time)]
+
+    # Rectify the spectrum and error based on the wavelength
     specrect, errrect = rectify(spec, specerr, wavelength, def_wave)
+
+    # Apply flat-field correction
     ftf = ftf_list[get_cal_index(mtime, flttime_list)]
     specrect[:] /= (ftf * f[0].header['EXPTIME'])
     errrect[:] /= (ftf * f[0].header['EXPTIME'])
+
+    # Generate a sky mask and the continuum for sky subtraction
     skymask, cont = get_skymask(biweight(specrect, axis=0), size=25)
+
+    # Subtract the sky from the spectrum
     skysubrect = subtract_sky(specrect, good)
+
+    # If PCA is not provided, compute it from the sky-subtracted data
     if pca is None:
         pca = get_arc_pca(skysubrect, good, skymask, components=pca_comp)
         return pca
+
+    # Adjust the sky mask and compute the continuum
     skymask[1:] += skymask[:-1]
     skymask[:-1] += skymask[1:]
     cont1 = get_continuum(skysubrect, skymask, nbins=50)
+
+    # Compute the residuals by subtracting the continuum
     Z = skysubrect - cont1
     res = get_residual_map(Z, pca)
+
+    # Mask out residuals where sky mask is not valid
     res[:, ~skymask] = 0.0
-    write_fits(skysubrect-res, skysubrect, specrect, errrect, f[0].header)
+
+    # Write the final reduced data to a new FITS file
+    write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header)
+
+    # Return the biweighted spectrum and continuum
     return biweight(specrect, axis=0), cont
 
+
 def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header):
-    hdulist = []
+    """
+    Writes the sky-subtracted, rectified spectra and error data to a FITS file, 
+    preserving the header information and adding necessary meta-information.
+
+    Parameters
+    ----------
+    skysubrect_adv : 2D numpy array
+        The advanced sky-subtracted spectrum.
+    skysubrect : 2D numpy array
+        The basic sky-subtracted spectrum.
+    specrect : 2D numpy array
+        The rectified spectrum.
+    errorrect : 2D numpy array
+        The error associated with the rectified spectrum.
+    header : FITS header
+        The header information to be preserved in the output FITS file.
+    """
+    
+    hdulist = []  # List to store HDU objects for the FITS file
+
+    # Loop through the data arrays and create HDUs for each
     for image, ftp in zip([skysubrect_adv, skysubrect, specrect, errorrect], 
-                          [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU,
-                           fits.ImageHDU]):
+                          [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU]):
+        
+        # Create an HDU object from each image, setting it to 'float32' type
         hdu = ftp(np.array(image, dtype='float32'))
-        hdu.header['CRVAL2'] = 1
-        hdu.header['CRVAL1'] = def_wave[0]
-        hdu.header['CRPIX2'] = 1
-        hdu.header['CRPIX1'] = 1
-        hdu.header['CTYPE2'] = 'fiber'
-        hdu.header['CTYPE1'] = 'Angstrom'
-        hdu.header['CDELT2'] = 1
-        hdu.header['CDELT1'] = def_wave[1] - def_wave[0]
+        
+        # Add necessary header metadata
+        hdu.header['CRVAL2'] = 1  # Reference value for axis 2 (arbitrary setup)
+        hdu.header['CRVAL1'] = def_wave[0]  # Reference value for axis 1 (first wavelength)
+        hdu.header['CRPIX2'] = 1  # Pixel reference for axis 2
+        hdu.header['CRPIX1'] = 1  # Pixel reference for axis 1
+        hdu.header['CTYPE2'] = 'fiber'  # Axis type 2 (fiber-based data)
+        hdu.header['CTYPE1'] = 'Angstrom'  # Axis type 1 (wavelength in Angstroms)
+        hdu.header['CDELT2'] = 1  # Pixel scale for axis 2
+        hdu.header['CDELT1'] = def_wave[1] - def_wave[0]  # Pixel scale for axis 1 (wavelength step)
+
+        # Copy relevant keys from the input header, avoiding duplicates
         for key in header.keys():
             if key in hdu.header:
                 continue
-            if ('CCDSEC' in key) or ('DATASEC' in key):
+            if ('CCDSEC' in key) or ('DATASEC' in key):  # Exclude CCDSEC and DATASEC keys
                 continue
-            if ('BSCALE' in key) or ('BZERO' in key):
+            if ('BSCALE' in key) or ('BZERO' in key):  # Exclude BSCALE and BZERO keys
                 continue
             try:
-                hdu.header[key] = header[key]
+                hdu.header[key] = header[key]  # Copy header data to the new HDU
             except:
                 continue
-        t = Time(header['DATE-OBS']+'T'+header['UT'])
+
+        # Format the output filename using observation date and object name
+        t = Time(header['DATE-OBS'] + 'T' + header['UT'])
         objname = '_'.join(header['OBJECT'].split())
-        iname = '_'.join([objname, t.strftime('%Y%m%dT%H%M%S'), 'multi'])
+        iname = '_'.join([objname, t.strftime('%Y%m%dT%H%M%S'), 'multi'])  # Generate filename
+
+        # Append the HDU to the list
         hdulist.append(hdu)
+
+    # Write the HDU list to the output file, overwriting if necessary
     fits.HDUList(hdulist).writeto(op.join(outfolder, iname + '.fits'), overwrite=True)
 
+
 def make_mastercal_list(filenames, breakind):
-    breakind1 = np.hstack([0, breakind])
-    breakind2 = np.hstack([breakind, len(filenames)+1])
-    masters = []
-    times = []
+    """
+    Creates a list of master calibration images and corresponding times 
+    by splitting the input list of filenames at given indices.
+
+    Parameters
+    ----------
+    filenames : list of str
+        List of FITS file paths containing calibration data.
+    breakind : list of int
+        List of indices to split the filenames into different chunks.
+
+    Returns
+    -------
+    masters : list of 2D numpy arrays
+        List of median calibration images for each chunk.
+    times : list of float
+        List of mean observation times (MJD) corresponding to each chunk.
+    """
+
+    # Define break points for splitting the filenames into chunks
+    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
+    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
+
+    masters = []  # List to store median calibration images
+    times = []    # List to store mean observation times
+
+    # Iterate over the chunks defined by breakind1 and breakind2
     for bk1, bk2 in zip(breakind1, breakind2):
+        # Collect and preprocess frames within the current chunk
         frames = [prep_image(fits.open(f)[0].data) 
                   for cnt, f in enumerate(filenames) 
-                  if ((cnt > bk1) * (cnt < bk2))]
+                  if ((cnt > bk1) * (cnt < bk2))]  # Only include frames in the current chunk
+        
+        # Extract observation times (MJD) for frames in the current chunk
         t = [Time(fits.open(f)[0].header['DATE-OBS']).mjd 
              for cnt, f in enumerate(filenames) 
              if ((cnt > bk1) * (cnt < bk2))]
+
+        # Append the median frame and the mean time for the current chunk
         masters.append(np.median(frames, axis=0))
         times.append(np.mean(t))
+
     return masters, times
 
+
 def get_cal_index(mtime, time_list):
+    """
+    Finds the index of the closest calibration time to a given observation time.
+
+    Parameters
+    ----------
+    mtime : float
+        The observation time (MJD) to compare against the calibration times.
+    time_list : list of float
+        A list of calibration times (MJD).
+
+    Returns
+    -------
+    int
+        The index of the closest calibration time in `time_list`.
+    """
+
+    # Find the index of the closest time in time_list to mtime by minimizing the absolute time difference
     return np.argmin(np.abs(mtime - np.array(time_list)))
 
+
 def get_filenames(gnames, typelist, names):
-    matches = []
+    """
+    Finds filenames that match a list of keywords by checking if any of the keywords 
+    appear in the associated types.
+
+    Parameters
+    ----------
+    gnames : list of str
+        List of filenames to check.
+    typelist : list of str
+        List of types or descriptions corresponding to the filenames.
+    names : list of str
+        List of keywords to search for within the types/descriptions.
+
+    Returns
+    -------
+    np.ndarray
+        Array of filenames from `gnames` that match any of the keywords in `names`.
+    """
+
+    matches = []  # List to store matched filenames
+    # Iterate through each filename and its corresponding type
     for gn, tp in zip(gnames, typelist):
+        # Check if any keyword appears in the type (case-insensitive)
         for name in names:
             if name in str(tp).lower():
-                matches.append(gn)
-    return np.array(matches)
+                matches.append(gn)  # Append matching filename to the list
+    return np.array(matches)  # Return matched filenames as a numpy array
+
 
 # =============================================================================
 # Get Folder and Filenames
