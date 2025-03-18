@@ -18,10 +18,11 @@ from astropy.stats import mad_std
 from astropy.time import Time
 from distutils.dir_util import mkpath
 from input_utils import setup_logging
-from math_utils import biweight
+from astropy.stats import biweight_location as biweight
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
 from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -48,8 +49,24 @@ parser.add_argument("-ra", "--reduce_all",
                     help='''Reduce all files in folder''',
                     action="count", default=0)
 
-folder = '/Users/gregz/cure/Remedy/virusp/raw'
-outfolder = '/Users/gregz/cure/Remedy/virusp/reductions'
+parser.add_argument("-bl", "--bias_label",
+                    help='''The objet name for bias files''',
+                   type=str, default='Bias')
+
+parser.add_argument("-al", "--arc_label",
+                    help='''The objet name for arc files''',
+                   type=str, default='Th-Ar + CBF')
+
+parser.add_argument("-dfl", "--dome_flat_label",
+                    help='''The objet name for dome flat files''',
+                   type=str, default='FF + CBF')
+
+parser.add_argument("-tfl", "--twilight_flat_label",
+                    help='''The objet name for twilight flat files''',
+                   type=str, default='FF + CBF')
+
+folder = '/Users/mayadebski/Desktop/Antigen/20240606'
+outfolder = '/Users/mayadebski/Desktop/Antigen/20240606_reduced'
 argv = None
 args = parser.parse_args(args=argv)
 folder = args.folder
@@ -84,11 +101,20 @@ if args.blue:
     else:
         def_wave = np.linspace(3570., 5810., 2048)
 else:
+    #lines = [4678.16, 4713.17, 5085.82, 5400.56, 5764.42, 6074.34, 6143.06,
+                #6438.47, 6678.28]
+
+    #fiberref = 130
+
+    #xref = np.array([9.40,  27.15, 201.78, 339.07, 533.97, 661.03,
+       #829.77, 971.35])
+       
     lines = [4799.912, 5085.822, 5154.600, 6532.882, 6598.951, 6717.0429, 
              6929.467]
     fiberref = 130
     xref = np.array([31.350, 159.233, 189.951, 809.319, 839.854, 894.628, 
                      994.314])
+    
     use_kernel = False
     limit = 100
     if args.binned:
@@ -257,7 +283,7 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
             - ftf (2D array): Smoothed fiber-to-fiber correction factors.
     """
     # Compute the average spectrum across all fibers using a robust biweight statistic
-    average = biweight(spectrum, axis=0)
+    average = biweight(spectrum, axis=0, ignore_nan=True)
 
     # Calculate the initial fiber-to-fiber correction by dividing each fiber by the average spectrum
     initial_ftf = spectrum / average[np.newaxis, :]
@@ -272,7 +298,7 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     # Loop through each fiber to compute the smoothed correction factor
     for i in np.arange(len(spectrum)):
         # Compute the biweight statistic for each chunk of the initial correction factor
-        y = np.array([biweight(chunk) for chunk in np.array_split(initial_ftf[i], n_chunks)])
+        y = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(initial_ftf[i], n_chunks)])
         
         # Select valid (finite) values for interpolation
         sel = np.isfinite(y)
@@ -358,7 +384,7 @@ def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
         X[:, i] = np.polyval(np.polyfit(x[sel], W[sel, i], 4), x)
 
         # Compute residuals using biweight mean
-        _, res[i] = biweight(X[:, i] - W[:, i], calc_std=True)
+        _, res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
 
     # Compute final wavelength solution for each fiber
     for j in range(W.shape[0]):
@@ -749,7 +775,96 @@ def get_trace(twilight):
         trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
 
     # Return the final trace array and the good fiber mask
-    return trace, (ref[:, 1] == 0.)
+    return trace, (ref[:, 1] == 0.), Trace, xchunks
+
+def plot_trace(full_trace, trace, x, orders=[5, 130, 230]):
+
+    '''
+    Plots the residuals of the trace correction and saves the figure.
+
+    Parameters
+
+    ----------
+
+    trace_cor : 2D ndarray
+
+        The array of trace correction residuals to be plotted.
+
+    name : str
+
+        A name or identifier used for saving the plot.
+
+ 
+
+    Returns
+
+    -------
+
+    None.
+
+ 
+
+    '''
+
+    X = np.arange(full_trace.shape[1])
+
+    # Create a figure with specified size
+
+    plt.figure(figsize=(8, 7))
+
+    colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(orders)))
+
+    for order, color in zip(orders, colors):
+
+        mean_trace = np.mean(full_trace[order])
+
+        plt.scatter(x, trace[order] - mean_trace, color='k', edgecolor='k',
+
+                    s=30,)
+
+        plt.scatter(x, trace[order] - mean_trace, color=color, edgecolor='k',
+
+                    s=20, alpha=0.5)
+
+        plt.plot(X, full_trace[order] - mean_trace, color=color, lw=1,
+
+                 label='Order: %i' % (order+1))
+
+ 
+
+    plt.legend()
+
+       
+
+    # Adjust the appearance of the ticks on both axes
+
+    ax = plt.gca()
+
+    ax.tick_params(axis='both', which='both', direction='in', zorder=3)
+
+    ax.tick_params(axis='y', which='both', left=True, right=True)
+
+    ax.tick_params(axis='x', which='both', bottom=True, top=True)
+
+    ax.tick_params(axis='both', which='major', length=8, width=2)
+
+    ax.tick_params(axis='both', which='minor', length=4, width=1)
+
+    ax.minorticks_on()
+
+ 
+
+    # Label the axes
+
+    plt.xlabel('Column')
+
+    plt.ylabel('Trace - Mean(Trace)')
+
+ 
+
+    # Save the plot as a PNG file with the given name
+
+    plt.savefig(op.join(outfolder, 'trace_measures.png'))
 
 
 def prep_image(data):
@@ -771,10 +886,10 @@ def prep_image(data):
     # Subtract the biweighted background based on whether the image is binned
     if args.binned:
         # For binned images, use the first 1024 columns and subtract the biweight of columns 1026 onward
-        image = data[:, :1024] - biweight(data[:, 1026:])
+        image = data[:, :1024] - biweight(data[:, 1026:], ignore_nan=True)
     else:
         # For unbinned images, use the first 2048 columns and subtract the biweight of columns 2052 onward
-        image = data[:, :2048] - biweight(data[:, 2052:])
+        image = data[:, :2048] - biweight(data[:, 2052:], ignore_nan=True)
 
     # Initialize a new image array with additional rows for padding
     new_image = np.zeros((len(image) + addrows, image.shape[1]))
@@ -848,7 +963,7 @@ def subtract_sky(spectra, good):
     n2 = int(2. / 3. * N)
 
     # Calculate the biweight of spectra over the middle third of each fiber's data
-    y = biweight(spectra[:, n1:n2], axis=1)
+    y = biweight(spectra[:, n1:n2], axis=1, ignore_nan=True)
 
     # Identify sky pixels based on the biweighted data and apply a mask
     mask, cont = identify_sky_pixels(y[good], size=15)
@@ -859,7 +974,7 @@ def subtract_sky(spectra, good):
     skyfibers = ~m1
 
     # Compute the biweighted sky spectrum based on sky fibers
-    init_sky = biweight(spectra[skyfibers], axis=0)
+    init_sky = biweight(spectra[skyfibers], axis=0, ignore_nan=True)
 
     # Subtract the sky spectrum from the original spectra
     return spectra - init_sky[np.newaxis, :]
@@ -1029,7 +1144,7 @@ def get_continuum(skysub, masksky, nbins=50):
         x = np.array([np.mean(chunk) for chunk in np.array_split(np.arange(len(y)), nbins)])
 
         # Calculate the biweighted median for each bin
-        z = np.array([biweight(chunk) for chunk in np.array_split(y, nbins)])
+        z = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(y, nbins)])
 
         # Select bins with finite values for interpolation
         sel = np.isfinite(z)
@@ -1120,7 +1235,7 @@ def reduce(fn, biastime_list, masterbias_list, flttime_list,
     errrect[:] /= (ftf * f[0].header['EXPTIME'])
 
     # Generate a sky mask and the continuum for sky subtraction
-    skymask, cont = get_skymask(biweight(specrect, axis=0), size=25)
+    skymask, cont = get_skymask(biweight(specrect, axis=0, ignore_nan=True), size=25)
 
     # Subtract the sky from the spectrum
     skysubrect = subtract_sky(specrect, good)
@@ -1146,7 +1261,7 @@ def reduce(fn, biastime_list, masterbias_list, flttime_list,
     write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header)
 
     # Return the biweighted spectrum and continuum
-    return biweight(specrect, axis=0), cont
+    return biweight(specrect, axis=0,ignore_nan=True), cont
 
 
 def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header):
@@ -1250,9 +1365,10 @@ def make_mastercal_list(filenames, breakind):
         t = [Time(fits.open(f)[0].header['DATE-OBS']).mjd 
              for cnt, f in enumerate(filenames) 
              if ((cnt > bk1) * (cnt < bk2))]
+        
 
         # Append the median frame and the mean time for the current chunk
-        masters.append(np.median(frames, axis=0))
+        masters.append(np.nanmedian(frames, axis=0))
         times.append(np.mean(t))
 
     return masters, times
@@ -1304,7 +1420,7 @@ def get_filenames(gnames, typelist, names):
     for gn, tp in zip(gnames, typelist):
         # Check if any keyword appears in the type (case-insensitive)
         for name in names:
-            if name in str(tp).lower():
+            if name.lower() in str(tp).lower():
                 matches.append(gn)  # Append matching filename to the list
     return np.array(matches)  # Return matched filenames as a numpy array
 
@@ -1336,10 +1452,10 @@ for f in filenames:
 # Get the bias filenames, domeflat filenames, and arc lamp filenames
 # =============================================================================
 log.info('Sorting Files')
-bnames = ['bias', 'zero']
-anames = ['arc', 'necd', 'hgcd']
-tnames = ['twilight_flat']
-dfnames = ['flat']
+bnames = ['bias', 'zero', args.bias_label]
+anames = ['arc', 'necd', 'hgcd','comp', args.arc_label]
+tnames = ['twilight_flat','Twilight flat', args.twilight_flat_label]
+dfnames = ['flat', args.dome_flat_label]
 snames = ['feige', 'bd']
 bias_filenames = get_filenames(gnames, typelist, bnames)
 twiflt_filenames = get_filenames(gnames, typelist, tnames)
@@ -1387,7 +1503,7 @@ log.info('Making master bias frames')
 masterbias_list, biastime_list = make_mastercal_list(bias_filenames,
                                                      bias_breakind)
 
-log.info('Making master domeFlat frames')
+log.info('Making master flat frames')
 
 masterflt_list, flttime_list = make_mastercal_list(flt_filenames,
                                                    flt_breakind)
@@ -1402,10 +1518,11 @@ masterarc_list, arctime_list = make_mastercal_list(arc_filenames,
 # =============================================================================
 trace_list = []
 fltspec = []
-log.info('Getting trace for each master domeFlat')
+log.info('Getting trace for each master flat')
 for masterflt, mtime in zip(masterflt_list, flttime_list):
     masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
-    trace, good = get_trace(masterflt-masterbias)
+    trace, good, Tchunk, xchunk = get_trace(masterflt-masterbias)
+    plot_trace(trace, Tchunk, xchunk)
     trace_list.append([trace, good])
     domeflat_spec = get_spectra(masterflt-masterbias, trace)
     domeflat_error = 0. * domeflat_spec
@@ -1419,6 +1536,7 @@ wave_time = []
 bk1 = np.hstack([0, arc_breakind+1])
 log.info('Getting wavelength for each master arc')
 for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
+    fits.PrimaryHDU(masterarc).writeto('test.fits',overwrite=True)
     masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
     trace, good = trace_list[get_cal_index(mtime, flttime_list)]
     lamp_spec = get_spectra(masterarc-masterbias, trace)
