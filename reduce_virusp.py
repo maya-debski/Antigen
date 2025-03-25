@@ -11,10 +11,11 @@ import numpy as np
 import os.path as op
 import sys
 import warnings
-from astropy.convolution import convolve, Box1DKernel
+from astropy.convolution import convolve, Box1DKernel, Gaussian1DKernel
 from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.stats import mad_std
+from astropy.table import Table
 from astropy.time import Time
 from distutils.dir_util import mkpath
 from input_utils import setup_logging
@@ -23,6 +24,8 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -71,7 +74,6 @@ argv = None
 args = parser.parse_args(args=argv)
 folder = args.folder
 outfolder = args.outfolder
-
 # Make output folder if it doesn't exist
 mkpath(outfolder)
 
@@ -81,50 +83,15 @@ gain = 0.25
 rdnoise = 3.7
 addrows = 20
 pca_comp = 125
-# =============================================================================
-# LowRes Mode
-# =============================================================================
-if args.blue:
-    lines = [3611.287, 3652.103, 4046.554, 4358.325, 4413.776, 4678.147,
-             4799.908, 4916.066, 5085.817, 5154.662, 5460.737, 5769.598, 
-             5790.663]
-    fiberref = 130
-    xref = np.array([40.374, 74.775, 425.068, 699.606, 748.347,
-                     981.728, 1089.410, 1192.438, 1343.708, 1405.401,
-                     1681.501, 1965.260, 1984.816])
-    if args.binned:
-        xref = xref / 2.
-    use_kernel = True
-    limit = 100
-    if args.binned:
-        def_wave = np.linspace(3570., 5810., 1024)
-    else:
-        def_wave = np.linspace(3570., 5810., 2048)
-else:
-    #lines = [4678.16, 4713.17, 5085.82, 5400.56, 5764.42, 6074.34, 6143.06,
-                #6438.47, 6678.28]
 
-    #fiberref = 130
+sns.set_context('talk')
+sns.set_style('ticks')
 
-    #xref = np.array([9.40,  27.15, 201.78, 339.07, 533.97, 661.03,
-       #829.77, 971.35])
-       
-    lines = [4799.912, 5085.822, 5154.600, 6532.882, 6598.951, 6717.0429, 
-             6929.467]
-    fiberref = 130
-    xref = np.array([31.350, 159.233, 189.951, 809.319, 839.854, 894.628, 
-                     994.314])
-    
-    use_kernel = False
-    limit = 100
-    if args.binned:
-        def_wave = np.linspace(4730., 6940., 1024)
-    else:
-        def_wave = np.linspace(4730., 6940., 2048)
+plt.rcParams["font.family"] = "Times New Roman"
 
 def get_script_path():
     '''
-    Get script path, aka, where does Remedy live?
+    Get script path, aka, where does Antigen live?
     '''
     return op.dirname(op.realpath(sys.argv[0]))
 
@@ -311,11 +278,9 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
 
     # Return both the initial and smoothed fiber-to-fiber correction factors
     return initial_ftf, ftf
-
     
-import numpy as np
 
-def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
+def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100):
     """
     Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
 
@@ -341,14 +306,17 @@ def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
 
     # W will store arc line positions for each fiber
     W = np.zeros((trace.shape[0], len(lines)))
-    W[init_fiber] = loc
-
+    mask, cont = identify_sky_pixels(spectrum[init_fiber], per=5)  # Identify sky lines
+    y = spectrum[init_fiber] - cont  # Subtract continuum
+    W[init_fiber] = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
+    
     # Process fibers before the reference fiber in reverse order
     for i in np.arange(init_fiber)[::-1]:
-        mask, cont = identify_sky_pixels(spectrum[i])  # Identify sky lines
+        mask, cont = identify_sky_pixels(spectrum[i], per=5)  # Identify sky lines
         y = spectrum[i] - cont  # Subtract continuum
         if good[i]:  # Only process if the fiber is marked as good
-            loc = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
+            loc = get_arclines_fiber(y, loc, limit=limit,
+                                     use_kernel=use_kernel)
             W[i] = loc
 
     # Reset location and process fibers after the reference fiber
@@ -357,7 +325,8 @@ def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
         mask, cont = identify_sky_pixels(spectrum[i])
         y = spectrum[i] - cont
         if good[i]:
-            loc = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
+            loc = get_arclines_fiber(y, loc, limit=limit, 
+                                     use_kernel=use_kernel)
             W[i] = loc
 
     # Initialize X (adjusted trace positions) and residuals array
@@ -384,16 +353,18 @@ def get_wavelength(spectrum, trace, good, use_kernel=True, limit=100):
         X[:, i] = np.polyval(np.polyfit(x[sel], W[sel, i], 4), x)
 
         # Compute residuals using biweight mean
-        _, res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
-
+        res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
     # Compute final wavelength solution for each fiber
     for j in range(W.shape[0]):
         wavelength[j] = np.polyval(np.polyfit(X[j], lines, 3), xall)
-
+        
+    # Plot wavelength solution for inspection
+    plot_wavelength(lines, W, wavelength)
+    
     return wavelength, res, X, W
 
 
-def get_arclines_fiber(spectrum, init_loc=None, limit=1000, use_kernel=True):
+def get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
     """
     Identifies arc line positions in a given spectrum by detecting peaks.
 
@@ -409,7 +380,7 @@ def get_arclines_fiber(spectrum, init_loc=None, limit=1000, use_kernel=True):
 
     # Apply box kernel convolution to smooth the spectrum if use_kernel is True
     if use_kernel:
-        B = Box1DKernel(9.5)
+        B = Gaussian1DKernel(1.0)
         y1 = convolve(spectrum, B)
     else:
         y1 = spectrum.copy()
@@ -777,95 +748,102 @@ def get_trace(twilight):
     # Return the final trace array and the good fiber mask
     return trace, (ref[:, 1] == 0.), Trace, xchunks
 
+
+def plot_wavelength(lines, W, wavelength):
+    '''
+    Plots the residuals of the wavelength solution using a violin plot.
+    
+    Parameters
+    ----------
+    lines : 1D ndarray
+        Expected wavelengths of arc lamp lines.
+    W : 2D ndarray
+        Measured positions of the arc lines for different fibers.
+    wavelength : 2D ndarray
+        Wavelength solution for the fibers.
+    
+    Returns
+    -------
+    None.
+    '''
+    
+    # Prepare data for seaborn violin plot
+    data = []
+    num_fibers = W.shape[0]
+    for i, line in enumerate(lines):
+        residuals = []
+        for fiber in range(2, num_fibers): # skip the first two broken fibers
+            X = np.arange(wavelength.shape[1])
+            pred = np.interp(W[fiber, i], X, wavelength[fiber])
+            residuals.append(line - pred)
+        for res in residuals:
+            data.append({'Wavelength': line, 'Residual': res})
+    
+    df = pd.DataFrame(data)
+    
+    # Create the violin plot
+    plt.figure(figsize=(10, 7))
+    plt.gca().set_position([0.15, 0.19, 0.75, 0.71])
+    sns.violinplot(x='Wavelength', y='Residual', data=df, palette='coolwarm',
+                   inner=None, saturation=0.8)
+    # Customize plot appearance
+    plt.xlabel('Arc Line Wavelength ($\mathrm{\AA}$)')
+    plt.ylabel(r'Measured - Expected ($\mathrm{\AA}$)')
+    plt.title('Wavelength Solution Residuals')
+    plt.xticks(rotation=45)
+
+    # Save the plot as a PNG file with the given name
+    plt.savefig(op.join(outfolder, 'wavelength_measures.png'))
+
 def plot_trace(full_trace, trace, x, orders=[5, 130, 230]):
 
     '''
     Plots the residuals of the trace correction and saves the figure.
-
+    
     Parameters
-
     ----------
-
     trace_cor : 2D ndarray
-
         The array of trace correction residuals to be plotted.
-
     name : str
-
         A name or identifier used for saving the plot.
 
- 
-
     Returns
-
     -------
-
     None.
-
- 
-
+    
     '''
 
     X = np.arange(full_trace.shape[1])
-
     # Create a figure with specified size
-
     plt.figure(figsize=(8, 7))
-
     colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(orders)))
-
     for order, color in zip(orders, colors):
-
         mean_trace = np.mean(full_trace[order])
-
         plt.scatter(x, trace[order] - mean_trace, color='k', edgecolor='k',
-
                     s=30,)
-
         plt.scatter(x, trace[order] - mean_trace, color=color, edgecolor='k',
-
                     s=20, alpha=0.5)
-
         plt.plot(X, full_trace[order] - mean_trace, color=color, lw=1,
-
                  label='Order: %i' % (order+1))
-
- 
 
     plt.legend()
 
-       
-
     # Adjust the appearance of the ticks on both axes
-
     ax = plt.gca()
-
     ax.tick_params(axis='both', which='both', direction='in', zorder=3)
-
     ax.tick_params(axis='y', which='both', left=True, right=True)
-
     ax.tick_params(axis='x', which='both', bottom=True, top=True)
-
     ax.tick_params(axis='both', which='major', length=8, width=2)
-
     ax.tick_params(axis='both', which='minor', length=4, width=1)
-
-    ax.minorticks_on()
-
- 
+    ax.minorticks_on() 
 
     # Label the axes
-
     plt.xlabel('Column')
-
     plt.ylabel('Trace - Mean(Trace)')
 
- 
-
     # Save the plot as a PNG file with the given name
-
     plt.savefig(op.join(outfolder, 'trace_measures.png'))
-
+    
 
 def prep_image(data):
     """
@@ -1292,15 +1270,25 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header):
         # Create an HDU object from each image, setting it to 'float32' type
         hdu = ftp(np.array(image, dtype='float32'))
         
-        # Add necessary header metadata
-        hdu.header['CRVAL2'] = 1  # Reference value for axis 2 (arbitrary setup)
-        hdu.header['CRVAL1'] = def_wave[0]  # Reference value for axis 1 (first wavelength)
-        hdu.header['CRPIX2'] = 1  # Pixel reference for axis 2
-        hdu.header['CRPIX1'] = 1  # Pixel reference for axis 1
-        hdu.header['CTYPE2'] = 'fiber'  # Axis type 2 (fiber-based data)
-        hdu.header['CTYPE1'] = 'Angstrom'  # Axis type 1 (wavelength in Angstroms)
-        hdu.header['CDELT2'] = 1  # Pixel scale for axis 2
-        hdu.header['CDELT1'] = def_wave[1] - def_wave[0]  # Pixel scale for axis 1 (wavelength step)
+        # Remove any conflicting CD matrix elements first
+        for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2', 'CDELT1', 'CDELT2']:
+            if key in hdu.header:
+                del hdu.header[key]
+        
+        # Define your wavelength solution
+        wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
+        
+        # Set WCS parameters correctly
+        hdu.header['CRVAL1'] = def_wave[0]  # First wavelength (Angstroms)
+        hdu.header['CRPIX1'] = 1  # First pixel corresponds to first wavelength
+        hdu.header['CD1_1'] = wavelength_step  # Set CD1_1 to match wavelength step
+        hdu.header['CTYPE1'] = 'WAVE'  # Spectral axis label
+        
+        # Set fiber axis metadata
+        hdu.header['CRVAL2'] = 1  # Reference value for fiber index
+        hdu.header['CRPIX2'] = 1  # First pixel for fiber axis
+        hdu.header['CD2_2'] = 1  # Step of 1 fiber per index
+        hdu.header['CTYPE2'] = 'FIBER'  # Labeling fiber axis
 
         # Copy relevant keys from the input header, avoiding duplicates
         for key in header.keys():
@@ -1431,6 +1419,34 @@ def get_filenames(gnames, typelist, names):
 filenames = sorted(glob.glob(op.join(folder, '*.fits')))
 DIRNAME = get_script_path()
 
+
+# =============================================================================
+# Get Line List
+# =============================================================================
+if args.blue:
+    t = Table.read(op.join(DIRNAME, 'line_list', 'blue_lines.txt'), format='ascii')
+    if args.binned:
+        def_wave = np.linspace(3570., 5810., 1024)
+    else:
+        def_wave = np.linspace(3570., 5810., 2048)
+    limit = 100                 
+
+else:
+    t = Table.read(op.join(DIRNAME, 'line_list', 'red_lines.txt'), format='ascii')
+    if args.binned:
+        def_wave = np.linspace(4730., 6940., 1024)
+    else:
+        def_wave = np.linspace(4730., 6940., 2048)
+    limit=1000
+
+fiberref = 130
+lines = np.array(t['col1'])
+xref = np.array(t['col2'])
+if args.binned:
+    xref = xref / 2.
+use_kernel = True
+
+
 # =============================================================================
 # Make a list of the objects for each filename, ignore those without 'OBJECT' 
 # in the header
@@ -1535,19 +1551,21 @@ wave_list = []
 wave_time = []
 bk1 = np.hstack([0, arc_breakind+1])
 log.info('Getting wavelength for each master arc')
+import traceback
 for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
-    fits.PrimaryHDU(masterarc).writeto('test.fits',overwrite=True)
     masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
     trace, good = trace_list[get_cal_index(mtime, flttime_list)]
     lamp_spec = get_spectra(masterarc-masterbias, trace)
+    fits.PrimaryHDU(lamp_spec).writeto('test.fits',overwrite=True)
     try:
         wavelength, res, X, W = get_wavelength(lamp_spec, trace, good, 
-                                               limit=limit, 
+                                               xref, lines, limit=limit, 
                                                use_kernel=use_kernel)
     except:
         log.warning('Could not get wavelength solution for masterarc')
         log.warning('First file of failed masterarc included: %s' %
                     (arc_filenames[bk]))
+        traceback.print_exc()
         continue
     wave_list.append(wavelength)
     wave_time.append(mtime)
