@@ -17,15 +17,23 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  
   -n NAME, --name NAME  Name of the science target
+  
   -b, --blue            blue Side?
+  
   -bn, --binned         Binned?
+  
   -ra, --reduce_all     Reduce all files in folder
+  
   -bl BIAS_LABEL, --bias_label BIAS_LABEL
                         The objet name for bias files
+                        
   -al ARC_LABEL, --arc_label ARC_LABEL
                         The objet name for arc files
+                        
   -dfl DOME_FLAT_LABEL, --dome_flat_label DOME_FLAT_LABEL
                         The objet name for dome flat files
+                        
   -tfl TWILIGHT_FLAT_LABEL, --twilight_flat_label TWILIGHT_FLAT_LABEL
                         The objet name for twilight flat files
