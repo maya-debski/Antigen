@@ -12,10 +12,13 @@ The arguments for the script are:
 usage: reduce_virusp.py [-h] [-n NAME] [-b] [-bn] [-ra] [-bl BIAS_LABEL] [-al ARC_LABEL] [-dfl DOME_FLAT_LABEL] [-tfl TWILIGHT_FLAT_LABEL] folder outfolder
 
 positional arguments:
+
   folder                Input folder
+  
   outfolder             name of the output file
 
 options:
+
   -h, --help            show this help message and exit
   
   -n NAME, --name NAME  Name of the science target
