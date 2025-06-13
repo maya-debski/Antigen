@@ -64,7 +64,7 @@ parser.add_argument("-tfl", "--twilight_flat_label",
                     help='''The objet name for twilight flat files''',
                    type=str, default='twi')
 
-argv = ['/Users/grz85/work/v2_data', '/Users/grz85/work/v2_data/reduc']
+argv = None
 args = parser.parse_args(args=argv)
 folder = args.folder
 outfolder = args.outfolder
@@ -819,7 +819,7 @@ def plot_trace(full_trace, trace, x, orders=[5, 130, 230]):
         plt.scatter(x, trace[order] - mean_trace, color=color, edgecolor='k',
                     s=20, alpha=0.5)
         plt.plot(X, full_trace[order] - mean_trace, color=color, lw=1,
-                 label='Order: %i' % (order+1))
+                 label='Fiber: %i' % (order+1))
 
     plt.legend()
 
