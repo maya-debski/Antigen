@@ -34,6 +34,9 @@ parser = ap.ArgumentParser(add_help=True)
 
 parser.add_argument("folder", help='''Input folder''', type=str)
 
+parser.add_argument('date', type=str,
+                     help='''string name for date, ex: 20250613''')
+
 parser.add_argument('outfolder', type=str,
                      help='''name of the output file''')
 
@@ -1417,8 +1420,8 @@ def get_filenames(gnames, typelist, names):
 # =============================================================================
 # Get Folder and Filenames
 # =============================================================================
-ROOT_DATA_PATH = '/Users/grz85/work/v2_data/'
-date = '20250613'
+ROOT_DATA_PATH = args.folder
+date = args.date
 allfilenames = sorted(glob.glob(op.join(ROOT_DATA_PATH, 'VIRUS2', date, 
                                      '*', '*', '*.fits')))
 unit_list = [fn.split('_')[-4] for fn in allfilenames]
