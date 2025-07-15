@@ -1,5 +1,5 @@
 # Antigen
-## Reduction Pipelines for GCMS (VIRUS-P) and VIRUS-W
+## Reduction Pipelines for GCMS (VIRUS-P), VIRUS-W, and VIRUS 2
 
 Antigen is designed to reduce data from the George and Cynthia Mitchell Spectrograph (GCMS) and VIRUS-W on the 2.7m Harlan J. Smith Telescope at McDonald Observatory. In its current state, Antigen  outputs a fits file for each science exposure in a night of data taken with GCMS that is the fiber-extracted, wavelength-calibrated, but "raw" spectra.  
 
