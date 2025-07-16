@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-@author: gregz
-@author: mayad
-"""
 
+from distutils.dir_util import mkpath
 import glob
-import numpy as np
 import os.path as op
-import sys
 import warnings
+import sys
+import traceback
+
 from astropy.convolution import convolve, Gaussian1DKernel
 from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.stats import mad_std
+from astropy.stats import biweight_location as biweight
 from astropy.table import Table
 from astropy.time import Time
-from distutils.dir_util import mkpath
-
-from astropy.stats import biweight_location as biweight
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
+from sklearn.decomposition import PCA
 
 from input_utils import setup_logging
 from input_args import get_args
@@ -1538,7 +1535,7 @@ for unit in units:
     wave_time = []
     bk1 = np.hstack([0, arc_breakind+1])
     log.info('Getting wavelength for each master arc')
-    import traceback
+
     for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
         masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
         trace, good = trace_list[get_cal_index(mtime, flttime_list)]
