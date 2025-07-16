@@ -5,7 +5,7 @@ from astropy.stats import sigma_clip, mad_std, biweight_location as biweight
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
 
-from . import config
+from antigen import config
 
 
 def identify_sky_pixels(sky, per=50, size=50):
