@@ -4,6 +4,8 @@ import datetime as dt
 import glob
 import os
 
+import numpy as np
+
 
 def parse_fits_file_name(fits_filename):
     """
@@ -122,6 +124,8 @@ def get_fits_file_obs_ids(fits_file_names):
 
     Returns:
         obs_id_list (list(str)): list of string IDs for directory name string '0000001'
+
+    Note: replaces lines like [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in bias_filenames]
     """
     obs_id_list = list()
     for filename in fits_file_names:
@@ -129,6 +133,26 @@ def get_fits_file_obs_ids(fits_file_names):
         if filename_metadata:
             obs_id_list.append(filename_metadata['obs_id'])
     return obs_id_list
+
+
+def get_file_block_break_indices(fits_file_names):
+    """
+    Purpose: for a given list of VIRUS2 FITS files, which have integer obs-id in their full path names,
+    find all the obs-ids, and find the location of the last ID before a "jump" or "break" larger than 1, e.g.
+        In [1]: obs_id_list = [1,2,3,10]
+        In [2]: np.where(np.diff(obs_id_list) > 1)[0]
+        Out[3]: array([2])
+
+    Args:
+        fits_file_names (list(str)): list of FITS filepaths, assumed to contain a substring like "/00001/"
+
+    Returns:
+        obs_id_break_inds (np.ndarray): a numpy array of the indices of the right-edge/last-element in each contiguous block for filenames
+            e.g. if obs_ids for the files are [1,2,3,11,12,13,21,22,23] then obs_id_break_inds = [2,5]
+    """
+    obs_id_list = get_fits_file_obs_ids(fits_file_names)
+    obs_id_break_inds = np.where(np.diff(obs_id_list) > 1)[0]
+    return obs_id_break_inds
 
 
 def get_matching_filenames(file_name_list, type_list, match_keywords):

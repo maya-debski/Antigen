@@ -1533,35 +1533,30 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
             flt_filenames = domeflt_filenames
 
         # =============================================================================
-        # Use the file numbers for connecting blocks of observations
+        # Make a master bias, master dome flat, and master arc for the first set of OBS
+        # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
         # =============================================================================
-        biasnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in bias_filenames]
-        fltnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in flt_filenames]
-        arcnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in arc_filenames]
-        bias_breakind = np.where(np.diff(biasnum) > 1)[0]
-        flt_breakind = np.where(np.diff(fltnum) > 1)[0]
-        arc_breakind = np.where(np.diff(arcnum) > 1)[0]
 
+        log.info('Making master bias frames')
+        bias_break_inds = io.get_file_block_break_indices(bias_filenames)
+        masterbias_list, biastime_list = make_mastercal_list(bias_filenames, bias_break_inds, channel)
+
+        log.info('Making master flat frames')
+        flt_break_inds = io.get_file_block_break_indices(flt_filenames)
+        masterflt_list, flttime_list = make_mastercal_list(flt_filenames, flt_break_inds, channel)
+
+        log.info('Making master arc frames')
+        arc_break_inds = io.get_file_block_break_indices(arc_filenames)
+        masterarc_list, arctime_list = make_mastercal_list(arc_filenames, arc_break_inds, channel)
+
+        # =============================================================================
         # Load reference fiber locations from a predefined file
+        # =============================================================================
+
         ifu_cen_filepath = config.get_config_filepath('ifucen', 'IFUcen_VIRUS2_D3G.txt')
         ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
         ref = ifu_cen_file_data
         ref.reverse()
-
-        # =============================================================================
-        # Make a master bias, master dome flat, and master arc for the first set of OBS
-        # =============================================================================
-        log.info('Making master bias frames')
-        # TODO: fix type, replace numpy.ndarray with lists when handling filenames; no vector operations are used
-        masterbias_list, biastime_list = make_mastercal_list(bias_filenames, bias_breakind, channel)
-
-        log.info('Making master flat frames')
-
-        masterflt_list, flttime_list = make_mastercal_list(flt_filenames, flt_breakind, channel)
-
-        log.info('Making master arc frames')
-        masterarc_list, arctime_list = make_mastercal_list(arc_filenames, arc_breakind, channel)
-
 
         # =============================================================================
         # Get trace from the dome flat
@@ -1583,7 +1578,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         # =============================================================================
         wave_list = []
         wave_time = []
-        bk1 = np.hstack([0, arc_breakind+1])
+        bk1 = np.hstack([0, arc_break_inds+1])
         log.info('Getting wavelength for each master arc')
 
         for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
