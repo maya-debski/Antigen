@@ -129,3 +129,24 @@ def get_fits_file_obs_ids(fits_file_names):
         if filename_metadata:
             obs_id_list.append(filename_metadata['obs_id'])
     return obs_id_list
+
+
+def get_matching_filenames(file_name_list, type_list, match_keywords):
+    """
+    Purpose: Finds filenames that match a list of keywords by checking if any of the keywords
+    appear in the associated types.
+
+    Args:
+        file_name_list (list(str)): List of filenames to check.
+        type_list (list(str)): List of types or descriptions corresponding to the filenames.
+        match_keywords (list(str)): List of keywords to search for within the types/descriptions.
+
+    Returns:
+        matched_filenames (list(str)): list of filenames from file_name_list that match any of the match_keywords.
+    """
+    matched_filenames = []
+    for file_name, type_name in zip(file_name_list, type_list):
+        for word in match_keywords:
+            if word.lower() in str(type_name).lower():
+                matched_filenames.append(file_name)
+    return matched_filenames
