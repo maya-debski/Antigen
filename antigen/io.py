@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import datetime as dt
 import glob
 import os
@@ -56,6 +54,39 @@ def parse_fits_file_name(fits_filename):
     return filename_metadata
 
 
+def get_fits_filenames(root_path, date=None, verbose=False):
+    """
+    Purpose: Search file-tree below given root_path, find all FITS filenames that match VIRUS2 name pattern
+    Note: Expected filename pattern is
+        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
+        VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
+
+    Args:
+        root_path (str): top-level of file-tree containing VIRUS2 exposure FITS files
+        date (str): date string of format 'YYYYMMDD'
+        verbose (bool): if True, print more info to console
+
+    Returns:
+        file_names (list(dict)): List of files
+    """
+
+    if verbose:
+        print(f'VERBOSE: Searching for FITS files under in root_path={root_path} for date={date} ...')
+
+    if date:
+        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', date, '*', '*', '*.fits')))
+    else:
+        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', '*', '*', '*', '*.fits')))
+
+    if verbose:
+        num_files = len(fits_filenames)
+        print(f'VERBOSE: Found {num_files} files under.')
+        if num_files < 1:
+            raise FileNotFoundError(f'ERROR: found no files to process. Exiting...')
+
+    return fits_filenames
+
+
 def parse_fits_file_tree(root_path, date=None, verbose=False):
     """
     Purpose: Parse all FITS filenames found in file-tree below given root_path
@@ -72,20 +103,7 @@ def parse_fits_file_tree(root_path, date=None, verbose=False):
         metadata_records (list(dict)): List of dictionaries with keys =  ['filename', 'instrument',
                  'obs_date', 'obs_id', 'frame_type', spec_id', exp_index', 'utc_str', 'user_label']
     """
-
-    if verbose:
-        print(f'VERBOSE: Searching for FITS files under in root_path={root_path} for date={date} ...')
-
-    if date:
-        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', date, '*', '*', '*.fits')))
-    else:
-        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', '*', '*', '*', '*.fits')))
-
-    if verbose:
-        num_files = len(fits_filenames)
-        print(f'VERBOSE: Found {num_files} files under.')
-        if num_files < 1:
-            raise FileNotFoundError(f'ERROR: found no files to process. Exiting...')
+    fits_filenames = get_fits_filenames(root_path, date, verbose)
 
     metadata_records = list()
     for filename in fits_filenames:
