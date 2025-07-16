@@ -1,9 +1,5 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import warnings
-import sys
 import traceback
 
 from astropy.io import fits
@@ -15,60 +11,39 @@ import numpy as np
 
 from antigen import ccd
 from antigen import config
-from antigen import io
 from antigen import fiber
-from antigen import input_utils
+from antigen import io
 from antigen import plot
 from antigen import sky
+from antigen import utils
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
-
-
-# TODO: mixed use of style guides, Google vs Numpy, especially in docstrings; pick one
-
-def get_script_path():
-    """
-    Get script path, aka, where does Antigen live?
-    """
-    return os.path.dirname(os.path.realpath(sys.argv[0]))
 
 
 def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
            trace_list, wave_time, wave_list, ftf_list, channel, 
            pca=None, outfolder=None):
     """
-    Reduce the raw data by performing a series of processing steps, 
+    Purpose: Reduce the raw data by performing a series of processing steps,
     including bias subtraction, flat-fielding, sky subtraction, 
     and PCA-based residuals analysis.
 
-    Parameters
-    ----------
-    fn : str
-        The filename of the FITS file containing the data.
-    biastime_list : list
-        List of times associated with bias frames.
-    masterbias_list : list
-        List of master bias frames for bias correction.
-    flttime_list : list
-        List of times associated with flat field frames.
-    trace_list : list
-        List of fiber trace data.
-    wave_time : list
-        List of times associated with wavelength calibration.
-    wave_list : list
-        List of wavelength calibration data.
-    ftf_list : list
-        List of flat-field corrections.
-    pca : PCA object, optional
-        A pre-fitted PCA model for residual map analysis. Default is None.
+    Args:
+        fn (str): The filename of the FITS file containing the data.
+        biastime_list (list): List of times associated with bias frames.
+        masterbias_list (list): List of master bias frames for bias correction.
+        flttime_list (list): List of times associated with flat field frames.
+        trace_list (list): List of fiber trace data.
+        wave_time (list): List of times associated with wavelength calibration.
+        wave_list (list): List of wavelength calibration data.
+        ftf_list (list): List of flat-field corrections.
+        pca (sklearn.decomposition.PCA), Default is None, optional, A pre-fitted PCA model for residual map analysis.
 
-    Returns
-    -------
-    pca : PCA object
-        The fitted PCA model, returned if `pca` is None.
-    continuum : 1d numpy array
-        The computed continuum for the spectrum.
+    Returns:
+        pca (sklearn.decomposition.PCA): The fitted PCA model, returned if `pca` is None.  # TODO: this original comment does NOT match the data type returned by biweight()
+            biweighted_spectrum (np.ndarray): This is what is actually returned.  # TODO: needs review!
+        continuum (np.ndarray): 1d numpy array, The computed continuum for the spectrum.
     """
     # TODO: update docstring to match function signature, input args
 
@@ -111,8 +86,10 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     specrect[:] /= (ftf * f[0].header['EXPTIME'])
     errrect[:] /= (ftf * f[0].header['EXPTIME'])
 
+    # TODO: get clarification on the `cont` vs `cont1` handling here. Renamed `cont` to `continuum` to make it more obvious which is returned.
+
     # Generate a sky mask and the continuum for sky subtraction
-    skymask, cont = sky.get_skymask(biweight(specrect, axis=0, ignore_nan=True), size=25)
+    skymask, continuum = sky.get_skymask(biweight(specrect, axis=0, ignore_nan=True), size=25)
 
     # Subtract the sky from the spectrum
     skysubrect = sky.subtract_sky(specrect, good)
@@ -138,7 +115,8 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     io.write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header, channel, outfolder)
 
     # Return the biweighted spectrum and continuum
-    return biweight(specrect, axis=0,ignore_nan=True), cont
+    biweighted_spectrum = biweight(specrect, axis=0, ignore_nan=True)
+    return biweighted_spectrum, continuum
 
 
 def get_element_with_closest_time(element_list, time_list, target_time):
@@ -160,36 +138,6 @@ def get_element_with_closest_time(element_list, time_list, target_time):
     # Use the index directly in the original file list
     closest_element = element_list[index]
     return closest_element
-
-
-def get_filenames(gnames, typelist, names):
-    """
-    Finds filenames that match a list of keywords by checking if any of the keywords 
-    appear in the associated types.
-
-    Parameters
-    ----------
-    gnames : list of str
-        List of filenames to check.
-    typelist : list of str
-        List of types or descriptions corresponding to the filenames.
-    names : list of str
-        List of keywords to search for within the types/descriptions.
-
-    Returns
-    -------
-    np.ndarray
-        Array of filenames from `gnames` that match any of the keywords in `names`.
-    """
-    # TODO: fix type, replace numpy.ndarray with lists when handling filenames; no vector operations are used
-    matches = []  # List to store matched filenames
-    # Iterate through each filename and its corresponding type
-    for gn, tp in zip(gnames, typelist):
-        # Check if any keyword appears in the type (case-insensitive)
-        for name in names:
-            if name.lower() in str(tp).lower():
-                matches.append(gn)  # Append matching filename to the list
-    return np.array(matches)  # Return matched filenames as a numpy array
 
 
 def process(infolder, outfolder, obs_date, obs_name, reduce_all,
@@ -214,7 +162,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     """
     # TODO: dark_label is unused, in current and previous versions of this module
 
-    log = input_utils.setup_logging('virus2_reductions')
+    log = utils.setup_logging('virus2_reductions')
 
     os.makedirs(outfolder, exist_ok=True)
 
