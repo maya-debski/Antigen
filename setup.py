@@ -8,7 +8,9 @@ setup(
     name='antigen',
     version='2025.07.15',
     packages=find_packages(include=['antigen', 'antigen.*']),
-    package_data={'antigen': ['config/*.txt'],},
+    package_data={
+        'antigen': ['config_files/**/*'],
+    },
     include_package_data=True,
     scripts=['scripts/antigen_reduce_virus2.py',],
     install_requires=[
