@@ -24,6 +24,7 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 
 from input_utils import setup_logging
+from antigen import config
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -1440,6 +1441,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     # =============================================================================
     # Get Line List
     # =============================================================================
+
     # TODO: replace magic numbers with use of CONFIG channel params!
     for unit in units:
         channel = unit[-1].lower()
@@ -1453,8 +1455,8 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
             continue
         if channel == 'g':
             def_wave = np.linspace(4610., 5925., 2064)
-            line_list = Table.read(os.path.join(DIRNAME, 'line_list',
-                                            'virus2_green.txt'), format='ascii')
+            line_list_filepath = config.get_config_filepath('line_list', 'virus2_green.txt')
+            line_list = Table.read(line_list_filepath, format="ascii")
             limit = 20
             gain = 2.017  # TODO: unused variable
             rdnoise = 3.09  # TODO: unused variable
@@ -1535,9 +1537,11 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         arc_breakind = np.where(np.diff(arcnum) > 1)[0]
 
         # Load reference fiber locations from a predefined file
-        # TODO: use package data files from antigen.config
-        ref = Table.read(os.path.join(DIRNAME, 'IFUcen', 'IFUcen_VIRUS2_D3G.txt'), format='ascii')
+        ifu_cen_filepath = config.get_config_filepath('ifucen', 'IFUcen_VIRUS2_D3G.txt')
+        ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
+        ref = ifu_cen_file_data
         ref.reverse()
+
         # =============================================================================
         # Make a master bias, master dome flat, and master arc for the first set of OBS
         # =============================================================================
