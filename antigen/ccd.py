@@ -8,23 +8,15 @@ from antigen import config
 
 def prep_image(image, channel):
     """
-    Orient the images from blue to red (left to right)
-    Fibers are oriented to match configuration files
+    Orient the images from blue to red (left to right). Fibers are oriented to match configuration files.
+    Note: These flips are unique to the VIRUS/LRS2 amplifiers
 
-    Parameters
-    ----------
-    image : 2d numpy array
-        fits image
-    amp : str
-        Amplifier for the fits image
-    ampname : str
-        Amplifier name is the location of the amplifier
+    Args:
+        image (np.ndarray): FITS 2D image data array
+        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
 
-    Returns
-    -------
-    image : 2d numpy array
-        Oriented fits image correcting for what amplifier it comes from
-        These flips are unique to the VIRUS/LRS2 amplifiers
+    Returns:
+        image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
     """
     # TODO: update docstring to match input args, function signature
 
@@ -41,29 +33,24 @@ def prep_image(image, channel):
     if channel == "d":
         image[:] = image[:, ::-1]
     # Overscan subtraction
-
+    # TODO: comment line above implies something is missing?
 
     return image
 
 
 def base_reduction(data, masterbias, channel):
     """
-    Perform basic image reduction by applying bias subtraction, gain correction,
-    and calculating the error estimate.
+    Perform basic image reduction by applying bias subtraction,
+    gain correction, and calculating the error estimate.
 
-    Parameters
-    ----------
-    data : 2d numpy array
-        Raw input image to be reduced.
-    masterbias : 2d numpy array
-        Master bias frame to be subtracted from the image.
+    Args:
+        data (np.ndarray): 2d numpy array, Raw input image to be reduced.
+        masterbias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
+        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
 
-    Returns
-    -------
-    image : 2d numpy array
-        Reduced image with bias subtracted and gain applied.
-    E : 2d numpy array
-        Error estimate for each pixel, including read noise and photon noise.
+    Returns:
+        image (np.ndarray): 2d numpy array, Reduced image with bias subtracted and gain applied.
+        error_estimate (np.ndarray): 2d numpy array, Error estimate for each pixel, including read noise and photon noise.
     """
     # TODO: update docstring to match input args, function signature
 
@@ -79,10 +66,10 @@ def base_reduction(data, masterbias, channel):
 
     # Calculate the error estimate (read noise + photon noise)
     rdnoise = config.CONFIG_CHANNEL_DETECTOR[channel]['rdnoise']
-    E = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
+    error_estimate = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
 
     # Return the reduced image and the error estimate
-    return image, E
+    return image, error_estimate
 
 
 def make_mastercal_list(filenames, breakind, channel):
@@ -90,21 +77,15 @@ def make_mastercal_list(filenames, breakind, channel):
     Creates a list of master calibration images and corresponding times
     by splitting the input list of filenames at given indices.
 
-    Parameters
-    ----------
-    filenames : list of str
-        List of FITS file paths containing calibration data.
-    breakind : list of int
-        List of indices to split the filenames into different chunks.
+    Args:
+        filenames (list(str)): List of FITS file paths containing calibration data.
+        breakind (list(int)): List of indices to split the filenames into different chunks.
+        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
 
     Returns
-    -------
-    masters : list of 2D numpy arrays
-        List of median calibration images for each chunk.
-    times : list of float
-        List of mean observation times (MJD) corresponding to each chunk.
+        masters (list(np.ndarray)): List of median calibration images (2D arrays) for each chunk.
+        times (list(float)): List of mean observation times (MJD floats) corresponding to each chunk.
     """
-    # TODO: update docstring to match function signature, input args
 
     # Define break points for splitting the filenames into chunks
     breakind1 = np.hstack([0, breakind])  # Start indices for chunks
@@ -135,20 +116,14 @@ def make_mastercal_list(filenames, breakind, channel):
 
 def get_cal_index(mtime, time_list):
     """
-    Finds the index of the closest calibration time to a given observation time.
+    Finds the index of the closest calibration time to a given observation time, by
+    finding the minimized absolute time difference between mtime and all time_list elements.
 
-    Parameters
-    ----------
-    mtime : float
-        The observation time (MJD) to compare against the calibration times.
-    time_list : list of float
-        A list of calibration times (MJD).
+    Args:
+        mtime (float): The observation time (MJD float) to compare against the calibration times.
+        time_list (list(float)): A list of calibration times (MJD floats).
 
-    Returns
-    -------
-    int
-        The index of the closest calibration time in `time_list`.
+    Returns:
+        index (int): The index of the closest calibration time in `time_list`.
     """
-
-    # Find the index of the closest time in time_list to mtime by minimizing the absolute time difference
     return np.argmin(np.abs(mtime - np.array(time_list)))
