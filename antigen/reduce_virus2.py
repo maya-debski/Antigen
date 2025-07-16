@@ -51,11 +51,13 @@ sns.set_style('ticks')
 
 plt.rcParams["font.family"] = "Times New Roman"
 
+
 def get_script_path():
-    '''
+    """
     Get script path, aka, where does Antigen live?
-    '''
+    """
     return os.path.dirname(os.path.realpath(sys.argv[0]))
+
 
 def identify_sky_pixels(sky, per=50, size=50):
     """
@@ -453,7 +455,7 @@ def get_spectra(array_flt, array_trace, npix=5):
 
 
 def get_spectra_error(array_flt, array_trace, npix=5):
-    '''
+    """
     Extract spectra by dividing the flat field and averaging the central
     two pixels
     
@@ -470,7 +472,7 @@ def get_spectra_error(array_flt, array_trace, npix=5):
     -------
     twi_spectrum : 2d numpy array
         Rectified twilight spectrum for each fiber  
-    '''
+    """
     
     # Initialize spectrum array to store extracted spectra
     spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
@@ -516,7 +518,7 @@ def get_spectra_error(array_flt, array_trace, npix=5):
 
 
 def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
-    '''
+    """
     Extract spectra by dividing the flat field and averaging the central
     two pixels
     
@@ -537,7 +539,7 @@ def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
     -------
     spec : 2d numpy array
         Chi-squared spectra for each fiber  
-    '''
+    """
 
     # Initialize spectrum array to hold chi-squared values
     spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
@@ -713,7 +715,7 @@ def get_trace(twilight, ref):
 
 
 def plot_wavelength(lines, W, wavelength, outfolder=None):
-    '''
+    """
     Plots the residuals of the wavelength solution using a violin plot.
     
     Parameters
@@ -728,7 +730,7 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     Returns
     -------
     None.
-    '''
+    """
     
     # Prepare data for seaborn violin plot
     data = []
@@ -759,9 +761,9 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     # Save the plot as a PNG file with the given name
     plt.savefig(os.path.join(outfolder, 'wavelength_measures.png'))
 
-def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
 
-    '''
+def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
+    """
     Plots the residuals of the trace correction and saves the figure.
     
     Parameters
@@ -774,8 +776,7 @@ def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
     Returns
     -------
     None.
-    
-    '''
+    """
 
     X = np.arange(full_trace.shape[1])
     # Create a figure with specified size
@@ -810,7 +811,7 @@ def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
     
 
 def prep_image(image, channel):
-    '''
+    """
     Orient the images from blue to red (left to right)
     Fibers are oriented to match configuration files
     
@@ -828,7 +829,7 @@ def prep_image(image, channel):
     image : 2d numpy array
         Oriented fits image correcting for what amplifier it comes from
         These flips are unique to the VIRUS/LRS2 amplifiers
-    '''
+    """
     
     overscan_length = 32
     bias_value = biweight(image[:, -(overscan_length-2):])
