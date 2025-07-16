@@ -25,6 +25,7 @@ from sklearn.decomposition import PCA
 
 from input_utils import setup_logging
 from antigen import config
+from antigen import io
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -1422,27 +1423,17 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
 
     log = setup_logging('virus2_reductions')
 
-    # Make output folder if it doesn't exist
-    mkpath(outfolder)
+    os.makedirs(outfolder, exist_ok=True)
 
     ROOT_DATA_PATH = infolder
-    allfilenames = sorted(glob.glob(os.path.join(ROOT_DATA_PATH, 'VIRUS2', obs_date,
-                                         '*', '*', '*.fits')))
-    unit_list = [fn.split('_')[-4] for fn in allfilenames]
-    units = np.unique(unit_list)
-    observations = np.unique([fn.split('_')[-6]  for fn in allfilenames])
-    DIRNAME = get_script_path()
-
-    # TODO: replace magic numbers with use of CONFIG params from above?
-    fiber_radius = 2.483 / 2.
-    pca_comp = 15
-
+    metadata_records = io.parse_fits_file_tree(ROOT_DATA_PATH, date=obs_date, verbose=True)
+    unit_list = [record['spec_id'] for record in metadata_records]
+    units = list(set(unit_list))
 
     # =============================================================================
     # Get Line List
     # =============================================================================
 
-    # TODO: replace magic numbers with use of CONFIG channel params!
     for unit in units:
         channel = unit[-1].lower()
         def_wave = None
@@ -1467,32 +1458,30 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
             def_wave = np.linspace(7590., 9300., 2064)  # TODO: unused variable
             continue
 
-        filenames = [fn for fn, un in zip(allfilenames, unit_list) if un == unit]
-
-        fiberref = 130    # TODO: unused variable
         lines = np.array(line_list['wavelength'])
         xref = np.array(line_list['col'])
         use_kernel = True
-
 
         # =============================================================================
         # Make a list of the objects for each filename, ignore those without 'OBJECT'
         # in the header
         # =============================================================================
+        unit_filenames = [record['filename'] for record in metadata_records if record['spec_id'] == unit]
+
         typelist = []
         gnames = []
         timelist = []
-        for fn in filenames:
+
+        for fn in unit_filenames:
+            fn_meta_data = io.parse_fits_file_name(fn)
             try:
-                obj = fn.split('_')[-5] # fits.open(f)[0].header['OBJECT']
-                dateobs = fn.split('_')[-2].split('T')[0]
-                dateobs = '%s-%s-%s' % (dateobs[:4], dateobs[4:6], dateobs[6:])
-                datestring = dateobs # fits.open(f)[0].header['DATE-OBS']
+                obj_frame_type = fn_meta_data['frame_type']  # fits.open(f)[0].header['OBJECT']
+                obs_date_str = fn_meta_data['utc_str_date']  # fits.open(f)[0].header['DATE-OBS']
             except:
                 continue
-            typelist.append(obj)
+            typelist.append(obj_frame_type)
             gnames.append(fn)
-            timelist.append(Time(datestring))
+            timelist.append(Time(obs_date_str))
 
         # =============================================================================
         # Get the bias filenames, domeflat filenames, and arc lamp filenames
