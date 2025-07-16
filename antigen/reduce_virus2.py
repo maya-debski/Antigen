@@ -1161,13 +1161,13 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     mtime = t.mjd
 
     # Select appropriate master bias frame based on observation time
-    masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
+    masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
 
     # Perform basic image reduction (bias subtraction, gain adjustment)
     image, E = base_reduction(f[0].data, masterbias, channel)
 
     # Get the fiber trace and selection mask for the current observation
-    trace, good = trace_list[get_cal_index(mtime, flttime_list)]
+    trace, good = get_element_with_closest_time(trace_list, flttime_list, mtime)
 
     # Extract spectra from the image using the trace data
     spec = get_spectra(image, trace)
@@ -1176,21 +1176,21 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     specerr = get_spectra_error(E, trace)
 
     # Compute the chi-square of the spectrum to identify bad pixels
-    masterflt = masterflt_list[get_cal_index(mtime, flttime_list)]
+    masterflt = get_element_with_closest_time(masterflt_list, flttime_list, mtime)
     chi2 = get_spectra_chi2(masterflt - masterbias, image, E, trace)
     badpix = chi2 > 20.  # Pixels with chi2 > 20 are considered bad
     specerr[badpix] = np.nan
     spec[badpix] = np.nan
 
     # Retrieve the wavelength calibration data for the current observation
-    wavelength = wave_list[get_cal_index(mtime, wave_time)]
+    wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
 
     # Rectify the spectrum and error based on the wavelength
     def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
     specrect, errrect = rectify(spec, specerr, wavelength, def_wave)
 
     # Apply flat-field correction
-    ftf = ftf_list[get_cal_index(mtime, flttime_list)]
+    ftf = get_element_with_closest_time(ftf_list, flttime_list, mtime)
     specrect[:] /= (ftf * f[0].header['EXPTIME'])
     errrect[:] /= (ftf * f[0].header['EXPTIME'])
 
@@ -1369,6 +1369,27 @@ def get_cal_index(mtime, time_list):
     return np.argmin(np.abs(mtime - np.array(time_list)))
 
 
+def get_element_with_closest_time(element_list, time_list, target_time):
+    """
+    Purpose: Given a list of elements and a list of MJD times for those elements,
+    find the element that has a time closest to the target_time
+
+    Args:
+        element_list (list): list of elements corresponding to the times in time_list
+        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
+        target_time (numeric): MJD time
+
+    Returns:
+        closest_element: element for closest_time from time_list compared to target_time
+    """
+    # Find index of time closest to target_time
+    index = np.argmin(np.abs(np.array(time_list) - target_time))
+
+    # Use the index directly in the original file list
+    closest_element = element_list[index]
+    return closest_element
+
+
 def get_filenames(gnames, typelist, names):
     """
     Finds filenames that match a list of keywords by checking if any of the keywords 
@@ -1532,17 +1553,14 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         # =============================================================================
         log.info('Making master bias frames')
         # TODO: fix type, replace numpy.ndarray with lists when handling filenames; no vector operations are used
-        masterbias_list, biastime_list = make_mastercal_list(bias_filenames,
-                                                             bias_breakind, channel)
+        masterbias_list, biastime_list = make_mastercal_list(bias_filenames, bias_breakind, channel)
 
         log.info('Making master flat frames')
 
-        masterflt_list, flttime_list = make_mastercal_list(flt_filenames,
-                                                           flt_breakind, channel)
+        masterflt_list, flttime_list = make_mastercal_list(flt_filenames, flt_breakind, channel)
 
         log.info('Making master arc frames')
-        masterarc_list, arctime_list = make_mastercal_list(arc_filenames,
-                                                           arc_breakind, channel)
+        masterarc_list, arctime_list = make_mastercal_list(arc_filenames, arc_breakind, channel)
 
 
         # =============================================================================
@@ -1552,7 +1570,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         fltspec = []
         log.info('Getting trace for each master flat')
         for masterflt, mtime in zip(masterflt_list, flttime_list):
-            masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
+            masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
             trace, good, Tchunk, xchunk = get_trace(masterflt-masterbias, ref)
             plot_trace(trace, Tchunk, xchunk, outfolder=outfolder)
             trace_list.append([trace, good])
@@ -1569,8 +1587,8 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         log.info('Getting wavelength for each master arc')
 
         for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
-            masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
-            trace, good = trace_list[get_cal_index(mtime, flttime_list)]
+            masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
+            trace, good = get_element_with_closest_time(trace_list, flttime_list, mtime)
             lamp_spec = get_spectra(masterarc-masterbias, trace)
             # TODO: move definition of test.fits to CONFIG param
             fits.PrimaryHDU(lamp_spec).writeto('test.fits',overwrite=True)
@@ -1596,7 +1614,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         ftf_list = []
         log.info('Getting fiber to fiber for each master domeFlat')
         for fltsp, mtime in zip(fltspec, flttime_list):
-            wavelength = wave_list[get_cal_index(mtime, wave_time)]
+            wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
             domeflat_spec, domeflat_error = fltsp
             domeflat_rect, domeflat_error_rect = rectify(domeflat_spec, domeflat_error,
                                                          wavelength, def_wave)
