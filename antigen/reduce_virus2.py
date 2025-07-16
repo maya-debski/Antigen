@@ -47,6 +47,8 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     """
     # TODO: update docstring to match function signature, input args
 
+    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
+
     # Open the FITS file and extract the observation time
     f = fits.open(fn)
     t = Time(f[0].header['DATE-OBS'] + 'T' + f[0].header['UT'])
@@ -78,7 +80,7 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
 
     # Rectify the spectrum and error based on the wavelength
-    def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+    def_wave = CONFIG_DEF_WAVE[channel]
     specrect, errrect = fiber.rectify(spec, specerr, wavelength, def_wave)
 
     # Apply flat-field correction
@@ -96,7 +98,7 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
 
     # If PCA is not provided, compute it from the sky-subtracted data
     if pca is None:
-        pca = sky.get_arc_pca(skysubrect, good, skymask, components=config.CONFIG_PCA_COMPONENTS)
+        pca = sky.get_arc_pca(skysubrect, good, skymask, components=config.VIRUS2_PCA_COMPONENTS)
         return pca
 
     # Adjust the sky mask and compute the continuum
@@ -175,6 +177,8 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     # Get Line List
     # =============================================================================
 
+    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
+
     for unit in units:
 
         # =========================================
@@ -186,18 +190,18 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         limit = None
         xref = None
         if channel == 'b':
-            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = CONFIG_DEF_WAVE[channel]
             continue
         if channel == 'g':
-            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = CONFIG_DEF_WAVE[channel]
             line_list_filepath = config.get_config_filepath('line_list', 'virus2_green.txt')
             line_list = Table.read(line_list_filepath, format="ascii")
-            limit = config.CONFIG_CHANNEL_DETECTOR[channel]['limit']
+            limit = CONFIG_DETECTOR[channel]['limit']
         if channel == 'r':
-            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = CONFIG_DEF_WAVE[channel]
             continue
         if channel == 'd':
-            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = CONFIG_DEF_WAVE[channel]
             continue
 
         lines = np.array(line_list['wavelength'])

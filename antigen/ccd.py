@@ -60,12 +60,14 @@ def base_reduction(data, masterbias, channel):
     # Subtract the master bias from the image
     image[:] -= masterbias
 
+    CHANNEL_DETECTOR, _ = config.get_channel_config_virus2()
+
     # Apply gain correction to convert counts to electrons
-    gain = config.CONFIG_CHANNEL_DETECTOR[channel]['gain']
+    gain = CHANNEL_DETECTOR[channel]['gain']
     image[:] *= gain
 
     # Calculate the error estimate (read noise + photon noise)
-    rdnoise = config.CONFIG_CHANNEL_DETECTOR[channel]['rdnoise']
+    rdnoise = CHANNEL_DETECTOR[channel]['rdnoise']
     error_estimate = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
 
     # Return the reduced image and the error estimate

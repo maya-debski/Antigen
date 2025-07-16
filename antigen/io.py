@@ -233,7 +233,8 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
                 del hdu.header[key]
 
         # Define your wavelength solution
-        def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
+        _, CHANNEL_DEF_WAVE = config.get_channel_config_virus2()
+        def_wave = CHANNEL_DEF_WAVE[channel]
         wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
 
         # Set WCS parameters correctly

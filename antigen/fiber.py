@@ -148,7 +148,7 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
-def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=config.CONFIG_FIBER_REF):
+def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=config.VIRUS2_FIBER_REF):
     """
     Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
 
@@ -158,6 +158,7 @@ def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=10
         good (ndarray): Boolean array indicating which fibers have valid data.
         use_kernel (bool): Whether to apply kernel smoothing when identifying arc lines. Default is True.
         limit (float): Limit on how far to search for matching arc lines. Default is 100.
+        fiberref (int): default = config.VIRUS2_FIBER_REF=130
 
     Returns:
         tuple: (wavelength, res, X, W)

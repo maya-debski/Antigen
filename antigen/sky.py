@@ -5,6 +5,7 @@ from scipy.ndimage import percentile_filter
 from sklearn.decomposition import PCA
 
 from antigen import fiber
+from antigen import config
 
 
 def get_skymask(sky, per=50, size=50, niter=3):
@@ -96,7 +97,7 @@ def subtract_sky(spectra, good):
     return spectra - init_sky[np.newaxis, :]
 
 
-def get_pca_sky_residuals(data, ncomponents=5):
+def get_pca_sky_residuals(data, ncomponents=config.DEFAULT_PCA_COMPONENTS_SKY):
     """
     Perform PCA on the input data to extract the principal components and
     reconstruct the data using a specified number of components.
@@ -175,7 +176,7 @@ def get_residual_map(data, pca):
     return res
 
 
-def get_arc_pca(arcskysub, good, mask, components=15):
+def get_arc_pca(arcskysub, good, mask, components=config.DEFAULT_PCA_COMPONENTS_ARC):
     """
     Perform PCA on the arc-sky-subtracted data with preprocessing to remove
     bad data points and mask the non-relevant pixels.
@@ -228,7 +229,7 @@ def get_arc_pca(arcskysub, good, mask, components=15):
     return pca
 
 
-def get_continuum(skysub, masksky, nbins=50):
+def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
     """
     Compute the continuum by interpolating the biweighted median of
     sky-subtracted data, with masked values excluded.
