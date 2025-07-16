@@ -24,7 +24,6 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 
 from input_utils import setup_logging
-from cli import get_args
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -1626,19 +1625,3 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
                                trace_list, wave_time, wave_list, ftf_list,
                                channel, pca=pca, outfolder=outfolder)
     return None
-
-
-def main():
-
-    args = get_args()
-
-    process(args.infolder, args.outfolder,
-            args.date, args.target_name, args.reduce_all,
-            args.bias_label, args.arc_label, args.dark_label, args.flat_label, args.twilight_flat_label
-            )
-
-    return None
-
-
-if __name__ == '__main__':
-    sys.exit(main())
