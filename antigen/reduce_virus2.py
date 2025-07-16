@@ -753,7 +753,7 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     sns.violinplot(x='Wavelength', y='Residual', data=df, palette='coolwarm',
                    inner=None, saturation=0.8)
     # Customize plot appearance
-    plt.xlabel('Arc Line Wavelength ($\mathrm{\AA}$)')
+    plt.xlabel(r'Arc Line Wavelength ($\mathrm{\AA}$)')
     plt.ylabel(r'Measured - Expected ($\mathrm{\AA}$)')
     plt.title('Wavelength Solution Residuals')
     plt.xticks(rotation=45)
