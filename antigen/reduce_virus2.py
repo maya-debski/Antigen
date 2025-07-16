@@ -24,7 +24,7 @@ import seaborn as sns
 from sklearn.decomposition import PCA
 
 from input_utils import setup_logging
-from input_args import get_args
+from cli import get_args
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -1401,24 +1401,34 @@ def get_filenames(gnames, typelist, names):
     return np.array(matches)  # Return matched filenames as a numpy array
 
 
-def main():
-    # =============================================================================
-    # Get Folder and Filenames
-    # =============================================================================
+def process(infolder, outfolder, obs_date, obs_name, reduce_all,
+            bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
+    """
+    Purpose: data reduction pipeline to process VIRUS2 observation files
 
-    # TODO: remove unused variables
+    Args:
+        infolder (str): Root path where reduction input file tree is located
+        outfolder (str): Path where reduction output files will be written
+        obs_date (str): Observation calendar date string formatted as YYYYMMDD
+        obs_name (str): Observation object/target name, e.g. from FITS header card
+        reduce_all (bool): Reduce all files found under infolder file tree
+        bias_label (str): string label from FITS file header for bias frames
+        arc_label (str): string label from FITS file header for arc frames
+        dark_label (str): string label from FITS file header for dark frames
+        flat_label (str): string label from FITS file header for flat frames
+        twilight_flat_label (str): string label from FITS file header for twilight frames
 
-    args = get_args()
-    infolder = args.infolder
-    outfolder = args.outfolder
+    Returns:
+        None
+    """
+    # TODO: dark_label is unused, in current and previous versions of this module
 
     # Make output folder if it doesn't exist
     mkpath(outfolder)
 
 
-    ROOT_DATA_PATH = args.infolder
-    date = args.date
-    allfilenames = sorted(glob.glob(os.path.join(ROOT_DATA_PATH, 'VIRUS2', date,
+    ROOT_DATA_PATH = infolder
+    allfilenames = sorted(glob.glob(os.path.join(ROOT_DATA_PATH, 'VIRUS2', obs_date,
                                          '*', '*', '*.fits')))
     unit_list = [fn.split('_')[-4] for fn in allfilenames]
     units = np.unique(unit_list)
@@ -1489,18 +1499,11 @@ def main():
         # Get the bias filenames, domeflat filenames, and arc lamp filenames
         # =============================================================================
         log.info('Sorting Files')
-        bnames = [args.bias_label]
-        dnames = [args.dark_label]  # TODO: unused variable
-        anames = [args.arc_label]
-        tnames = [args.twilight_flat_label]
-        dfnames = [args.flat_label]
-        snames = ['feige', 'bd']
-        bias_filenames = get_filenames(gnames, typelist, bnames)
-        twiflt_filenames = get_filenames(gnames, typelist, tnames)
-        domeflt_filenames = get_filenames(gnames, typelist, dfnames)
-        arc_filenames = get_filenames(gnames, typelist, anames)
-        std_filenames = get_filenames(gnames, typelist, snames)  # TODO: unused variable
-        if args.reduce_all:
+        bias_filenames = get_filenames(gnames, typelist, [bias_label])
+        twiflt_filenames = get_filenames(gnames, typelist, [twilight_flat_label])
+        domeflt_filenames = get_filenames(gnames, typelist, [flat_label])
+        arc_filenames = get_filenames(gnames, typelist, [arc_label])
+        if reduce_all:
             gna = []
             for gn in gnames:
                 if gn in bias_filenames:
@@ -1514,8 +1517,8 @@ def main():
                 gna.append(gn)
             sci_filenames = np.array(gna)
         else:
-            if args.name is not None:
-                sci_filenames = get_filenames(gnames, typelist, [args.name])
+            if obs_name is not None:
+                sci_filenames = get_filenames(gnames, typelist, [obs_name])
             else:
                 sci_filenames = []
 
@@ -1565,7 +1568,7 @@ def main():
         for masterflt, mtime in zip(masterflt_list, flttime_list):
             masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
             trace, good, Tchunk, xchunk = get_trace(masterflt-masterbias, ref)
-            plot_trace(trace, Tchunk, xchunk, outfolder)
+            plot_trace(trace, Tchunk, xchunk, outfolder=outfolder)
             trace_list.append([trace, good])
             domeflat_spec = get_spectra(masterflt-masterbias, trace)
             domeflat_error = 0. * domeflat_spec
@@ -1622,6 +1625,18 @@ def main():
             sky, cont = reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
                                trace_list, wave_time, wave_list, ftf_list,
                                channel, pca=pca, outfolder=outfolder)
+    return None
+
+
+def main():
+
+    args = get_args()
+
+    process(args.infolder, args.outfolder,
+            args.date, args.target_name, args.reduce_all,
+            args.bias_label, args.arc_label, args.dark_label, args.flat_label, args.twilight_flat_label
+            )
+
     return None
 
 
