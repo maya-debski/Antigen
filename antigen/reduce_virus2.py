@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from distutils.dir_util import mkpath
-import glob
 import os
 import warnings
 import sys
@@ -1202,86 +1200,10 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     res[:, ~skymask] = 0.0
 
     # Write the final reduced data to a new FITS file
-    write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header, channel, outfolder)
+    io.write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header, channel, outfolder)
 
     # Return the biweighted spectrum and continuum
     return biweight(specrect, axis=0,ignore_nan=True), cont
-
-
-def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel, outfolder):
-    """
-    Writes the sky-subtracted, rectified spectra and error data to a FITS file, 
-    preserving the header information and adding necessary meta-information.
-
-    Parameters
-    ----------
-    skysubrect_adv : 2D numpy array
-        The advanced sky-subtracted spectrum.
-    skysubrect : 2D numpy array
-        The basic sky-subtracted spectrum.
-    specrect : 2D numpy array
-        The rectified spectrum.
-    errorrect : 2D numpy array
-        The error associated with the rectified spectrum.
-    header : FITS header
-        The header information to be preserved in the output FITS file.
-    """
-    # TODO: update docstring to match function signature, input args
-    
-    hdulist = []  # List to store HDU objects for the FITS file
-
-    # Loop through the data arrays and create HDUs for each
-    for image, ftp in zip([skysubrect_adv, skysubrect, specrect, errorrect], 
-                          [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU]):
-        
-        # Create an HDU object from each image, setting it to 'float32' type
-        hdu = ftp(np.array(image, dtype='float32'))
-        
-        # Remove any conflicting CD matrix elements first
-        for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2', 'CDELT1', 'CDELT2']:
-            if key in hdu.header:
-                del hdu.header[key]
-        
-        # Define your wavelength solution
-        def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
-        wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
-        
-        # Set WCS parameters correctly
-        hdu.header['CRVAL1'] = def_wave[0]  # First wavelength (Angstroms)
-        hdu.header['CRPIX1'] = 1  # First pixel corresponds to first wavelength
-        hdu.header['CD1_1'] = wavelength_step  # Set CD1_1 to match wavelength step
-        hdu.header['CTYPE1'] = 'WAVE'  # Spectral axis label
-        
-        # Set fiber axis metadata
-        hdu.header['CRVAL2'] = 1  # Reference value for fiber index
-        hdu.header['CRPIX2'] = 1  # First pixel for fiber axis
-        hdu.header['CD2_2'] = 1  # Step of 1 fiber per index
-        hdu.header['CTYPE2'] = 'FIBER'  # Labeling fiber axis
-
-        # Copy relevant keys from the input header, avoiding duplicates
-        for key in header.keys():
-            if key in hdu.header:
-                continue
-            if ('CCDSEC' in key) or ('DATASEC' in key):  # Exclude CCDSEC and DATASEC keys
-                continue
-            if ('BSCALE' in key) or ('BZERO' in key):  # Exclude BSCALE and BZERO keys
-                continue
-            try:
-                hdu.header[key] = header[key]  # Copy header data to the new HDU
-            except:
-                continue
-
-        # Format the output filename using observation date and object name
-        t = Time(header['DATE-OBS'] + 'T' + header['UT'])
-        objname = '_'.join(header['OBJECT'].split())
-        iname = '_'.join([objname, t.strftime('%Y%m%dT%H%M%S'), 'multi'])  # Generate filename
-
-        # Append the HDU to the list
-        hdulist.append(hdu)
-
-    # TODO: iname, accidental scope spill from for loop to function scope; replace with intentional assignment
-    # Write the HDU list to the output file, overwriting if necessary
-    fits.HDUList(hdulist).writeto(os.path.join(outfolder, iname + '.fits'), overwrite=True)
 
 
 def make_mastercal_list(filenames, breakind, channel):
