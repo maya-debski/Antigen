@@ -44,13 +44,6 @@ CONFIG_FIBER_RADIUS = 2.483 / 2.
 CONFIG_PCA_COMPONENTS = 15
 
 
-
-args = get_args()
-folder = args.infolder
-outfolder = args.outfolder
-# Make output folder if it doesn't exist
-mkpath(outfolder)
-
 log = setup_logging('virusp_reductions')
 
 sns.set_context('talk')
@@ -770,7 +763,7 @@ def plot_wavelength(lines, W, wavelength):
     # Save the plot as a PNG file with the given name
     plt.savefig(op.join(outfolder, 'wavelength_measures.png'))
 
-def plot_trace(full_trace, trace, x, orders=[5, 130, 230]):
+def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
 
     '''
     Plots the residuals of the trace correction and saves the figure.
@@ -1121,7 +1114,7 @@ def get_continuum(skysub, masksky, nbins=50):
     
 def reduce(fn, biastime_list, masterbias_list, flttime_list,
            trace_list, wave_time, wave_list, ftf_list, channel, 
-           pca=None):
+           pca=None, outfolder=None):
     """
     Reduce the raw data by performing a series of processing steps, 
     including bias subtraction, flat-fielding, sky subtraction, 
@@ -1217,13 +1210,13 @@ def reduce(fn, biastime_list, masterbias_list, flttime_list,
     res[:, ~skymask] = 0.0
 
     # Write the final reduced data to a new FITS file
-    write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header)
+    write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header, outfolder)
 
     # Return the biweighted spectrum and continuum
     return biweight(specrect, axis=0,ignore_nan=True), cont
 
 
-def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header):
+def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, outfolder):
     """
     Writes the sky-subtracted, rectified spectra and error data to a FITS file, 
     preserving the header information and adding necessary meta-information.
@@ -1397,6 +1390,15 @@ def get_filenames(gnames, typelist, names):
 # =============================================================================
 # Get Folder and Filenames
 # =============================================================================
+
+args = get_args()
+infolder = args.infolder
+outfolder = args.outfolder
+
+# Make output folder if it doesn't exist
+mkpath(outfolder)
+
+
 ROOT_DATA_PATH = args.infolder
 date = args.date
 allfilenames = sorted(glob.glob(op.join(ROOT_DATA_PATH, 'VIRUS2', date, 
