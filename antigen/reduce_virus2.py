@@ -1435,27 +1435,28 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     # =============================================================================
 
     for unit in units:
+
+        # =========================================
+        # Get def_wave and line_list for given channel
+        # TODO: implemented the other three channels, using green as a template
+        # =========================================
         channel = unit[-1].lower()
-        def_wave = None
         line_list = None
         limit = None
-        gain = None  # TODO: unused variable
-        rdnoise = None  # TODO: unused variable
+        xref = None
         if channel == 'b':
-            def_wave = np.linspace(3700., 4630., 2064)  # TODO: unused variable
+            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
         if channel == 'g':
-            def_wave = np.linspace(4610., 5925., 2064)
+            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
             line_list_filepath = config.get_config_filepath('line_list', 'virus2_green.txt')
             line_list = Table.read(line_list_filepath, format="ascii")
-            limit = 20
-            gain = 2.017  # TODO: unused variable
-            rdnoise = 3.09  # TODO: unused variable
+            limit = CONFIG_CHANNEL_DETECTOR[channel]['limit']
         if channel == 'r':
-            def_wave = np.linspace(5900., 7610., 2064)  # TODO: unused variable
+            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
         if channel == 'd':
-            def_wave = np.linspace(7590., 9300., 2064)  # TODO: unused variable
+            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
 
         lines = np.array(line_list['wavelength'])
