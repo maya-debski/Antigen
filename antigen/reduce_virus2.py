@@ -3,7 +3,7 @@
 
 from distutils.dir_util import mkpath
 import glob
-import os.path as op
+import os
 import warnings
 import sys
 import traceback
@@ -55,7 +55,7 @@ def get_script_path():
     '''
     Get script path, aka, where does Antigen live?
     '''
-    return op.dirname(op.realpath(sys.argv[0]))
+    return os.path.dirname(os.path.realpath(sys.argv[0]))
 
 def identify_sky_pixels(sky, per=50, size=50):
     """
@@ -757,7 +757,7 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     plt.xticks(rotation=45)
 
     # Save the plot as a PNG file with the given name
-    plt.savefig(op.join(outfolder, 'wavelength_measures.png'))
+    plt.savefig(os.path.join(outfolder, 'wavelength_measures.png'))
 
 def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
 
@@ -806,7 +806,7 @@ def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
     plt.ylabel('Trace - Mean(Trace)')
 
     # Save the plot as a PNG file with the given name
-    plt.savefig(op.join(outfolder, 'trace_measures.png'))
+    plt.savefig(os.path.join(outfolder, 'trace_measures.png'))
     
 
 def prep_image(image, channel):
@@ -1287,7 +1287,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
         hdulist.append(hdu)
 
     # Write the HDU list to the output file, overwriting if necessary
-    fits.HDUList(hdulist).writeto(op.join(outfolder, iname + '.fits'), overwrite=True)
+    fits.HDUList(hdulist).writeto(os.path.join(outfolder, iname + '.fits'), overwrite=True)
 
 
 def make_mastercal_list(filenames, breakind, channel):
@@ -1403,7 +1403,7 @@ def main():
 
     ROOT_DATA_PATH = args.infolder
     date = args.date
-    allfilenames = sorted(glob.glob(op.join(ROOT_DATA_PATH, 'VIRUS2', date,
+    allfilenames = sorted(glob.glob(os.path.join(ROOT_DATA_PATH, 'VIRUS2', date,
                                          '*', '*', '*.fits')))
     unit_list = [fn.split('_')[-4] for fn in allfilenames]
     units = np.unique(unit_list)
@@ -1429,7 +1429,7 @@ def main():
             continue
         if channel == 'g':
             def_wave = np.linspace(4610., 5925., 2064)
-            line_list = Table.read(op.join(DIRNAME, 'line_list',
+            line_list = Table.read(os.path.join(DIRNAME, 'line_list',
                                             'virus2_green.txt'), format='ascii')
             limit = 20
             gain = 2.017
@@ -1510,15 +1510,15 @@ def main():
         # =============================================================================
         # Use the file numbers for connecting blocks of observations
         # =============================================================================
-        biasnum = [int(op.basename(op.dirname(op.dirname(fn)))) for fn in bias_filenames]
-        fltnum = [int(op.basename(op.dirname(op.dirname(fn)))) for fn in flt_filenames]
-        arcnum = [int(op.basename(op.dirname(op.dirname(fn)))) for fn in arc_filenames]
+        biasnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in bias_filenames]
+        fltnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in flt_filenames]
+        arcnum = [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in arc_filenames]
         bias_breakind = np.where(np.diff(biasnum) > 1)[0]
         flt_breakind = np.where(np.diff(fltnum) > 1)[0]
         arc_breakind = np.where(np.diff(arcnum) > 1)[0]
 
         # Load reference fiber locations from a predefined file
-        ref = Table.read(op.join(DIRNAME, 'IFUcen', 'IFUcen_VIRUS2_D3G.txt'), format='ascii')
+        ref = Table.read(os.path.join(DIRNAME, 'IFUcen', 'IFUcen_VIRUS2_D3G.txt'), format='ascii')
         ref.reverse()
         # =============================================================================
         # Make a master bias, master dome flat, and master arc for the first set of OBS
