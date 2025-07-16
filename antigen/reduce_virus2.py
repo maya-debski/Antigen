@@ -5,7 +5,6 @@
 @author: mayad
 """
 
-import argparse as ap
 import glob
 import numpy as np
 import os.path as op
@@ -18,7 +17,7 @@ from astropy.stats import mad_std
 from astropy.table import Table
 from astropy.time import Time
 from distutils.dir_util import mkpath
-from input_utils import setup_logging
+
 from astropy.stats import biweight_location as biweight
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
@@ -27,49 +26,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
+from input_utils import setup_logging
+from input_args import get_args
+
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
 
-parser = ap.ArgumentParser(add_help=True)
 
-parser.add_argument("folder", help='''Input folder''', type=str)
-
-parser.add_argument('date', type=str,
-                     help='''string name for date, ex: 20250613''')
-
-parser.add_argument('outfolder', type=str,
-                     help='''name of the output file''')
-
-parser.add_argument('-n', '--name', type=str,
-                    help='''Name of the science target''', default=None)
-
-parser.add_argument("-ra", "--reduce_all",
-                    help='''Reduce all files in folder''',
-                    action="count", default=0)
-
-parser.add_argument("-bl", "--bias_label",
-                    help='''The objet name for bias files''',
-                   type=str, default='bias')
-
-parser.add_argument("-al", "--arc_label",
-                    help='''The objet name for arc files''',
-                   type=str, default='arc')
-
-parser.add_argument("-dl", "--dark_label",
-                    help='''The objet name for arc files''',
-                   type=str, default='dark')
-
-parser.add_argument("-fl", "--flat_label",
-                    help='''The objet name for dome flat files''',
-                   type=str, default='flat')
-
-parser.add_argument("-tfl", "--twilight_flat_label",
-                    help='''The objet name for twilight flat files''',
-                   type=str, default='twi')
-
-argv = None
-args = parser.parse_args(args=argv)
-folder = args.folder
+args = get_args()
+folder = args.infolder
 outfolder = args.outfolder
 # Make output folder if it doesn't exist
 mkpath(outfolder)
@@ -1420,7 +1385,7 @@ def get_filenames(gnames, typelist, names):
 # =============================================================================
 # Get Folder and Filenames
 # =============================================================================
-ROOT_DATA_PATH = args.folder
+ROOT_DATA_PATH = args.infolder
 date = args.date
 allfilenames = sorted(glob.glob(op.join(ROOT_DATA_PATH, 'VIRUS2', date, 
                                      '*', '*', '*.fits')))
