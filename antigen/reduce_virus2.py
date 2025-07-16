@@ -1470,7 +1470,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         unit_filenames = [record['filename'] for record in metadata_records if record['spec_id'] == unit]
 
         typelist = []
-        gnames = []
+        valid_files = []
         timelist = []
 
         for fn in unit_filenames:
@@ -1480,34 +1480,29 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
                 obs_date_str = fn_meta_data['utc_str_date']  # fits.open(f)[0].header['DATE-OBS']
             except:
                 continue
+
+            # Only store files for which the filename meta-data parsing is valid
             typelist.append(obj_frame_type)
-            gnames.append(fn)
+            valid_files.append(fn)
             timelist.append(Time(obs_date_str))
 
         # =============================================================================
-        # Get the bias filenames, domeflat filenames, and arc lamp filenames
+        # Get/sort subsets of filenames that are bias filenames, domeflat filenames, and arc lamp filenames
         # =============================================================================
-        log.info('Sorting Files')
-        bias_filenames = get_filenames(gnames, typelist, [bias_label])
-        twiflt_filenames = get_filenames(gnames, typelist, [twilight_flat_label])
-        domeflt_filenames = get_filenames(gnames, typelist, [flat_label])
-        arc_filenames = get_filenames(gnames, typelist, [arc_label])
+
+        log.info('Sorting FITS Files by frame type')
+
+        bias_filenames    = io.get_matching_filenames(valid_files, typelist, [bias_label])
+        twiflt_filenames  = io.get_matching_filenames(valid_files, typelist, [twilight_flat_label])
+        domeflt_filenames = io.get_matching_filenames(valid_files, typelist, [flat_label])
+        arc_filenames     = io.get_matching_filenames(valid_files, typelist, [arc_label])
+
         if reduce_all:
-            gna = []
-            for gn in gnames:
-                if gn in bias_filenames:
-                    continue
-                if gn in arc_filenames:
-                    continue
-                if gn in twiflt_filenames:
-                    continue
-                if gn in domeflt_filenames:
-                    continue
-                gna.append(gn)
-            sci_filenames = np.array(gna)
+            non_sci_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames)
+            sci_filenames = [fn for fn in valid_files if fn not in non_sci_files]
         else:
             if obs_name is not None:
-                sci_filenames = get_filenames(gnames, typelist, [obs_name])
+                sci_filenames =  io.get_matching_filenames(valid_files, typelist, [obs_name])
             else:
                 sci_filenames = []
 
