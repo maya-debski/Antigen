@@ -43,11 +43,8 @@ CONFIG_FIBER_RADIUS = 2.483 / 2.
 CONFIG_PCA_COMPONENTS = 15
 
 
-log = setup_logging('virusp_reductions')
-
 sns.set_context('talk')
 sns.set_style('ticks')
-
 plt.rcParams["font.family"] = "Times New Roman"
 
 
@@ -1422,9 +1419,10 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     """
     # TODO: dark_label is unused, in current and previous versions of this module
 
+    log = setup_logging('virus2_reductions')
+
     # Make output folder if it doesn't exist
     mkpath(outfolder)
-
 
     ROOT_DATA_PATH = infolder
     allfilenames = sorted(glob.glob(os.path.join(ROOT_DATA_PATH, 'VIRUS2', obs_date,
