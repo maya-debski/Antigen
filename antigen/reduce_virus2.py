@@ -52,6 +52,8 @@ sns.set_style('ticks')
 plt.rcParams["font.family"] = "Times New Roman"
 
 
+# TODO: mixed use of style guides, Google vs Numpy, especially in docstrings; pick one
+
 def get_script_path():
     """
     Get script path, aka, where does Antigen live?
@@ -777,6 +779,7 @@ def plot_trace(full_trace, trace, x, orders=[5, 130, 230], outfolder=None):
     -------
     None.
     """
+    # TODO: update docstring to match input args, function signature
 
     X = np.arange(full_trace.shape[1])
     # Create a figure with specified size
@@ -830,6 +833,7 @@ def prep_image(image, channel):
         Oriented fits image correcting for what amplifier it comes from
         These flips are unique to the VIRUS/LRS2 amplifiers
     """
+    # TODO: update docstring to match input args, function signature
     
     overscan_length = 32
     bias_value = biweight(image[:, -(overscan_length-2):])
@@ -868,6 +872,7 @@ def base_reduction(data, masterbias, channel):
     E : 2d numpy array
         Error estimate for each pixel, including read noise and photon noise.
     """
+    # TODO: update docstring to match input args, function signature
 
     # Preprocess the raw image (e.g., background subtraction, padding)
     image = prep_image(data, channel)
@@ -949,6 +954,7 @@ def get_pca_sky_residuals(data, ncomponents=5):
     A : 2d numpy array
         The reconstructed data using the first `ncomponents` principal components.
     """
+    # TODO: fix magic number default for components, use CONFIG params?
 
     # Initialize PCA with the specified number of components
     pca = PCA(n_components=ncomponents)
@@ -1030,6 +1036,7 @@ def get_arc_pca(arcskysub, good, mask, components=15):
     pca : PCA object
         The fitted PCA model.
     """
+    # TODO: fix magic number default for components, use CONFIG params?
 
     # Initialize X as the arc-sky-subtracted data
     X = arcskysub
@@ -1080,6 +1087,7 @@ def get_continuum(skysub, masksky, nbins=50):
     bigcont : 2d numpy array
         The continuum for each spectrum in the sky-subtracted data.
     """
+    # TODO: fix magic number default for nbins, use CONFIG params?
 
     # Initialize the output array for the continuum with zeros
     bigcont = skysub * 0.
@@ -1147,6 +1155,7 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     continuum : 1d numpy array
         The computed continuum for the spectrum.
     """
+    # TODO: update docstring to match function signature, input args
 
     # Open the FITS file and extract the observation time
     f = fits.open(fn)
@@ -1235,6 +1244,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
     header : FITS header
         The header information to be preserved in the output FITS file.
     """
+    # TODO: update docstring to match function signature, input args
     
     hdulist = []  # List to store HDU objects for the FITS file
 
@@ -1287,6 +1297,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
         # Append the HDU to the list
         hdulist.append(hdu)
 
+    # TODO: iname, accidental scope spill from for loop to function scope; replace with intentional assignment
     # Write the HDU list to the output file, overwriting if necessary
     fits.HDUList(hdulist).writeto(os.path.join(outfolder, iname + '.fits'), overwrite=True)
 
@@ -1310,6 +1321,7 @@ def make_mastercal_list(filenames, breakind, channel):
     times : list of float
         List of mean observation times (MJD) corresponding to each chunk.
     """
+    # TODO: update docstring to match function signature, input args
 
     # Define break points for splitting the filenames into chunks
     breakind1 = np.hstack([0, breakind])  # Start indices for chunks
@@ -1378,7 +1390,7 @@ def get_filenames(gnames, typelist, names):
     np.ndarray
         Array of filenames from `gnames` that match any of the keywords in `names`.
     """
-
+    # TODO: fix type, replace numpy.ndarray with lists when handling filenames; no vector operations are used
     matches = []  # List to store matched filenames
     # Iterate through each filename and its corresponding type
     for gn, tp in zip(gnames, typelist):
@@ -1393,6 +1405,8 @@ def main():
     # =============================================================================
     # Get Folder and Filenames
     # =============================================================================
+
+    # TODO: remove unused variables
 
     args = get_args()
     infolder = args.infolder
@@ -1411,6 +1425,7 @@ def main():
     observations = np.unique([fn.split('_')[-6]  for fn in allfilenames])
     DIRNAME = get_script_path()
 
+    # TODO: replace magic numbers with use of CONFIG params from above?
     fiber_radius = 2.483 / 2.
     pca_comp = 15
 
@@ -1418,33 +1433,34 @@ def main():
     # =============================================================================
     # Get Line List
     # =============================================================================
+    # TODO: replace magic numbers with use of CONFIG channel params!
     for unit in units:
         channel = unit[-1].lower()
         def_wave = None
         line_list = None
         limit = None
-        gain = None
-        rdnoise = None
+        gain = None  # TODO: unused variable
+        rdnoise = None  # TODO: unused variable
         if channel == 'b':
-            def_wave = np.linspace(3700., 4630., 2064)
+            def_wave = np.linspace(3700., 4630., 2064)  # TODO: unused variable
             continue
         if channel == 'g':
             def_wave = np.linspace(4610., 5925., 2064)
             line_list = Table.read(os.path.join(DIRNAME, 'line_list',
                                             'virus2_green.txt'), format='ascii')
             limit = 20
-            gain = 2.017
-            rdnoise = 3.09
+            gain = 2.017  # TODO: unused variable
+            rdnoise = 3.09  # TODO: unused variable
         if channel == 'r':
-            def_wave = np.linspace(5900., 7610., 2064)
+            def_wave = np.linspace(5900., 7610., 2064)  # TODO: unused variable
             continue
         if channel == 'd':
-            def_wave = np.linspace(7590., 9300., 2064)
+            def_wave = np.linspace(7590., 9300., 2064)  # TODO: unused variable
             continue
 
         filenames = [fn for fn, un in zip(allfilenames, unit_list) if un == unit]
 
-        fiberref = 130
+        fiberref = 130    # TODO: unused variable
         lines = np.array(line_list['wavelength'])
         xref = np.array(line_list['col'])
         use_kernel = True
@@ -1474,7 +1490,7 @@ def main():
         # =============================================================================
         log.info('Sorting Files')
         bnames = [args.bias_label]
-        dnames = [args.dark_label]
+        dnames = [args.dark_label]  # TODO: unused variable
         anames = [args.arc_label]
         tnames = [args.twilight_flat_label]
         dfnames = [args.flat_label]
@@ -1483,7 +1499,7 @@ def main():
         twiflt_filenames = get_filenames(gnames, typelist, tnames)
         domeflt_filenames = get_filenames(gnames, typelist, dfnames)
         arc_filenames = get_filenames(gnames, typelist, anames)
-        std_filenames = get_filenames(gnames, typelist, snames)
+        std_filenames = get_filenames(gnames, typelist, snames)  # TODO: unused variable
         if args.reduce_all:
             gna = []
             for gn in gnames:
@@ -1519,12 +1535,14 @@ def main():
         arc_breakind = np.where(np.diff(arcnum) > 1)[0]
 
         # Load reference fiber locations from a predefined file
+        # TODO: use package data files from antigen.config
         ref = Table.read(os.path.join(DIRNAME, 'IFUcen', 'IFUcen_VIRUS2_D3G.txt'), format='ascii')
         ref.reverse()
         # =============================================================================
         # Make a master bias, master dome flat, and master arc for the first set of OBS
         # =============================================================================
         log.info('Making master bias frames')
+        # TODO: fix type, replace numpy.ndarray with lists when handling filenames; no vector operations are used
         masterbias_list, biastime_list = make_mastercal_list(bias_filenames,
                                                              bias_breakind, channel)
 
@@ -1565,6 +1583,7 @@ def main():
             masterbias = masterbias_list[get_cal_index(mtime, biastime_list)]
             trace, good = trace_list[get_cal_index(mtime, flttime_list)]
             lamp_spec = get_spectra(masterarc-masterbias, trace)
+            # TODO: move definition of test.fits to CONFIG param
             fits.PrimaryHDU(lamp_spec).writeto('test.fits',overwrite=True)
             try:
                 wavelength, res, X, W = get_wavelength(lamp_spec, trace, good,
