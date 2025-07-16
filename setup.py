@@ -11,5 +11,15 @@ setup(
     package_data={'antigen': ['config/*.txt'],},
     include_package_data=True,
     scripts=['scripts/antigen_reduce_virus2.py',],
+    install_requires=[
+        'astropy',
+        'numpy',
+        'matplotlib',
+        'pandas',
+        'scikit-learn',
+        'scipy',
+        'seaborn'
+    ],
+    python_requires='>=3.11',
 )
 
