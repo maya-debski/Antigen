@@ -29,22 +29,6 @@ from antigen import io
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
-
-
-# Initialize wavelength array and starting fiber position
-CONFIG_FIBER_REF = 130
-CONFIG_CHANNEL_DETECTOR = {'g': {'gain': 2.017, 'rdnoise': 3.09, 'limit': 20},
-                           'b': {'gain': None,  'rdnoise': None, 'limit': None},
-                           'r': {'gain': None,  'rdnoise': None, 'limit': None},
-                           'd': {'gain': None,  'rdnoise': None, 'limit': None}}
-CONFIG_CHANNEL_DEF_WAVE = {'g': np.linspace(4610., 5925., 2064),
-                           'b': np.linspace(3700., 4630., 2064),
-                           'r': np.linspace(5900., 7610., 2064),
-                           'd': np.linspace(7590., 9300., 2064)}
-CONFIG_FIBER_RADIUS = 2.483 / 2.
-CONFIG_PCA_COMPONENTS = 15
-
-
 sns.set_context('talk')
 sns.set_style('ticks')
 plt.rcParams["font.family"] = "Times New Roman"
@@ -245,7 +229,7 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
     
 
-def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=CONFIG_FIBER_REF):
+def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=config.CONFIG_FIBER_REF):
     """
     Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
 
@@ -879,11 +863,11 @@ def base_reduction(data, masterbias, channel):
     image[:] -= masterbias
 
     # Apply gain correction to convert counts to electrons
-    gain = CONFIG_CHANNEL_DETECTOR[channel]['gain']
+    gain = config.CONFIG_CHANNEL_DETECTOR[channel]['gain']
     image[:] *= gain
 
     # Calculate the error estimate (read noise + photon noise)
-    rdnoise = CONFIG_CHANNEL_DETECTOR[channel]['rdnoise']
+    rdnoise = config.CONFIG_CHANNEL_DETECTOR[channel]['rdnoise']
     E = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
 
     # Return the reduced image and the error estimate
@@ -1186,7 +1170,7 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
 
     # Rectify the spectrum and error based on the wavelength
-    def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+    def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
     specrect, errrect = rectify(spec, specerr, wavelength, def_wave)
 
     # Apply flat-field correction
@@ -1202,7 +1186,7 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
 
     # If PCA is not provided, compute it from the sky-subtracted data
     if pca is None:
-        pca = get_arc_pca(skysubrect, good, skymask, components=CONFIG_PCA_COMPONENTS)
+        pca = get_arc_pca(skysubrect, good, skymask, components=config.CONFIG_PCA_COMPONENTS)
         return pca
 
     # Adjust the sky mask and compute the continuum
@@ -1259,7 +1243,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
                 del hdu.header[key]
         
         # Define your wavelength solution
-        def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+        def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
         wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
         
         # Set WCS parameters correctly
@@ -1466,18 +1450,18 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         limit = None
         xref = None
         if channel == 'b':
-            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
         if channel == 'g':
-            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
             line_list_filepath = config.get_config_filepath('line_list', 'virus2_green.txt')
             line_list = Table.read(line_list_filepath, format="ascii")
-            limit = CONFIG_CHANNEL_DETECTOR[channel]['limit']
+            limit = config.CONFIG_CHANNEL_DETECTOR[channel]['limit']
         if channel == 'r':
-            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
         if channel == 'd':
-            def_wave = CONFIG_CHANNEL_DEF_WAVE[channel]
+            def_wave = config.CONFIG_CHANNEL_DEF_WAVE[channel]
             continue
 
         lines = np.array(line_list['wavelength'])

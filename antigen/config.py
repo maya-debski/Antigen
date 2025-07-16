@@ -1,5 +1,20 @@
 from importlib.resources import files
 from pathlib import Path
+import numpy as np
+
+
+# Initialize wavelength array and starting fiber position
+CONFIG_FIBER_REF = 130
+CONFIG_CHANNEL_DETECTOR = {'g': {'gain': 2.017, 'rdnoise': 3.09, 'limit': 20},
+                           'b': {'gain': None,  'rdnoise': None, 'limit': None},
+                           'r': {'gain': None,  'rdnoise': None, 'limit': None},
+                           'd': {'gain': None,  'rdnoise': None, 'limit': None}}
+CONFIG_CHANNEL_DEF_WAVE = {'g': np.linspace(4610., 5925., 2064),
+                           'b': np.linspace(3700., 4630., 2064),
+                           'r': np.linspace(5900., 7610., 2064),
+                           'd': np.linspace(7590., 9300., 2064)}
+CONFIG_FIBER_RADIUS = 2.483 / 2.
+CONFIG_PCA_COMPONENTS = 15
 
 
 def get_base_config_path():
