@@ -21,8 +21,8 @@ from sklearn.decomposition import PCA
 from . import config
 from . import io
 from . import fiber
-from .input_utils import setup_logging
-from .plot import plot_wavelength, plot_trace
+from . import input_utils
+from . import plot
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
@@ -638,7 +638,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     """
     # TODO: dark_label is unused, in current and previous versions of this module
 
-    log = setup_logging('virus2_reductions')
+    log = input_utils.setup_logging('virus2_reductions')
 
     os.makedirs(outfolder, exist_ok=True)
 
@@ -763,7 +763,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         for masterflt, mtime in zip(masterflt_list, flttime_list):
             masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
             trace, good, Tchunk, xchunk = fiber.get_trace(masterflt - masterbias, ref)
-            plot_trace(trace, Tchunk, xchunk, outfolder=outfolder)
+            plot.plot_trace(trace, Tchunk, xchunk, outfolder=outfolder)
             trace_list.append([trace, good])
             domeflat_spec = fiber.get_spectra(masterflt - masterbias, trace)
             domeflat_error = 0. * domeflat_spec
@@ -789,7 +789,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
                                                        use_kernel=use_kernel)
 
                 # Plot wavelength solution for inspection
-                plot_wavelength(lines, W, wavelength, outfolder)
+                plot.plot_wavelength(lines, W, wavelength, outfolder)
             except:
                 log.warning('Could not get wavelength solution for masterarc')
                 log.warning('First file of failed masterarc included: %s' %
