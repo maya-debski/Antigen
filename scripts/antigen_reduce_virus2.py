@@ -10,8 +10,8 @@ def main():
     args = get_args()
 
     process(args.infolder, args.outfolder,
-            args.date, args.target_name, args.reduce_all,
-            args.bias_label, args.arc_label, args.dark_label, args.flat_label, args.twilight_flat_label
+            args.date, args.name, args.reduce_all,
+            args.bias, args.arc, args.dark, args.flat, args.twilight
             )
 
     return None

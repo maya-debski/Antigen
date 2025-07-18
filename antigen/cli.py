@@ -47,7 +47,7 @@ def get_args():
     parser.add_argument('-a', '--arc', type=str, help=helps['arc_label'], default=defaults['arc_label'])
     parser.add_argument('-d', '--dark', type=str, help=helps['dark_label'], default=defaults['dark_label'])
     parser.add_argument('-f', '--flat', type=str, help=helps['flat_label'], default=defaults['flat_label'])
-    parser.add_argument("-t", "--twilight_flat_label", type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
+    parser.add_argument('-t', '--twilight', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
     argv = None
     args = parser.parse_args(args=argv)
 
