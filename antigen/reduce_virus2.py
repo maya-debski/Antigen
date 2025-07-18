@@ -194,7 +194,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
             continue
         if channel == 'g':
             def_wave = CONFIG_DEF_WAVE[channel]
-            line_list_filepath = config.get_config_filepath('line_list', 'virus2_green.txt')
+            line_list_filepath = config.get_config_filepath('lines', 'virus2_green.txt')
             line_list = Table.read(line_list_filepath, format="ascii")
             limit = CONFIG_DETECTOR[channel]['limit']
         if channel == 'r':
