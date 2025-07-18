@@ -11,7 +11,7 @@ def get_args():
     """
 
     defaults = {
-        'in_folder' : os.curdir,
+        'in_folder' : os.path.abspath(os.curdir),
         'out_folder': datetime.datetime.now().strftime('antigen_reduce_virus2_%Y%m%d_%H%M%S'),
         'obs_date': datetime.datetime.now().strftime('%Y%m%d'),
         'obs_name': None,

@@ -168,7 +168,10 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
 
     os.makedirs(outfolder, exist_ok=True)
 
-    ROOT_DATA_PATH = infolder
+    ROOT_DATA_PATH = os.path.abspath(infolder)
+    if not os.path.isfile(ROOT_DATA_PATH):
+        raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {ROOT_DATA_PATH}')
+
     metadata_records = io.parse_fits_file_tree(ROOT_DATA_PATH, date=obs_date, verbose=True)
     unit_list = [record['spec_id'] for record in metadata_records]
     units = list(set(unit_list))
