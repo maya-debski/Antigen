@@ -169,7 +169,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     os.makedirs(outfolder, exist_ok=True)
 
     ROOT_DATA_PATH = os.path.abspath(infolder)
-    if not os.path.isfile(ROOT_DATA_PATH):
+    if not os.path.isdir(ROOT_DATA_PATH):
         raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {ROOT_DATA_PATH}')
 
     metadata_records = io.parse_fits_file_tree(ROOT_DATA_PATH, date=obs_date, verbose=True)
@@ -264,18 +264,23 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         # Use exceptions to exit process if needed frame-types file counts were not found
         # =============================================================================
         log.info('Validating total number of found files, by frame type ...')
+        # TODO: decide on minimum count, and consider defining it in the config
+        bias_minimum_count = 1
+        flat_minimum_count = 1
+        arc_minimum_count = 1
+
         num_bias_files = len(bias_filenames)
-        if num_bias_files < 2:
+        if num_bias_files < bias_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
                                f'found total number of BIAS files = {num_bias_files}, '
                                f'but need >= 2')
         num_flt_files = len(flt_filenames)
-        if num_flt_files < 2:
+        if num_flt_files < flat_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
                                f'found total number of FLAT files = {num_flt_files}, '
                                f'but need >= 2')
         num_arc_files = len(arc_filenames)
-        if num_arc_files < 2:
+        if num_arc_files < arc_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
                                f'found total number of ARC files = {num_bias_files}, '
                                f'but need >= 2')
