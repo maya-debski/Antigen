@@ -46,15 +46,18 @@ def get_config_filepath(*path_parts):
                            For example: get_config_file("lines", "virus2_green.txt")
 
     Returns:
-        Path: A Path object pointing to the config file.
+        config_file_path (Path): A Path object pointing to the config file.
 
     Raises:
         FileNotFoundError: If the file does not exist.
     """
-    config_filepath = get_base_config_path().joinpath(*path_parts)
-    if not config_filepath.is_file():
-        raise FileNotFoundError(f"Config file not found: {config_filepath}")
-    return config_filepath
+    installed_config_path_base = get_base_config_path()
+    config_file_path = installed_config_path_base.joinpath(*path_parts)
+    if not config_file_path.exists():
+        raise FileNotFoundError(f"Config file does not exist: {config_file_path}")
+    if not config_file_path.is_file():
+        raise FileNotFoundError(f"Config file is not a file: {config_file_path}")
+    return config_file_path
 
 
 def read_config_file(*path_parts):
