@@ -73,16 +73,26 @@ def get_fits_filenames(root_path, date=None, verbose=False):
     if verbose:
         print(f'VERBOSE: Searching for FITS files under in root_path={root_path} for date={date} ...')
 
+    # Construct the path components
+    virus_root_path = os.path.join(root_path, 'VIRUS2')
     if date:
-        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', date, '*', '*', '*.fits')))
+        date_dir = os.path.join(virus_root_path, date)
     else:
-        fits_filenames = sorted(glob.glob(os.path.join(root_path, 'VIRUS2', '*', '*', '*', '*.fits')))
+        date_dir = os.path.join(virus_root_path, '*')
+
+    # Add wildcard subdirectories
+    obs_id_dir = os.path.join(date_dir, '*')
+    spec_id_dir = os.path.join(obs_id_dir, '*')
+    fits_glob_pattern = os.path.join(spec_id_dir, '*.fits')
+
+    # find all files matching this file-tree glob pattern
+    fits_filenames = sorted(glob.glob(fits_glob_pattern))
 
     if verbose:
         num_files = len(fits_filenames)
         print(f'VERBOSE: Found {num_files} files under.')
         if num_files < 1:
-            raise FileNotFoundError(f'ERROR: found no files to process. Exiting...')
+            raise FileNotFoundError(f'ERROR: found no files matching fits_glob_pattern={fits_glob_pattern}. Exiting...')
 
     return fits_filenames
 
@@ -173,7 +183,12 @@ def get_file_block_break_indices(fits_file_names):
             e.g. if obs_ids for the files are [1,2,3,11,12,13,21,22,23] then obs_id_break_inds = [2,5]
     """
     obs_id_list = get_fits_file_obs_ids(fits_file_names)
-    obs_id_break_inds = np.where(np.diff(obs_id_list) > 1)[0]
+    if len(obs_id_list) > 1:
+        obs_id_break_inds = np.where(np.diff(obs_id_list) > 1)[0]
+    elif len(obs_id_list) == 1:
+        obs_id_break_inds = obs_id_list[-1]
+    else:
+        raise ValueError(f'Failed to compute gaps in obs_id_list={obs_id_list}')
     return obs_id_break_inds
 
 
