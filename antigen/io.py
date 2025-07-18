@@ -1,6 +1,8 @@
 import datetime as dt
 import glob
 import os
+from pathlib import Path
+import re
 
 import numpy as np
 from astropy.io import fits
@@ -9,21 +11,40 @@ from astropy.time import Time
 from antigen import config
 
 
-def parse_fits_file_name(fits_filename):
+def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extension='.fits'):
     """
     Purpose: Parse FITS filenames written by VIRUS2 exposure code
-    Note: Expected filename pattern is
-        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-        VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
+             Expects a suffix of '.fits' extension,
+             Expects exactly 8 words in the stem,
+             Expects and supports either dunder _ or dot . delimiters between stem words
+
+    Note: Example expected filename pattern is
+          ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
+          VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
 
     Args:
         fits_filename (str): full-path filename of FITS file containing VIRUS2 obs data
+        expected_prefix_parts (int): Number of parts or words expected to be parsed from the filename stem/base, after stipping the ".fits" extension
+        expected_extension (str): e.g. default = ".fits"
 
     Returns:
         filename_metadata (dict): keys = ['filename', 'instrument',
             'obs_date', 'obs_id', 'frame_type', spec_id', exp_index', 'utc_str', 'user_label']
     """
-    filename_words = fits_filename.split('_')
+    path = Path(fits_filename)
+
+    # Validate extension
+    if path.suffix.lower() != expected_extension:
+        raise ValueError(f"ERROR: Expected extension {expected_extension}, but got {path.suffix}, for fits_filename={fits_filename}")
+
+    # Strip off the file name extension
+    file_name_stem = path.stem
+
+    # Split the file name stem into at most 8 parts, allows ONLY dunder delimiters,
+    # but with the maxsplit, this prevents splitting the last word which is a user-word that can be literally anything
+    # including the delimiters WITHIN the word.
+    filename_words = re.split('_', file_name_stem, maxsplit=expected_prefix_parts)
+
     if len(filename_words) != 8:
         print(f'WARNING: Cannot parse filename, returning None; '
               f' Expected pattern of 8 words delimited by underscores. '
