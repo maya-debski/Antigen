@@ -257,6 +257,28 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
             flt_filenames = domeflt_filenames
 
         # =============================================================================
+        # Validate number of files found before attempting to use diffs on file obs_ids
+        # Use exceptions to exit process if needed frame-types file counts were not found
+        # =============================================================================
+        log.info('Validating total number of found files, by frame type ...')
+        num_bias_files = len(bias_filenames)
+        if num_bias_files < 2:
+            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
+                               f'found total number of BIAS files = {num_bias_files}, '
+                               f'but need >= 2')
+        num_flt_files = len(flt_filenames)
+        if num_flt_files < 2:
+            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
+                               f'found total number of FLAT files = {num_flt_files}, '
+                               f'but need >= 2')
+        num_arc_files = len(arc_filenames)
+        if num_arc_files < 2:
+            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
+                               f'found total number of ARC files = {num_bias_files}, '
+                               f'but need >= 2')
+
+
+        # =============================================================================
         # Make a master bias, master dome flat, and master arc for the first set of OBS
         # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
         # =============================================================================
