@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.11
   - ipython
+  - pyyaml
   - astropy=5.3
   - matplotlib>=3.7
   - numpy=1.24
