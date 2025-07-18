@@ -11,10 +11,10 @@ def get_args():
     """
 
     defaults = {
-        'infolder' : os.curdir,
-        'outfolder': os.curdir,
-        'date': datetime.datetime.now().strftime('%Y%m%d'),
-        'name': None,
+        'in_folder' : os.curdir,
+        'out_folder': os.curdir,
+        'obs_date': datetime.datetime.now().strftime('%Y%m%d'),
+        'obs_name': None,
         'reduce_all': False,
         'bias_label': 'bias',
         'arc_label': 'arc',
@@ -24,10 +24,10 @@ def get_args():
     }
 
     helps = {
-        'infolder' : 'Root path where reduction input file tree is located, (default: %(default)s)',
-        'outfolder' : 'Path where reduction output files will be written, (default: %(default)s)',
-        'date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
-        'name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
+        'in_folder' : 'Root path where reduction input file tree is located, (default: %(default)s)',
+        'out_folder' : 'Path where reduction output files will be written, (default: %(default)s)',
+        'obs_date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
+        'obs_name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
         'reduce_all': 'Reduce all files found under infolder file tree, (default: %(default)s)',
         'bias_label': 'The object name from the FITS header card for bias files, (default: %(default)s)',
         'arc_label': 'The object name from the FITS header card for arc files, (default: %(default)s)',
@@ -38,16 +38,16 @@ def get_args():
 
     parser = ArgumentParser(add_help=True)
 
-    parser.add_argument('-i', '--infolder', type=str, help=helps['infolder'], default=defaults['infolder'])
-    parser.add_argument('-o', '--outfolder', type=str, help=helps['outfolder'], default=defaults['outfolder'])
-    parser.add_argument('-c', '--date', type=str, help=helps['date'], default=defaults['date'])
-    parser.add_argument('-n', '--name', type=str, help=helps['name'], default=defaults['name'])
+    parser.add_argument('-i', '--in_folder', type=str, help=helps['in_folder'], default=defaults['in_folder'])
+    parser.add_argument('-o', '--out_folder', type=str, help=helps['out_folder'], default=defaults['out_folder'])
+    parser.add_argument('-c', '--obs_date', type=str, help=helps['obs_date'], default=defaults['obs_date'])
+    parser.add_argument('-n', '--obs_name', type=str, help=helps['obs_name'], default=defaults['obs_name'])
     parser.add_argument('-r', '--reduce_all', action='store_true', help=helps['reduce_all'], default=defaults['reduce_all'])
-    parser.add_argument('-b', '--bias', type=str, help=helps['bias_label'], default=defaults['bias_label'])
-    parser.add_argument('-a', '--arc', type=str, help=helps['arc_label'], default=defaults['arc_label'])
-    parser.add_argument('-d', '--dark', type=str, help=helps['dark_label'], default=defaults['dark_label'])
-    parser.add_argument('-f', '--flat', type=str, help=helps['flat_label'], default=defaults['flat_label'])
-    parser.add_argument('-t', '--twilight', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
+    parser.add_argument('-b', '--bias_label', type=str, help=helps['bias_label'], default=defaults['bias_label'])
+    parser.add_argument('-a', '--arc_label', type=str, help=helps['arc_label'], default=defaults['arc_label'])
+    parser.add_argument('-d', '--dark_label', type=str, help=helps['dark_label'], default=defaults['dark_label'])
+    parser.add_argument('-f', '--flat_label', type=str, help=helps['flat_label'], default=defaults['flat_label'])
+    parser.add_argument('-t', '--twilight_flat_label', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
     argv = None
     args = parser.parse_args(args=argv)
 
