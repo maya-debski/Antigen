@@ -1,21 +1,64 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Nov 29 09:38:06 2017
-
-@author: gregz
-"""
-
-import sys
+from argparse import ArgumentParser
 import datetime
-import logging
-
-import argparse as ap
+import os
+import sys
 from datetime import datetime as dt
+
+
+def get_args():
+    """
+    Purpose: Input arg handling for VIRUS2 data reduction CLI tools, e.g. antigen_reduce_virus2.py
+    """
+
+    defaults = {
+        'in_folder' : os.path.abspath(os.curdir),
+        'out_folder': datetime.datetime.now().strftime('antigen_reduce_virus2_%Y%m%d_%H%M%S'),
+        'obs_date': datetime.datetime.now().strftime('%Y%m%d'),
+        'obs_name': None,
+        'reduce_all': False,
+        'bias_label': 'bias',
+        'arc_label': 'arc',
+        'dark_label': 'dark',
+        'flat_label': 'flat',
+        'twilight_flat_label': 'twi',
+    }
+
+    helps = {
+        'in_folder' : 'Root path where reduction input file tree is located, (default: %(default)s)',
+        'out_folder' : 'Path where reduction output files will be written, (default: %(default)s)',
+        'obs_date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
+        'obs_name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
+        'reduce_all': 'Reduce all files found under infolder file tree, (default: %(default)s)',
+        'bias_label': 'The object name from the FITS header card for bias files, (default: %(default)s)',
+        'arc_label': 'The object name from the FITS header card for arc files, (default: %(default)s)',
+        'dark_label': 'The object name from the FITS header card for dark files, (default: %(default)s)',
+        'flat_label': 'The object name from the FITS header card for flat files, (default: %(default)s)',
+        'twilight_flat_label': 'The object name from the FITS header card for twilight flat files, (default: %(default)s)',
+    }
+
+    parser = ArgumentParser(add_help=True)
+
+    parser.add_argument('-i', '--in_folder', type=str, help=helps['in_folder'], default=defaults['in_folder'])
+    parser.add_argument('-o', '--out_folder', type=str, help=helps['out_folder'], default=defaults['out_folder'])
+    parser.add_argument('-c', '--obs_date', type=str, help=helps['obs_date'], default=defaults['obs_date'])
+    parser.add_argument('-n', '--obs_name', type=str, help=helps['obs_name'], default=defaults['obs_name'])
+    parser.add_argument('-r', '--reduce_all', action='store_true', help=helps['reduce_all'], default=defaults['reduce_all'])
+    parser.add_argument('-b', '--bias_label', type=str, help=helps['bias_label'], default=defaults['bias_label'])
+    parser.add_argument('-a', '--arc_label', type=str, help=helps['arc_label'], default=defaults['arc_label'])
+    parser.add_argument('-d', '--dark_label', type=str, help=helps['dark_label'], default=defaults['dark_label'])
+    parser.add_argument('-f', '--flat_label', type=str, help=helps['flat_label'], default=defaults['flat_label'])
+    parser.add_argument('-t', '--twilight_flat_label', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
+    argv = None
+    args = parser.parse_args(args=argv)
+
+    return args
 
 
 def setup_parser():
     ''' BRIEF DESCRIPTION '''
-    parser = ap.ArgumentParser(add_help=True)
+    # TODO: update docstring
+    # TODO: specify what CLI tool or script this is used for?
+    parser = ArgumentParser(add_help=True)
 
     parser.add_argument("-sd", "--start_date",
                         help='''Start Date, e.g., 20170321, YYYYMMDD''',
@@ -42,7 +85,9 @@ def setup_parser():
 
 def setup_basic_parser():
     ''' BRIEF DESCRIPTION '''
-    parser = ap.ArgumentParser(add_help=True)
+    # TODO: update docstring
+    # TODO: specify what CLI tool or script this is used for?
+    parser = ArgumentParser(add_help=True)
 
     parser.add_argument("-d", "--date",
                         help='''Date, e.g., 20170321, YYYYMMDD''',
@@ -75,30 +120,9 @@ def setup_basic_parser():
     return parser
 
 
-def setup_logging(logname='input_utils'):
-    '''Set up a logger for shuffle with a name ``input_utils``.
-
-    Use a StreamHandler to write to stdout and set the level to DEBUG if
-    verbose is set from the command line
-    '''
-    log = logging.getLogger('input_utils')
-    if not len(log.handlers):
-        fmt = '[%(levelname)s - %(asctime)s] %(message)s'
-        fmt = logging.Formatter(fmt)
-
-        level = logging.INFO
-
-        handler = logging.StreamHandler()
-        handler.setFormatter(fmt)
-        handler.setLevel(level)
-
-        log = logging.getLogger('input_utils')
-        log.setLevel(logging.DEBUG)
-        log.addHandler(handler)
-    return log
-
-
 def set_daterange(args):
+    # TODO: add docstring
+    # TODO: specify what CLI tool or script this is used for? location here is based on input/output of Argparser object
     dateatt = ['start_date', 'end_date']
     if args.date_length is None:
         if args.start_date is None:
