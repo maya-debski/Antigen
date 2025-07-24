@@ -2,6 +2,7 @@ import datetime as dt
 import glob
 import os
 from pathlib import Path
+import psutil
 import re
 
 import numpy as np
@@ -406,3 +407,126 @@ def get_fits_header_mjd(fits_header):
     obs_mjd = astro_time.mjd
     return obs_mjd
 
+
+def read_fits(file_name, read_data=False, use_memmap=False):
+    """
+	Purpose: Load image data and header from FITS file.
+	Note: Assumes only a single HDU (Header/Data Unit) in the FITS file, e.g. len(hdu_list) ==1
+
+	Args:
+        file_name (str): FITS file name to be read
+        read_data (bool): do NOT load array data unless read_data==True
+        use_memmap (bool): `memmap` for astropy.io.fits.open() read of FITS file, for large files
+	Returns:
+        data_array (list(np.ndarray), None): numpy array, or None if read_data==False
+        fits_header (astropy.io.fits.Header): dict-like object with header cards, use convert_fits_header_to_dict() if needed
+	"""
+    if not os.path.isfile(file_name):
+        raise FileNotFoundError(file_name)
+
+    if not use_memmap:
+        # check it anyway!
+        use_memmap = is_fits_memory_map_needed(file_name)
+        if use_memmap:
+            print(f'WARNING: file too large compared to system memory, read will be SLOW: forcing use of memmap ...')
+
+    if not read_data:
+        print(f'WARNING: only reading FITS header, since input read_data={read_data}')
+
+    with fits.open(file_name, memmap=use_memmap) as hdul:
+        fits_header = hdul[0].header
+        if not read_data:
+            data_array = None
+        else:
+            data_array = hdul[0].data
+
+        # Manually apply scaling if BZERO, BSCALE are present
+        if read_data and use_memmap:
+            bzero = fits_header.get('BZERO', 0)
+            bscale = fits_header.get('BSCALE', 1)
+            if bscale != 1 or bzero != 0:
+                data_array = (data_array * bscale) + bzero
+
+    return data_array, fits_header
+
+
+def is_fits_memory_map_needed(file_name=None, file_size_bytes=None):
+    """
+    Purpose: Checks available system memory and suggests whether to
+             use memory-mapping (memmap) based on file size.
+             Either file_name or file_size must be provided.
+
+    Args:
+        file_name (str): The name of the file to check (optional).
+        file_size_bytes (int): The size of the file in bytes (optional).
+    Returns:
+        memory_mapping_needed (bool): True if memmap is recommended, False if not.
+    Raises:
+        ValueError if neither file_name nor file_size is provided.
+    """
+    if file_name is None and file_size_bytes is None:
+        raise ValueError("Either file_name or file_size_bytes must be provided.")
+
+    if file_size_bytes is None and file_name is not None:
+        file_size_bytes = os.path.getsize(file_name)
+
+    # Get available memory (in bytes)
+    available_memory_bytes = psutil.virtual_memory().available
+    available_memory_MB = available_memory_bytes / (1024 ** 2)
+    file_size_MB = file_size_bytes / (1024 ** 2)
+    print(f"Available memory: {available_memory_MB:.2f} MB")
+    print(f"File size: {file_size_MB:.2f} MB")
+
+    # Suggest using memmap if file size exceeds 50% of available memory
+    if file_size_MB > (0.5 * available_memory_MB):
+        print("Large file detected, consider using FITS memmap.")
+        memory_mapping_needed = True
+    else:
+        print("Sufficient memory available, FITS memmap not needed.")
+        memory_mapping_needed = False
+    return memory_mapping_needed
+
+
+def convert_fits_header_to_dict(fits_header, keep_card_comments=False):
+    """
+    Purpose: convert FITS Header object to dict
+
+    Args:
+        fits_header (astropy.io.fits.Header): FITS header object, collection of Card objects
+        keep_card_comments (bool): If True, preserves values as nested dicts required to recreate FITS header object.
+                                   If False, just a flat dict, ideal for print/write to JSON.
+    Returns:
+        fits_header_dict (dict): See comments about keep_card_comments input kwarg.
+    """
+    fits_header_dict = {}
+    for card in fits_header.cards:
+        keyword = card.keyword
+        value = card.value
+        comment = card.comment
+        # append string values for "keys" that can appear more than once (e.g. COMMENT) in a FITS header
+        if keyword in ['COMMENT', 'HISTORY'] and keyword in fits_header_dict.keys():
+            value = fits_header_dict[keyword] + value
+        if keep_card_comments:
+            fits_header_dict[keyword] = {'value': value, 'comment': comment}
+        else:
+            fits_header_dict[keyword] = value
+
+    return fits_header_dict
+
+
+def write_fits_header_txt(fits_header, file_name):
+    """
+    Purpose: write astropy.io.fits Header object to a plain text file
+
+    Args:
+        fits_header (astropy.io.fits.Header): FITS Header object
+        file_name (str): name of TXT file to write PLAIN TXT-converted FITS header
+    Returns:
+        fits_header_str (str): plain-text version of FITS header written to file_name
+    """
+    if os.path.isfile(file_name):
+        raise FileExistsError()
+    with open(file_name, 'w') as fob:
+        fits_header_str = fits_header.tostring(sep='\n', endcard=False)
+        fob.write(fits_header_str)
+    return fits_header_str
