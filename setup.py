@@ -12,20 +12,22 @@ setup(
         'antigen': ['config_files/**/*'],
     },
     include_package_data=True,
-    scripts=['scripts/antigen_reduce_virus2.py',
-             'scripts/antigen_reduce_virus2_manifest.py',
+    scripts=[
              'scripts/antigen_read_manifest.py',
-             'scripts/antigen_view_fits.py',],
+             'scripts/antigen_reduce_virus2.py',
+             'scripts/antigen_reduce_virus2_manifest.py',
+             'scripts/antigen_view_fits.py',
+    ],
     install_requires=[
         'astropy',
         'numpy',
         'matplotlib',
         'pandas',
         'pyyaml',
+        'psutil',
         'scikit-learn',
         'scipy',
         'seaborn'
     ],
     python_requires='>=3.11',
 )
-
