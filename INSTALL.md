@@ -4,10 +4,22 @@ Instructions on how to install the `antigen` package
 
 ## Summary Install
 
-- (optional) `./install_conda.sh` 
+optional:
+- `./install_conda.sh` 
+- `conda activate base`
+- `conda update --all`
+
+required:
 - `conda env create -f environment.yml`
 - `conda activate env_antigen`
 - `pip install . --no-deps`
+
+## Summary Uninstall
+
+- `conda activate env_antigen`
+- `pip uninstall antigen`
+- `conda env remove -n env_antigen`
+- `conda clean --all`
 
 ## Conda Overview 
 
