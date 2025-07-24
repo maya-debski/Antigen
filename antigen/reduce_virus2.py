@@ -315,7 +315,7 @@ def process_unit(manifest_record, output_path, debug=False):
         def_wave = CONFIG_DEF_WAVE[channel]
     if channel == 'g':
         def_wave = CONFIG_DEF_WAVE[channel]
-        line_list_filepath = config.get_config_filepath('virus2', f'{unit_id}', 'virus2_green.txt')
+        line_list_filepath = config.get_config_filepath('virus2', f'{unit_id}', 'virus2_lines_green.txt')
         line_list = Table.read(line_list_filepath, format="ascii")
         limit = CONFIG_DETECTOR[channel]['limit']
     if channel == 'r':
@@ -349,7 +349,7 @@ def process_unit(manifest_record, output_path, debug=False):
     # Load reference fiber locations from a predefined file
     # =============================================================================
 
-    ifu_cen_filepath = config.get_config_filepath('virus2', f'{unit_id}', f'IFUcen_VIRUS2_{unit_id}.txt')
+    ifu_cen_filepath = config.get_config_filepath('virus2', f'{unit_id}', f'virus2_ifucen_{unit_id}.txt')
     ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
     ref = ifu_cen_file_data
     ref.reverse()

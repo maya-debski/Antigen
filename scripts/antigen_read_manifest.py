@@ -34,7 +34,7 @@ def get_args():
 
 
 def print_example_manifest():
-    example_file = get_config_filepath('templates', 'manifest_template_virus2.yml')
+    example_file = get_config_filepath('virus2', 'virus2_manifest_template.yml')
     print('*** EXAMPLE MANIFEST, INPUT --filename IGNORED ***')
     example_manifest_text = example_file.read_text()
     print(example_manifest_text)
