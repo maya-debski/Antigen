@@ -127,64 +127,6 @@ def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wave
     return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
-def get_element_with_closest_time(element_list, time_list, target_time):
-    """
-    Purpose: Given a list of elements and a list of MJD times for those elements,
-    find the element that has a time closest to the target_time
-
-    Args:
-        element_list (list): list of elements corresponding to the times in time_list
-        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
-        target_time (numeric): MJD time
-
-    Returns:
-        closest_element: element for closest_time from time_list compared to target_time
-    """
-    # Find index of time closest to target_time
-    index = np.argmin(np.abs(np.array(time_list) - target_time))
-
-    # Use the index directly in the original file list
-    closest_element = element_list[index]
-    return closest_element
-
-
-def get_file_break_times(filenames, breakind):
-    """
-    Creates a list of master calibration images and corresponding times
-    by splitting the input list of filenames at given indices.
-
-    Args:
-        filenames (list(list(str))): List of FITS file paths containing calibration data.
-        breakind (list(int)): List of indices to split the filenames into different chunks.
-
-    Returns
-        chunked_file_names (list(str)): list of files, for each chunk.
-        chunked_file_times (list(float)): mean observation time (MJD float) for each file chunk.
-    """
-
-    # Define break points for splitting the filenames into chunks
-    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
-    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
-
-    chunked_file_names = []
-    chunked_file_times = []
-
-    # Iterate over the file-list chunks defined by breakind1 and breakind2
-    for bk1, bk2 in zip(breakind1, breakind2):
-        # Collect and preprocess frames within the current chunk
-        chunk_files = [f for cnt, f in enumerate(filenames)
-                       if ((cnt > bk1) * (cnt < bk2))]  # Only include files in the current file-list-chunk
-
-        # Extract observation times (MJD) for frames in the current chunk
-        chunk_times = [Time(fits.open(filename)[0].header['DATE-OBS']).mjd for filename in chunk_files]
-
-        # Append the median frame and the mean time for the current chunk
-        chunked_file_names.append(chunk_files)
-        chunked_file_times.append(np.mean(chunk_times))
-
-    return chunked_file_names, chunked_file_times
-
-
 def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
                            bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
     """
@@ -300,13 +242,13 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
         # =============================================================================
 
         bias_break_inds = io.get_file_block_break_indices(bias_filenames)
-        chunk_bias_list, chunk_bias_times = get_file_break_times(bias_filenames, bias_break_inds)
+        chunk_bias_list, chunk_bias_times = io.get_file_break_times(bias_filenames, bias_break_inds)
 
         flt_break_inds = io.get_file_block_break_indices(flt_filenames)
-        chunk_flat_list, chunk_flat_times = get_file_break_times(flt_filenames, flt_break_inds)
+        chunk_flat_list, chunk_flat_times = io.get_file_break_times(flt_filenames, flt_break_inds)
 
         arc_break_inds = io.get_file_block_break_indices(arc_filenames)
-        chunk_arc_list, chunk_arc_times = get_file_break_times(arc_filenames, arc_break_inds)
+        chunk_arc_list, chunk_arc_times = io.get_file_break_times(arc_filenames, arc_break_inds)
 
         # =============================================================================
         # For each science file, find the calibration file block with the closest time and group
@@ -317,9 +259,9 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
             obs_data, obs_header = io.load_fits(obs_file)
             object_name = obs_header.get('OBJECT', None)
             obs_time = io.get_fits_header_mjd(obs_header)
-            bias_files = get_element_with_closest_time(chunk_bias_list, chunk_bias_times, obs_time)
-            flat_files = get_element_with_closest_time(chunk_flat_list, chunk_flat_times, obs_time)
-            arc_files = get_element_with_closest_time(chunk_arc_list, chunk_arc_times, obs_time)
+            bias_files = io.get_element_with_closest_time(chunk_bias_list, chunk_bias_times, obs_time)
+            flat_files = io.get_element_with_closest_time(chunk_flat_list, chunk_flat_times, obs_time)
+            arc_files = io.get_element_with_closest_time(chunk_arc_list, chunk_arc_times, obs_time)
 
             record = dict()
             now_string = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')

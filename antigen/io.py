@@ -213,6 +213,64 @@ def get_file_block_break_indices(fits_file_names):
     return obs_id_break_inds
 
 
+def get_element_with_closest_time(element_list, time_list, target_time):
+    """
+    Purpose: Given a list of elements and a list of MJD times for those elements,
+    find the element that has a time closest to the target_time
+
+    Args:
+        element_list (list): list of elements corresponding to the times in time_list
+        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
+        target_time (numeric): MJD time
+
+    Returns:
+        closest_element: element for closest_time from time_list compared to target_time
+    """
+    # Find index of time closest to target_time
+    index = np.argmin(np.abs(np.array(time_list) - target_time))
+
+    # Use the index directly in the original file list
+    closest_element = element_list[index]
+    return closest_element
+
+
+def get_file_break_times(filenames, breakind):
+    """
+    Creates a list of master calibration images and corresponding times
+    by splitting the input list of filenames at given indices.
+
+    Args:
+        filenames (list(list(str))): List of FITS file paths containing calibration data.
+        breakind (list(int)): List of indices to split the filenames into different chunks.
+
+    Returns
+        chunked_file_names (list(str)): list of files, for each chunk.
+        chunked_file_times (list(float)): mean observation time (MJD float) for each file chunk.
+    """
+
+    # Define break points for splitting the filenames into chunks
+    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
+    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
+
+    chunked_file_names = []
+    chunked_file_times = []
+
+    # Iterate over the file-list chunks defined by breakind1 and breakind2
+    for bk1, bk2 in zip(breakind1, breakind2):
+        # Collect and preprocess frames within the current chunk
+        chunk_files = [f for cnt, f in enumerate(filenames)
+                       if ((cnt > bk1) * (cnt < bk2))]  # Only include files in the current file-list-chunk
+
+        # Extract observation times (MJD) for frames in the current chunk
+        chunk_times = [Time(fits.open(filename)[0].header['DATE-OBS']).mjd for filename in chunk_files]
+
+        # Append the median frame and the mean time for the current chunk
+        chunked_file_names.append(chunk_files)
+        chunked_file_times.append(np.mean(chunk_times))
+
+    return chunked_file_names, chunked_file_times
+
+
 def get_matching_filenames(file_name_list, type_list, match_keywords):
     """
     Purpose: Finds filenames that match a list of keywords by checking if any of the keywords
@@ -347,3 +405,4 @@ def get_fits_header_mjd(fits_header):
     astro_time = Time(datetime_string)
     obs_mjd = astro_time.mjd
     return obs_mjd
+
