@@ -54,7 +54,7 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     return None
 
 
-def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outfolder=None):
+def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outfolder=None, ylims=(-10,10)):
     """
     Purpose: Plots the residuals of the trace correction and saves the figure.
 
@@ -74,6 +74,7 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
     full_trace_X = np.arange(full_trace.shape[1])
     # Create a figure with specified size
     plt.figure(figsize=(8, 7))
+    fig = plt.gcf()  # Get Current Figure
 
     colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(orders)))
     for order, color in zip(orders, colors):
@@ -93,6 +94,7 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
     ax.tick_params(axis='both', which='major', length=8, width=2)
     ax.tick_params(axis='both', which='minor', length=4, width=1)
     ax.minorticks_on()
+    ax.set_ylim(ylims)
 
     # Label the axes
     plt.xlabel('Column')
@@ -101,8 +103,6 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
     # Save the plot as a PNG file with the given name
     plt.savefig(os.path.join(outfolder, 'trace_measures.png'))
 
-    fig = plt.gcf()  # Get Current Figure
-    ax = plt.gca()  # Get Current Axes
     return fig, ax
 
 
@@ -132,7 +132,7 @@ def plot_frame(data_array, save_file=None, title=None, alter_method=None):
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8))
     cmap_name = 'viridis'
-    img_obj = ax.imshow(data_array, cmap=cmap_name, origin='lower')
+    img_obj = ax.imshow(data_array, cmap=cmap_name, origin='lower', aspect='auto')
     cbar_ax = make_colomap_axes(fig, ax)
     _ = fig.colorbar(img_obj, cax=cbar_ax)
 

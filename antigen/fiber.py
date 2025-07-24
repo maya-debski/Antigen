@@ -555,6 +555,10 @@ def get_trace(twilight, ref):
     # Split the image into vertical chunks
     chunks = np.array_split(image, N, axis=1)
 
+    # TODO: strip off outside fibers, but improve this implementation to be more explicit
+    chunks = chunks[1:-1]
+    xchunks = xchunks[1:-1]
+
     # Calculate the mean flat field for each chunk
     flats = [np.mean(chunk, axis=1) for chunk in chunks]
 

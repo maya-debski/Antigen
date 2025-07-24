@@ -11,9 +11,10 @@ DEFAULT_PCA_COMPONENTS_SKY = 5
 DEFAULT_PCA_COMPONENTS_ARC = 15
 DEFAULT_SKY_CONTINUUM_BINS = 50
 
+
 def get_channel_config_virus2():
 
-    CHANNEL_DETECTOR = {'g': {'gain': 2.017, 'rdnoise': 3.09, 'limit': 20},
+    CHANNEL_DETECTOR = {'g': {'gain': 2.017, 'rdnoise': 3.09, 'limit': 5},
                        'b': {'gain': None, 'rdnoise': None, 'limit': None},
                        'r': {'gain': None, 'rdnoise': None, 'limit': None},
                        'd': {'gain': None, 'rdnoise': None, 'limit': None}}
