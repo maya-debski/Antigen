@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
 from argparse import ArgumentParser
+import datetime
+import os
 import sys
-from antigen.manifest import read_manifest
+
+from antigen.manifest import read_manifest, save_manifest
 from antigen.config import get_config_filepath
 
 
@@ -46,6 +49,11 @@ def main():
         sys.exit(0)
     else:
         manifest = read_manifest(filename=args.filename, validate=args.validate, verbose=True)
+
+        # save manifest dict back to disk to test/validate
+        manifest_save_name_stem = datetime.datetime.now().strftime('antigen_read_manifest_save_%Y%m%d_%H%M%S')
+        manifest_savefile = os.path.join(os.path.abspath(os.curdir), f'{manifest_save_name_stem}.yml')
+        save_manifest(manifest, manifest_savefile)
     return None
 
 

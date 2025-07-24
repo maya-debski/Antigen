@@ -5,28 +5,41 @@ Provides reader, structure validate, file validation
 
 Example MANIFEST yaml File Format:
 
-    reduction_name: test_01
-    in_folder: ./
-    out_folder: reduc
-
-    parameters:
-      instrument: VIRUS2
-      obs_date: 20250619
-      obs_name: M81
-
-    input_files:
-      bias:
-        - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp01_20250620T021157.0_zero.fits
-        - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp03_20250620T021655.1_zero.fits
-      flat:
-        - VIRUS2/20250619/0000030/D3G/VIRUS2_20250619_0000030_flatp_D3G_exp01_20250620T022204.3_twilight.fits
-      arc:
-        - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp01_20250620T010914.6_fear.fits
-        - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp02_20250620T011523.7_fear.fits
+reduction_name: antigen_test_02
+in_folder: ~/Antigen/tests/test_02/
+out_folder: reduction
+unit_instrument: VIRUS2
+unit_id: D3G
+unit_date: 20250618
+obs_date: 20250619
+obs_name: M57
+observation_files:
+  - VIRUS2/20250619/0000099/D3G/VIRUS2_20250620_0000017_standard_D3G_exp01_20250621T040909.6_HR4963.fits
+calibration_files:
+  bias:
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp01_20250620T021157.0_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp02_20250620T021608.9_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp03_20250620T021655.1_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp04_20250620T021744.5_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp05_20250620T021833.9_zero.fits
+  flat:
+    - VIRUS2/20250619/0000030/D3G/VIRUS2_20250619_0000030_flatp_D3G_exp01_20250620T022204.3_twilight.fits
+  arc:
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp01_20250620T010914.6_fear.fits
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp02_20250620T011523.7_fear.fits
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp03_20250620T012133.2_fear.fits
 """
 
 from pathlib import Path
 import yaml
+
+
+MANIFEST_PARAMETER_KEYS = ('reduction_name', 'in_folder', 'out_folder',
+                           'unit_instrument', 'unit_id', 'unit_date',
+                           'obs_date', 'obs_name')
+MANIFEST_OBSERVATION_LIST_KEY = 'observation_files'
+MANIFEST_CALIBRATION_LIST_KEY = 'calibration_files'
+MANIFEST_CALIBRATION_TYPE_KEYS = ('bias', 'flat', 'arc')
 
 
 def load_manifest(filename):
@@ -42,18 +55,50 @@ def load_manifest(filename):
     return manifest
 
 
+def stringify_paths(obj):
+    if isinstance(obj, dict):
+        return {k: stringify_paths(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [stringify_paths(i) for i in obj]
+    elif isinstance(obj, Path):
+        return str(obj)
+    else:
+        return obj
+
+
+def save_manifest(manifest, filename):
+    """
+    Purpose: Save a manifest dict to a YAML file
+    Args:
+        manifest (dict): data structure loaded from manifest YAML file
+        filename (str): Full-path filename of manifest file
+    Returns:
+        None
+    """
+    path = Path(filename).expanduser()
+    with open(path, 'w') as fob:
+        yaml.safe_dump(stringify_paths(manifest), fob, default_flow_style=False)
+
+
 def normalize_manifest(manifest):
     """
-    Purpose: Replace relative file paths with fully resolved Path objects.
+    Purpose: Replace file strings and relative file paths with fully resolved file paths as pathlib.Path objects.
+
     Args:
         manifest (dict): data structure loaded from manifest YAML file
     Returns:
-        manifest (dict): same structure, but with manifest['input_files'] paths updated to prepend 'input_root'
+        manifest (dict): same structure, but with all file paths updated to prepend 'in_folder'
     """
-    input_files = manifest['input_files']
-    for category, relative_paths in input_files.items():
-        input_files[category] = [Path(manifest['in_folder']) / Path(file) for file in relative_paths]
-    manifest['input_files'] = input_files
+    manifest['in_folder'] = Path(manifest['in_folder']).expanduser().resolve(strict=False)
+
+    calibration_files = manifest[MANIFEST_CALIBRATION_LIST_KEY]
+    for category, relative_paths in calibration_files.items():
+        calibration_files[category] = [manifest['in_folder'] / Path(file) for file in relative_paths]
+    manifest[MANIFEST_CALIBRATION_LIST_KEY] = calibration_files
+
+    obs_files_relative_paths = manifest[MANIFEST_OBSERVATION_LIST_KEY]
+    observation_files = [manifest['in_folder'] / Path(file) for file in obs_files_relative_paths]
+    manifest[MANIFEST_OBSERVATION_LIST_KEY] = observation_files
     return manifest
 
 
@@ -69,23 +114,37 @@ def validate_manifest(manifest):
         ValueError
         TypeError
     """
-    required_top_level = ['reduction_name', 'in_folder', 'out_folder', 'parameters', 'input_files']
-    required_parameters = ['instrument', 'obs_date', 'obs_name']
-    required_input_file_categories = ['bias', 'flat', 'arc']
 
     # Top-level key check
-    for key in required_top_level:
+    for key in MANIFEST_PARAMETER_KEYS:
         if key not in manifest:
             raise ValueError(f"Missing top-level config key: '{key}'")
 
-    # File categories
-    input_files = manifest['input_files']
-    for category in required_input_file_categories:
-        if category not in input_files:
-            raise ValueError(f"Missing file category in input_files: '{category}'")
+    # Calibration file categories
+    for category in MANIFEST_CALIBRATION_TYPE_KEYS:
+        if category not in manifest[MANIFEST_CALIBRATION_LIST_KEY]:
+            raise ValueError(f"Missing file category in calibration_files: '{category}'")
 
-    # Ensure input files are a list of valid files
-    for category, file_list in input_files.items():
+    # Ensure in_folder directory exists:
+    in_folder_path = manifest['in_folder']
+    if not isinstance(in_folder_path, Path):
+        raise TypeError(f"manifest['in_folder'] contains non-Path item: {in_folder_path}")
+    if not in_folder_path.exists():
+        raise FileNotFoundError(f"Path does not exist: {in_folder_path}")
+    if not in_folder_path.is_dir():
+        raise ValueError(f"Path is not a directory: {in_folder_path}")
+
+    # Ensure observation files are a list of valid files
+    for file_path in manifest[MANIFEST_OBSERVATION_LIST_KEY]:
+        if not isinstance(file_path, Path):
+            raise TypeError(f"manifest[{MANIFEST_OBSERVATION_LIST_KEY}] contains non-Path item: {file_path}")
+        if not file_path.exists():
+            raise FileNotFoundError(f"File does not exist: {file_path}")
+        if not file_path.is_file():
+            raise ValueError(f"Path is not a file: {file_path}")
+
+    # Ensure calibration files are a list of valid files
+    for category, file_list in manifest[MANIFEST_CALIBRATION_LIST_KEY].items():
         if not isinstance(file_list, list):
             raise TypeError(f"input_files[{category}] must be a list")
         for file_path in file_list:
@@ -95,11 +154,6 @@ def validate_manifest(manifest):
                 raise FileNotFoundError(f"File does not exist: {file_path}")
             if not file_path.is_file():
                 raise ValueError(f"Path is not a file: {file_path}")
-
-    # Parameter key check
-    for param in required_parameters:
-        if param not in manifest['parameters']:
-            raise ValueError(f"Missing parameter: '{param}'")
 
     return True
 
@@ -114,20 +168,18 @@ def print_manifest(manifest):
     """
     print('\n')
     print('Reduction Manifest:')
-    print(f"- Reduction Name : {manifest.get('reduction_name', '<unnamed>')}")
-    print(f"- In Folder  : {manifest.get('in_folder', '<unnamed>')}")
-    print(f"- Out Folder : {manifest.get('out_folder', '<unnamed>')}")
+    for key in MANIFEST_PARAMETER_KEYS:
+        print(f"{key} : {manifest.get(key, '<unnamed>')}")
 
-    params = manifest.get('parameters', {})
-    print(f"- Parameters:")
-    print(f"  - Instrument Name  : {params.get('instrument', 'N/A')}")
-    print(f"  - Observation Name : {params.get('obs_name', 'N/A')}")
-    print(f"  - Observation Date : {params.get('obs_date', 'N/A')}")
+    observation_files = manifest.get(MANIFEST_OBSERVATION_LIST_KEY, {})
+    print("observation_files:")
+    for file in observation_files:
+        print(f"  - {file}")
 
-    input_files = manifest.get('input_files', {})
-    print("- Input Files:")
-    for category, files in input_files.items():
-        print(f"  - {category} (file count = {len(files)}):")
+    calibration_file_dict = manifest.get(MANIFEST_CALIBRATION_LIST_KEY, {})
+    print("calibration_files:")
+    for category, files in calibration_file_dict.items():
+        print(f"  - {category}: (file count = {len(files)}):")
         for file in files:
             print(f"    - {file}")
     print()
