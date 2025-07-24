@@ -615,4 +615,5 @@ def get_trace(twilight, ref):
         trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
 
     # Return the final trace array and the good fiber mask
-    return trace, np.isfinite(ref['px']), Trace, xchunks
+    good_fiber_mask = np.isfinite(ref['px'])
+    return trace, good_fiber_mask, Trace, xchunks

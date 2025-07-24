@@ -19,19 +19,20 @@ def prep_image(image, channel):
         image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
     """
     # TODO: update docstring to match input args, function signature
+    # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
 
     overscan_length = 32
     bias_value = biweight(image[:, -(overscan_length-2):])
     image = image[:, :-overscan_length] - bias_value
 
     if channel == "b":
-        image[:] = image[::-1, :]
+        image[:] = image[::-1, :] # flip-Y, due to how amplifier is reading the CCD
     if channel == "g":
-        image[:] = image[:, ::-1]
+        image[:] = image[:, ::-1] # flip-X
     if channel == "r":
-        image[:] = image[::-1, :]
+        image[:] = image[::-1, :] # flip-Y
     if channel == "d":
-        image[:] = image[:, ::-1]
+        image[:] = image[:, ::-1] # flip-X
     # Overscan subtraction
     # TODO: comment line above implies something is missing?
 
@@ -72,6 +73,27 @@ def base_reduction(data, masterbias, channel):
 
     # Return the reduced image and the error estimate
     return image, error_estimate
+
+
+def make_master_cal(filenames, channel):
+    """
+    Purpose: Load all files, slice array into 4 channels, select single channel slice, compute aggregate, return result
+
+    Args:
+        filenames (list(str)):
+        channel (str): 'g', 'b'
+    Returns:
+    """
+    # Extract from the files, re-oriented by prep_image()
+    frames = [prep_image(fits.open(file)[0].data, channel) for file in filenames]
+
+    # Extract observation times (MJD) for frames in the current chunk
+    times = [Time(fits.open(file)[0].header['DATE-OBS']).mjd for file in filenames]
+
+    # Compute median frame and the mean time for the current chunk
+    master_cal      = np.nanmedian(frames, axis=0)  # maybe biweight() as an alternate method
+    master_cal_time = np.mean(times)
+    return master_cal, master_cal_time
 
 
 def make_mastercal_list(filenames, breakind, channel):

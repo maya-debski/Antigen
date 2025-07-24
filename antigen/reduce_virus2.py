@@ -1,6 +1,6 @@
+import datetime
 import os
 import warnings
-import traceback
 
 from astropy.io import fits
 from astropy.stats import biweight_location as biweight
@@ -21,47 +21,39 @@ from antigen import utils
 warnings.filterwarnings("ignore")
 
 
-def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
-           trace_list, wave_time, wave_list, ftf_list, channel, 
-           pca=None, outfolder=None):
+def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
+           channel, pca=None, pca_only=False, outfolder=None, debug=False):
     """
     Purpose: Reduce the raw data by performing a series of processing steps,
-    including bias subtraction, flat-fielding, sky subtraction, 
+    including bias subtraction, flat-fielding, sky subtraction,
     and PCA-based residuals analysis.
 
     Args:
-        fn (str): The filename of the FITS file containing the data.
-        biastime_list (list): List of times associated with bias frames.
-        masterbias_list (list): List of master bias frames for bias correction.
-        flttime_list (list): List of times associated with flat field frames.
-        trace_list (list): List of fiber trace data.
-        wave_time (list): List of times associated with wavelength calibration.
-        wave_list (list): List of wavelength calibration data.
-        ftf_list (list): List of flat-field corrections.
+        data_filename (str): The filename of the FITS file containing the data to be reduced.
+        master_bias (): master bias frames for bias correction.
+        master_flat (): master flat frame
+        trace (): fiber trace data for current observation
+        good_fiber_mask (array(bool)): boolean selecttion mask of good (isfinite) fibers for current observation
+        wavelength_cal (): wavelength calibration data for the current observation
+        ftf_correction (list): flat-field (fiber_to_fiber) correction array.
         pca (sklearn.decomposition.PCA), Default is None, optional, A pre-fitted PCA model for residual map analysis.
+        pca_only (bool): if True, return immediately after computing the PCA model fit object
+        outfolder (str): file output path to write FITS files to
+        debug (bool): default=False, if True, save PNG plot files for intermediate data artifacts
 
     Returns:
-        pca (sklearn.decomposition.PCA): The fitted PCA model, returned if `pca` is None.  # TODO: this original comment does NOT match the data type returned by biweight()
-            biweighted_spectrum (np.ndarray): This is what is actually returned.  # TODO: needs review!
+        pca (sklearn.decomposition.PCA): The fitted PCA model
+        biweighted_spectrum (np.ndarray): bi-weighted spectrum, statistic for determining the
+                                          central location of the specrect distribution
         continuum (np.ndarray): 1d numpy array, The computed continuum for the spectrum.
     """
-    # TODO: update docstring to match function signature, input args
 
     CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
 
-    # Open the FITS file and extract the observation time
-    f = fits.open(fn)
-    t = Time(f[0].header['DATE-OBS'] + 'T' + f[0].header['UT'])
-    mtime = t.mjd
-
-    # Select appropriate master bias frame based on observation time
-    masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
+    obs_data, obs_header = io.load_fits(data_filename)
 
     # Perform basic image reduction (bias subtraction, gain adjustment)
-    image, E = ccd.base_reduction(f[0].data, masterbias, channel)
-
-    # Get the fiber trace and selection mask for the current observation
-    trace, good = get_element_with_closest_time(trace_list, flttime_list, mtime)
+    image, E = ccd.base_reduction(obs_data, master_bias, channel)
 
     # Extract spectra from the image using the trace data
     spec = fiber.get_spectra(image, trace)
@@ -70,36 +62,32 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     specerr = fiber.get_spectra_error(E, trace)
 
     # Compute the chi-square of the spectrum to identify bad pixels
-    masterflt = get_element_with_closest_time(masterflt_list, flttime_list, mtime)
-    chi2 = fiber.get_spectra_chi2(masterflt - masterbias, image, E, trace)
+    chi2 = fiber.get_spectra_chi2(master_flat - master_bias, image, E, trace)
     badpix = chi2 > 20.  # Pixels with chi2 > 20 are considered bad
     specerr[badpix] = np.nan
     spec[badpix] = np.nan
 
-    # Retrieve the wavelength calibration data for the current observation
-    wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
-
     # Rectify the spectrum and error based on the wavelength
     def_wave = CONFIG_DEF_WAVE[channel]
-    specrect, errrect = fiber.rectify(spec, specerr, wavelength, def_wave)
+    specrect, errrect = fiber.rectify(spec, specerr, wavelength_cal, def_wave)
 
     # Apply flat-field correction
-    ftf = get_element_with_closest_time(ftf_list, flttime_list, mtime)
-    specrect[:] /= (ftf * f[0].header['EXPTIME'])
-    errrect[:] /= (ftf * f[0].header['EXPTIME'])
-
-    # TODO: get clarification on the `cont` vs `cont1` handling here. Renamed `cont` to `continuum` to make it more obvious which is returned.
+    obs_exp_time = obs_header['EXPTIME']
+    specrect[:] /= (ftf_correction * obs_exp_time)
+    errrect[:] /= (ftf_correction * obs_exp_time)
 
     # Generate a sky mask and the continuum for sky subtraction
     skymask, continuum = sky.get_skymask(biweight(specrect, axis=0, ignore_nan=True), size=25)
 
     # Subtract the sky from the spectrum
-    skysubrect = sky.subtract_sky(specrect, good)
+    skysubrect = sky.subtract_sky(specrect, good_fiber_mask)
 
     # If PCA is not provided, compute it from the sky-subtracted data
     if pca is None:
-        pca = sky.get_arc_pca(skysubrect, good, skymask, components=config.VIRUS2_PCA_COMPONENTS)
-        return pca
+        biweighted_spectrum = None
+        pca = sky.get_arc_pca(skysubrect, good_fiber_mask, skymask, components=config.VIRUS2_PCA_COMPONENTS)
+        if pca_only:
+            return pca, biweighted_spectrum, continuum, None
 
     # Adjust the sky mask and compute the continuum
     skymask[1:] += skymask[:-1]
@@ -114,11 +102,29 @@ def reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
     res[:, ~skymask] = 0.0
 
     # Write the final reduced data to a new FITS file
-    io.write_fits(skysubrect - res, skysubrect, specrect, errrect, f[0].header, channel, outfolder)
+    skysubrect_adv = skysubrect - res
+    output_fits_filename = io.write_fits(skysubrect_adv, skysubrect, specrect, errrect, obs_header, channel, outfolder)
+
+    if debug:
+        plot_title = 'skysubrect_adv'
+        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
+        plot.plot_frame(skysubrect_adv, save_file=save_filename, title=plot_title)
+
+        plot_title = 'skysubrect'
+        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
+        plot.plot_frame(skysubrect, save_file=save_filename, title=plot_title)
+
+        plot_title = 'specrect'
+        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
+        plot.plot_frame(specrect, save_file=save_filename, title=plot_title)
+
+        plot_title = 'errrect'
+        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
+        plot.plot_frame(errrect, save_file=save_filename, title=plot_title)
 
     # Return the biweighted spectrum and continuum
     biweighted_spectrum = biweight(specrect, axis=0, ignore_nan=True)
-    return biweighted_spectrum, continuum
+    return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
 def get_element_with_closest_time(element_list, time_list, target_time):
@@ -142,14 +148,51 @@ def get_element_with_closest_time(element_list, time_list, target_time):
     return closest_element
 
 
-def process(infolder, outfolder, obs_date, obs_name, reduce_all,
-            bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
+def get_file_break_times(filenames, breakind):
     """
-    Purpose: data reduction pipeline to process VIRUS2 observation files
+    Creates a list of master calibration images and corresponding times
+    by splitting the input list of filenames at given indices.
+
+    Args:
+        filenames (list(list(str))): List of FITS file paths containing calibration data.
+        breakind (list(int)): List of indices to split the filenames into different chunks.
+
+    Returns
+        chunked_file_names (list(str)): list of files, for each chunk.
+        chunked_file_times (list(float)): mean observation time (MJD float) for each file chunk.
+    """
+
+    # Define break points for splitting the filenames into chunks
+    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
+    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
+
+    chunked_file_names = []
+    chunked_file_times = []
+
+    # Iterate over the file-list chunks defined by breakind1 and breakind2
+    for bk1, bk2 in zip(breakind1, breakind2):
+        # Collect and preprocess frames within the current chunk
+        chunk_files = [f for cnt, f in enumerate(filenames)
+                       if ((cnt > bk1) * (cnt < bk2))]  # Only include files in the current file-list-chunk
+
+        # Extract observation times (MJD) for frames in the current chunk
+        chunk_times = [Time(fits.open(filename)[0].header['DATE-OBS']).mjd for filename in chunk_files]
+
+        # Append the median frame and the mean time for the current chunk
+        chunked_file_names.append(chunk_files)
+        chunked_file_times.append(np.mean(chunk_times))
+
+    return chunked_file_names, chunked_file_times
+
+
+def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
+                           bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
+    """
+    Purpose: Search FITS file tree and generate a list of manifest records,
+    one for each "obs id break block" in the files
 
     Args:
         infolder (str): Root path where reduction input file tree is located
-        outfolder (str): Path where reduction output files will be written
         obs_date (str): Observation calendar date string formatted as YYYYMMDD
         obs_name (str): Observation object/target name, e.g. from FITS header card
         reduce_all (bool): Reduce all files found under infolder file tree
@@ -160,13 +203,13 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         twilight_flat_label (str): string label from FITS file header for twilight frames
 
     Returns:
-        None
+        manifest_records (list(dict)): list of dicts/records, where each dict has the following keys:
+            record['obs_time']: Obs time as MJD float
+            record[observation_files']: filename of obs file to be reduced
+            record['calibration_files']['bias']: list of bias FITS file names to use for calibration
+            record['calibration_files']['flat']: list of flat FITS file names to use for calibration
+            record['calibration_files']['arc']: list of arc FITS file names to use for calibration
     """
-    # TODO: dark_label is unused, in current and previous versions of this module
-
-    log = utils.setup_logging('virus2_reductions')
-
-    os.makedirs(outfolder, exist_ok=True)
 
     ROOT_DATA_PATH = os.path.abspath(infolder)
     if not os.path.isdir(ROOT_DATA_PATH):
@@ -176,44 +219,11 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     unit_list = [record['spec_id'] for record in metadata_records]
     units = list(set(unit_list))
 
-    # =============================================================================
-    # Get Line List
-    # =============================================================================
-
-    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
-
+    manifest_records = []
     for unit in units:
 
-        # =========================================
-        # Get def_wave and line_list for given channel
-        # TODO: implemented the other three channels, using green as a template
-        # =========================================
-        channel = unit[-1].lower()
-        line_list = None
-        limit = None
-        xref = None
-        if channel == 'b':
-            def_wave = CONFIG_DEF_WAVE[channel]
-            continue
-        if channel == 'g':
-            def_wave = CONFIG_DEF_WAVE[channel]
-            line_list_filepath = config.get_config_filepath('lines', 'virus2_green.txt')
-            line_list = Table.read(line_list_filepath, format="ascii")
-            limit = CONFIG_DETECTOR[channel]['limit']
-        if channel == 'r':
-            def_wave = CONFIG_DEF_WAVE[channel]
-            continue
-        if channel == 'd':
-            def_wave = CONFIG_DEF_WAVE[channel]
-            continue
-
-        lines = np.array(line_list['wavelength'])
-        xref = np.array(line_list['col'])
-        use_kernel = True
-
         # =============================================================================
-        # Make a list of the objects for each filename, ignore those without 'OBJECT'
-        # in the header
+        # Make a list of the objects for each filename, ignore those without 'OBJECT' in the header
         # =============================================================================
         unit_filenames = [record['filename'] for record in metadata_records if record['spec_id'] == unit]
 
@@ -238,15 +248,14 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         # Get/sort subsets of filenames that are bias filenames, domeflat filenames, and arc lamp filenames
         # =============================================================================
 
-        log.info('Sorting FITS Files by frame type')
-
         bias_filenames    = io.get_matching_filenames(valid_files, typelist, [bias_label])
         twiflt_filenames  = io.get_matching_filenames(valid_files, typelist, [twilight_flat_label])
         domeflt_filenames = io.get_matching_filenames(valid_files, typelist, [flat_label])
         arc_filenames     = io.get_matching_filenames(valid_files, typelist, [arc_label])
+        dark_filenames    = io.get_matching_filenames(valid_files, typelist, [dark_label])
 
         if reduce_all:
-            non_sci_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames)
+            non_sci_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
             sci_filenames = [fn for fn in valid_files if fn not in non_sci_files]
         else:
             if obs_name is not None:
@@ -263,119 +272,247 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
         # Validate number of files found before attempting to use diffs on file obs_ids
         # Use exceptions to exit process if needed frame-types file counts were not found
         # =============================================================================
-        log.info('Validating total number of found files, by frame type ...')
-        # TODO: decide on minimum count, and consider defining it in the config
-        bias_minimum_count = 1
-        flat_minimum_count = 1
-        arc_minimum_count = 1
+        minimum_file_count_for_break = 2
 
+        bias_minimum_count = minimum_file_count_for_break
         num_bias_files = len(bias_filenames)
         if num_bias_files < bias_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
                                f'found total number of BIAS files = {num_bias_files}, '
-                               f'but need >= 2')
+                               f'but need >= {bias_minimum_count}')
+
+        flat_minimum_count = minimum_file_count_for_break
         num_flt_files = len(flt_filenames)
         if num_flt_files < flat_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
                                f'found total number of FLAT files = {num_flt_files}, '
-                               f'but need >= 2')
+                               f'but need >= {flat_minimum_count}')
+
+        arc_minimum_count = minimum_file_count_for_break
         num_arc_files = len(arc_filenames)
         if num_arc_files < arc_minimum_count:
             raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
-                               f'found total number of ARC files = {num_bias_files}, '
-                               f'but need >= 2')
-
+                               f'found total number of ARC files = {num_arc_files}, '
+                               f'but need >= {arc_minimum_count}')
 
         # =============================================================================
-        # Make a master bias, master dome flat, and master arc for the first set of OBS
         # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
         # =============================================================================
 
-        log.info('Making master bias frames')
         bias_break_inds = io.get_file_block_break_indices(bias_filenames)
-        masterbias_list, biastime_list = ccd.make_mastercal_list(bias_filenames, bias_break_inds, channel)
+        chunk_bias_list, chunk_bias_times = get_file_break_times(bias_filenames, bias_break_inds)
 
-        log.info('Making master flat frames')
         flt_break_inds = io.get_file_block_break_indices(flt_filenames)
-        masterflt_list, flttime_list = ccd.make_mastercal_list(flt_filenames, flt_break_inds, channel)
+        chunk_flat_list, chunk_flat_times = get_file_break_times(flt_filenames, flt_break_inds)
 
-        log.info('Making master arc frames')
         arc_break_inds = io.get_file_block_break_indices(arc_filenames)
-        masterarc_list, arctime_list = ccd.make_mastercal_list(arc_filenames, arc_break_inds, channel)
+        chunk_arc_list, chunk_arc_times = get_file_break_times(arc_filenames, arc_break_inds)
 
         # =============================================================================
-        # Load reference fiber locations from a predefined file
+        # For each science file, find the calibration file block with the closest time and group
+        # Generate manifest file for each science file
         # =============================================================================
 
-        ifu_cen_filepath = config.get_config_filepath('ifucen', 'IFUcen_VIRUS2_D3G.txt')
-        ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
-        ref = ifu_cen_file_data
-        ref.reverse()
+        for obs_file in sci_filenames:
+            obs_data, obs_header = io.load_fits(obs_file)
+            object_name = obs_header.get('OBJECT', None)
+            obs_time = io.get_fits_header_mjd(obs_header)
+            bias_files = get_element_with_closest_time(chunk_bias_list, chunk_bias_times, obs_time)
+            flat_files = get_element_with_closest_time(chunk_flat_list, chunk_flat_times, obs_time)
+            arc_files = get_element_with_closest_time(chunk_arc_list, chunk_arc_times, obs_time)
 
-        # =============================================================================
-        # Get trace from the dome flat
-        # =============================================================================
-        trace_list = []
-        fltspec = []
-        log.info('Getting trace for each master flat')
-        for masterflt, mtime in zip(masterflt_list, flttime_list):
-            masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
-            trace, good, Tchunk, xchunk = fiber.get_trace(masterflt - masterbias, ref)
-            plot.plot_trace(trace, Tchunk, xchunk, outfolder=outfolder)
-            trace_list.append([trace, good])
-            domeflat_spec = fiber.get_spectra(masterflt - masterbias, trace)
-            domeflat_error = 0. * domeflat_spec
-            fltspec.append([domeflat_spec, domeflat_error])
+            record = dict()
+            now_string = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            record['reduction_name'] = f'antigen_manifest_{now_string}'
+            record['unit_date'] = 'unknown'
+            record['unit_instrument'] = 'VIRUS2'
+            record['unit_id'] = unit
+            record['obs_time'] = obs_time
+            record['obs_name'] = object_name
+            record['in_folder'] = './'
+            record['observation_files'] = [obs_file]
+            record['calibration_files'] = dict()
+            record['calibration_files']['bias'] = bias_files
+            record['calibration_files']['flat'] = flat_files
+            record['calibration_files']['arc'] = arc_files
+            manifest_records.append(record)
 
-        # =============================================================================
-        # Get wavelength from arc lamps
-        # =============================================================================
-        wave_list = []
-        wave_time = []
-        bk1 = np.hstack([0, arc_break_inds+1])
-        log.info('Getting wavelength for each master arc')
-
-        for masterarc, mtime, bk in zip(masterarc_list, arctime_list, bk1):
-            masterbias = get_element_with_closest_time(masterbias_list, biastime_list, mtime)
-            trace, good = get_element_with_closest_time(trace_list, flttime_list, mtime)
-            lamp_spec = fiber.get_spectra(masterarc - masterbias, trace)
-            # TODO: move definition of test.fits to CONFIG param
-            fits.PrimaryHDU(lamp_spec).writeto('test.fits',overwrite=True)
-            try:
-                wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good,
-                                                       xref, lines, limit=limit,
-                                                       use_kernel=use_kernel)
-
-                # Plot wavelength solution for inspection
-                plot.plot_wavelength(lines, W, wavelength, outfolder)
-            except:
-                log.warning('Could not get wavelength solution for masterarc')
-                log.warning('First file of failed masterarc included: %s' %
-                            (arc_filenames[bk]))
-                traceback.print_exc()
-                continue
-            wave_list.append(wavelength)
-            wave_time.append(mtime)
-
-        # =============================================================================
-        # Rectify domeflat spectra and get fiber to fiber
-        # =============================================================================
-        ftf_list = []
-        log.info('Getting fiber to fiber for each master domeFlat')
-        for fltsp, mtime in zip(fltspec, flttime_list):
-            wavelength = get_element_with_closest_time(wave_list, wave_time, mtime)
-            domeflat_spec, domeflat_error = fltsp
-            domeflat_rect, domeflat_error_rect = fiber.rectify(domeflat_spec, domeflat_error,
-                                                               wavelength, def_wave)
-            ftf, ftf_smooth = fiber.get_fiber_to_fiber(domeflat_rect)
-            ftf_list.append(ftf)
+    return manifest_records
 
 
-        pca = reduce(arc_filenames[0], biastime_list, masterbias_list, masterflt_list, flttime_list,
-                     trace_list, wave_time, wave_list, ftf_list, channel, pca=None, outfolder=outfolder)
-        for fn in sci_filenames:
-            log.info('Reducing: %s' % fn)
-            sky, cont = reduce(fn, biastime_list, masterbias_list, masterflt_list, flttime_list,
-                               trace_list, wave_time, wave_list, ftf_list,
-                               channel, pca=pca, outfolder=outfolder)
+def process_unit(manifest_record, output_path, debug=False):
+    """
+    Purpose: data reduction pipeline to process VIRUS2 observation files
+
+    Args:
+        manifest_record (dict): dict returned by yaml loading full-path filename to manifest.yaml containing lists of calibration files, etc
+        output_path (str): Path where reduction output files will be written
+        debug (bool): default=False, if True, save PNG plot files for intermediate data artifacts
+
+    Returns:
+        reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
+    """
+    log = utils.setup_logging('virus2_reductions')
+
+    os.makedirs(output_path, exist_ok=True)
+
+    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
+
+    # =========================================
+    # Get def_wave and line_list for given channel
+    # TODO: implemented the other three channels, using green as a template
+    # =========================================
+    unit_id = manifest_record['unit_id']
+    channel = unit_id[-1].lower()  # for VIRUS2, the unit is 'D3G', so 'D3G'[-1] returns 'G'
+
+    line_list = None
+    limit = None
+    def_wave = None
+
+    if channel == 'b':
+        def_wave = CONFIG_DEF_WAVE[channel]
+    if channel == 'g':
+        def_wave = CONFIG_DEF_WAVE[channel]
+        line_list_filepath = config.get_config_filepath('virus2', f'{unit_id}', 'virus2_green.txt')
+        line_list = Table.read(line_list_filepath, format="ascii")
+        limit = CONFIG_DETECTOR[channel]['limit']
+    if channel == 'r':
+        def_wave = CONFIG_DEF_WAVE[channel]
+    if channel == 'd':
+        def_wave = CONFIG_DEF_WAVE[channel]
+
+    lines = np.array(line_list['wavelength'])
+    xref = np.array(line_list['col'])
+    use_kernel = True
+
+    # =============================================================================
+    # Make a master bias, master dome flat, and master arc for the first set of OBS
+    # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
+    # =============================================================================
+
+    bias_filenames = manifest_record['calibration_files']['bias']
+    flat_filenames = manifest_record['calibration_files']['flat']
+    arc_filenames = manifest_record['calibration_files']['arc']
+
+    log.info('Making master bias frames')
+    master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames, channel)
+
+    log.info('Making master flat frames')
+    master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames, channel)
+
+    log.info('Making master arc frames')
+    master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames, channel)
+
+    # =============================================================================
+    # Load reference fiber locations from a predefined file
+    # =============================================================================
+
+    ifu_cen_filepath = config.get_config_filepath('virus2', f'{unit_id}', f'IFUcen_VIRUS2_{unit_id}.txt')
+    ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
+    ref = ifu_cen_file_data
+    ref.reverse()
+
+    # =============================================================================
+    # Get trace from the dome flat
+    # =============================================================================
+    log.info('Getting trace for each master flat')
+
+    trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data, ref)
+    _, _ = plot.plot_trace(trace, Tchunk, xchunk, outfolder=output_path)
+
+    domeflat_spec = fiber.get_spectra(master_flat_data - master_bias_data, trace)
+    domeflat_error = 0. * domeflat_spec
+
+    # =============================================================================
+    # Get wavelength from arc lamps
+    # =============================================================================
+    log.info('Getting wavelength for each master arc')
+
+    lamp_spec = fiber.get_spectra(master_arc_data - master_bias_data, trace)
+
+    # save lamp spec data to FITS and PNG
+    if debug:
+        lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'debug_lamp_spec.fits'))
+        fits.PrimaryHDU(lamp_spec).writeto(lamp_spec_test_fits_filename, overwrite=True)
+
+        lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'debug_lamp_spec.png'))
+        plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
+
+    try:
+        wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
+                                                     xref, lines, limit=limit,
+                                                     use_kernel=use_kernel)
+
+        # Plot wavelength solution for inspection
+        plot.plot_wavelength(lines, W, wavelength, output_path)
+    except:
+        error_message = 'Could not get wavelength solution for arc_filenames from manifest'
+        log.warning(error_message)
+        raise RuntimeError(error_message)
+
+    # =============================================================================
+    # Rectify domeflat spectra and get fiber to fiber
+    # =============================================================================
+    log.info('Getting fiber to fiber for each master domeFlat')
+
+    domeflat_rect, domeflat_error_rect = fiber.rectify(domeflat_spec, domeflat_error,
+                                                       wavelength, def_wave)
+    ftf, ftf_smooth = fiber.get_fiber_to_fiber(domeflat_rect)
+
+    # =============================================================================
+    # Reduce!
+    # =============================================================================
+    arc_filename = arc_filenames[0]
+    log.info(f'Reducing Arc Frame to generate PCS model: {arc_filename}')
+
+    pca, _, _, _ = reduce(arc_filename, master_bias_data, master_flat_data,
+                       trace, good_fiber_mask, wavelength, ftf, channel,
+                       pca=None, pca_only=True, outfolder=output_path, debug=debug)
+
+    science_file = manifest_record['observation_files'][0]  # TODO: process ALL files from the obs list, not just [0]
+    log.info(f'Reducing Science Frame: {science_file}')
+
+    _, sky, cont, reduction_filename = reduce(science_file, master_bias_data, master_flat_data,
+                                              trace, good_fiber_mask, wavelength, ftf, channel,
+                                              pca=pca, outfolder=output_path, debug=debug)
+
+    return reduction_filename
+
+
+def process(infolder, outfolder, obs_date, obs_name, reduce_all,
+            bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
+    """
+    Purpose: data reduction pipeline to process VIRUS2 observation files
+
+    Args:
+        infolder (str): Root path where reduction input file tree is located
+        outfolder (str): Path where reduction output files will be written
+        obs_date (str): Observation calendar date string formatted as YYYYMMDD
+        obs_name (str): Observation object/target name, e.g. from FITS header card
+        reduce_all (bool): Reduce all files found under infolder file tree
+        bias_label (str): string label from FITS file header for bias frames
+        arc_label (str): string label from FITS file header for arc frames
+        dark_label (str): string label from FITS file header for dark frames
+        flat_label (str): string label from FITS file header for flat frames
+        twilight_flat_label (str): string label from FITS file header for twilight frames
+
+    Returns:
+        None
+    """
+    log = utils.setup_logging('virus2_reductions')
+
+    manifest_records = build_manifest_records(infolder, obs_date, obs_name, reduce_all,
+                                              bias_label, arc_label, dark_label, flat_label, twilight_flat_label)
+
+    os.makedirs(outfolder, exist_ok=True)
+
+    for record in manifest_records:
+        unit_id = record['unit_id']
+        log.info(f'Processing reduction for unit = {unit_id}:')
+        try:
+            output_fits_filename = process_unit(record, outfolder)
+            log.error(f'Processing reduction for unit = {unit_id}: PASS: wrote reduction to FITS file {output_fits_filename}')
+        except Exception as error:
+            log.error(f'Processing reduction for unit = {unit_id}: FAILED: {error}')
+
     return None

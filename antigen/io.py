@@ -23,15 +23,15 @@ def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extens
           VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
 
     Args:
-        fits_filename (str): full-path filename of FITS file containing VIRUS2 obs data
-        expected_prefix_parts (int): Number of parts or words expected to be parsed from the filename stem/base, after stipping the ".fits" extension
+        fits_filename (str, pathlike): full-path filename of FITS file containing VIRUS2 obs data, string or pathlib.Path object
+        expected_prefix_parts (int): Number of parts or words expected to be parsed from the filename stem/base, after stripping the ".fits" extension
         expected_extension (str): e.g. default = ".fits"
 
     Returns:
         filename_metadata (dict): keys = ['filename', 'instrument',
             'obs_date', 'obs_id', 'frame_type', spec_id', exp_index', 'utc_str', 'user_label']
     """
-    path = Path(fits_filename)
+    path = Path(fits_filename).expanduser()
 
     # Validate extension
     if path.suffix.lower() != expected_extension:
@@ -256,6 +256,15 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
 
     hdulist = []  # List to store HDU objects for the FITS file
 
+    # Format the output filename using observation date and object name
+    obj_time_string = Time(header['DATE-OBS'] + 'T' + header['UT']).strftime('%Y%m%dT%H%M%S')
+    header_card_object = header['OBJECT']
+    if len(header_card_object.strip()) > 0:
+        obj_name_string = '_'.join(header['OBJECT'].split())
+    else:
+        obj_name_string = 'ObjectedCardEmpty'
+    image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_multi'
+
     # Loop through the data arrays and create HDUs for each
     for image, ftp in zip([skysubrect_adv, skysubrect, specrect, errorrect],
                           [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU]):
@@ -298,16 +307,43 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
             except:
                 continue
 
-        # Format the output filename using observation date and object name
-        t = Time(header['DATE-OBS'] + 'T' + header['UT'])
-        objname = '_'.join(header['OBJECT'].split())
-        iname = '_'.join([objname, t.strftime('%Y%m%dT%H%M%S'), 'multi'])  # Generate filename
-
         # Append the HDU to the list
         hdulist.append(hdu)
 
-    # TODO: iname, accidental scope spill from for loop to function scope; replace with intentional assignment
     # Write the HDU list to the output file, overwriting if necessary
-    fits.HDUList(hdulist).writeto(os.path.join(outfolder, iname + '.fits'), overwrite=True)
+    output_filename = os.path.abspath(os.path.join(outfolder, image_name_stem + '.fits'))
+    fits.HDUList(hdulist).writeto(output_filename, overwrite=True)
 
-    return None
+    return output_filename
+
+
+def load_fits(fits_filename):
+    """
+    Purpose: Open the FITS file and extract header cards needed to construct observation MJD time
+    Reads only the zeroth element returned by astropy.io.fits.open()
+
+    Args:
+        fits_filename (str): full-path file name for FITS file to be read
+    Returns:
+        obs_data (fits.Header): astropy FITS Header object
+        obs_header (fits.Data): astropy FITS Data object
+    """
+    with fits.open(fits_filename) as fob:
+        obs_data = fob[0].data
+        obs_header = fob[0].header
+    return obs_data, obs_header
+
+
+def get_fits_header_mjd(fits_header):
+    """
+    Purpose: Open the FITS file and extract header cards needed to construct observation MJD time
+
+    Args:
+        fits_header (astropy.io.fits.Header): FITS header read from FITS obs file, expected cards 'DATE-OBS' and 'UT'
+    Returns:
+        obs_mjd (float): Modified Julian Date (JD - 2400000.5)
+    """
+    datetime_string = fits_header['DATE-OBS'] + 'T' + fits_header['UT']
+    astro_time = Time(datetime_string)
+    obs_mjd = astro_time.mjd
+    return obs_mjd
