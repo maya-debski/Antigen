@@ -7,7 +7,8 @@ from datetime import datetime as dt
 
 def get_args():
     """
-    Purpose: Input arg handling for VIRUS2 data reduction CLI tools, e.g. antigen_reduce_virus2.py
+    Purpose: Input arg handling for VIRUS2 data reduction CLI tools, e.g. antigen_build_manifest_virus2.py
+    Example: antigen_build_manifest_virus2.py -c 20250619 -f flatp --obs_name standard -w 2
     """
 
     defaults = {
@@ -16,6 +17,7 @@ def get_args():
         'obs_date': datetime.datetime.now().strftime('%Y%m%d'),
         'obs_name': None,
         'reduce_all': False,
+        'time_radius': 2.0,
         'bias_label': 'bias',
         'arc_label': 'arc',
         'dark_label': 'dark',
@@ -29,6 +31,7 @@ def get_args():
         'obs_date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
         'obs_name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
         'reduce_all': 'Reduce all files found under infolder file tree, (default: %(default)s)',
+        'time_radius': 'All calibration files within this MJD radius of a science file will be added to its manifest, (default: %(default)s)',
         'bias_label': 'The object name from the FITS header card for bias files, (default: %(default)s)',
         'arc_label': 'The object name from the FITS header card for arc files, (default: %(default)s)',
         'dark_label': 'The object name from the FITS header card for dark files, (default: %(default)s)',
@@ -43,6 +46,7 @@ def get_args():
     parser.add_argument('-c', '--obs_date', type=str, help=helps['obs_date'], default=defaults['obs_date'])
     parser.add_argument('-n', '--obs_name', type=str, help=helps['obs_name'], default=defaults['obs_name'])
     parser.add_argument('-r', '--reduce_all', action='store_true', help=helps['reduce_all'], default=defaults['reduce_all'])
+    parser.add_argument('-w', '--time_radius', type=float, help=helps['time_radius'], default=defaults['time_radius'])
     parser.add_argument('-b', '--bias_label', type=str, help=helps['bias_label'], default=defaults['bias_label'])
     parser.add_argument('-a', '--arc_label', type=str, help=helps['arc_label'], default=defaults['arc_label'])
     parser.add_argument('-d', '--dark_label', type=str, help=helps['dark_label'], default=defaults['dark_label'])
