@@ -5,7 +5,6 @@ import warnings
 from astropy.io import fits
 from astropy.stats import biweight_location as biweight
 from astropy.table import Table
-from astropy.time import Time
 
 import numpy as np
 
@@ -127,7 +126,7 @@ def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wave
     return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
-def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
+def build_manifest_records(infolder, obs_date, obs_name, reduce_all, time_radius,
                            bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
     """
     Purpose: Search FITS file tree and generate a list of manifest records,
@@ -138,6 +137,7 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
         obs_date (str): Observation calendar date string formatted as YYYYMMDD
         obs_name (str): Observation object/target name, e.g. from FITS header card
         reduce_all (bool): Reduce all files found under infolder file tree
+        time_radius (float) will group calibration files with times that fall within this distance from a given science file time
         bias_label (str): string label from FITS file header for bias frames
         arc_label (str): string label from FITS file header for arc frames
         dark_label (str): string label from FITS file header for dark frames
@@ -157,53 +157,38 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
     if not os.path.isdir(ROOT_DATA_PATH):
         raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {ROOT_DATA_PATH}')
 
+    # time filtering: Get FITS files in file-tree that match the obs_date
     metadata_records = io.parse_fits_file_tree(ROOT_DATA_PATH, date=obs_date, verbose=True)
-    unit_list = [record['spec_id'] for record in metadata_records]
-    units = list(set(unit_list))
+    units_found = [record['spec_id'] for record in metadata_records]
+    unique_units_found = list(set(units_found))
 
     manifest_records = []
-    for unit in units:
+    for unit in unique_units_found:
+        # find subset of file records with matching spec_id, e.g. 'D3G' and get their filenames and frame types
+        unit_records = [record for record in metadata_records if record['spec_id'] == unit]
 
-        # =============================================================================
-        # Make a list of the objects for each filename, ignore those without 'OBJECT' in the header
-        # =============================================================================
-        unit_filenames = [record['filename'] for record in metadata_records if record['spec_id'] == unit]
+        # Group subsets of filenames into lists based on the frame types
+        unit_frame_types = [record['frame_type'] for record in unit_records]
+        unit_filenames = [record['filename'] for record in unit_records]
 
-        typelist = []
-        valid_files = []
-        timelist = []
+        bias_filenames    = io.get_matching_filenames(unit_filenames, unit_frame_types, [bias_label])
+        twiflt_filenames  = io.get_matching_filenames(unit_filenames, unit_frame_types, [twilight_flat_label])
+        domeflt_filenames = io.get_matching_filenames(unit_filenames, unit_frame_types, [flat_label])
+        arc_filenames     = io.get_matching_filenames(unit_filenames, unit_frame_types, [arc_label])
+        dark_filenames    = io.get_matching_filenames(unit_filenames, unit_frame_types, [dark_label])
 
-        for fn in unit_filenames:
-            fn_meta_data = io.parse_fits_file_name(fn)
-            try:
-                obj_frame_type = fn_meta_data['frame_type']  # fits.open(f)[0].header['OBJECT']
-                obs_date_str = fn_meta_data['utc_str_date']  # fits.open(f)[0].header['DATE-OBS']
-            except:
-                continue
+        if obs_name is not None:
+            sci_filenames = io.get_matching_filenames(unit_filenames, unit_frame_types, [obs_name])
+        else:
+            sci_filenames = []
 
-            # Only store files for which the filename meta-data parsing is valid
-            typelist.append(obj_frame_type)
-            valid_files.append(fn)
-            timelist.append(Time(obs_date_str))
-
-        # =============================================================================
-        # Get/sort subsets of filenames that are bias filenames, domeflat filenames, and arc lamp filenames
-        # =============================================================================
-
-        bias_filenames    = io.get_matching_filenames(valid_files, typelist, [bias_label])
-        twiflt_filenames  = io.get_matching_filenames(valid_files, typelist, [twilight_flat_label])
-        domeflt_filenames = io.get_matching_filenames(valid_files, typelist, [flat_label])
-        arc_filenames     = io.get_matching_filenames(valid_files, typelist, [arc_label])
-        dark_filenames    = io.get_matching_filenames(valid_files, typelist, [dark_label])
+        if len(sci_filenames) == 0 and not reduce_all:
+            warnings.warn(f'unit={unit}, found ZERO matching files for obs_name={obs_name}. Continuing to next unit...')
+            continue
 
         if reduce_all:
-            non_sci_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
-            sci_filenames = [fn for fn in valid_files if fn not in non_sci_files]
-        else:
-            if obs_name is not None:
-                sci_filenames =  io.get_matching_filenames(valid_files, typelist, [obs_name])
-            else:
-                sci_filenames = []
+            calibration_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
+            sci_filenames = [name for name in unit_filenames if name not in calibration_files]
 
         if len(twiflt_filenames) > 0:
             flt_filenames = twiflt_filenames
@@ -214,54 +199,71 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
         # Validate number of files found before attempting to use diffs on file obs_ids
         # Use exceptions to exit process if needed frame-types file counts were not found
         # =============================================================================
-        minimum_file_count_for_break = 2
+        fail_bias = False
+        fail_flat = False
+        fail_arc = False
+        minimum_file_count_for_break = 1
 
         bias_minimum_count = minimum_file_count_for_break
         num_bias_files = len(bias_filenames)
         if num_bias_files < bias_minimum_count:
-            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
-                               f'found total number of BIAS files = {num_bias_files}, '
-                               f'but need >= {bias_minimum_count}')
+            fail_bias = True
+            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, found BIAS label = {bias_label}, '
+                          f'found {num_bias_files}, needed >= {bias_minimum_count}')
 
         flat_minimum_count = minimum_file_count_for_break
         num_flt_files = len(flt_filenames)
         if num_flt_files < flat_minimum_count:
-            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
-                               f'found total number of FLAT files = {num_flt_files}, '
-                               f'but need >= {flat_minimum_count}')
+            fail_flat = True
+            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, FLAT label = {flat_label}, '
+                          f'found {num_flt_files}, needed >= {flat_minimum_count}')
 
         arc_minimum_count = minimum_file_count_for_break
         num_arc_files = len(arc_filenames)
         if num_arc_files < arc_minimum_count:
-            raise RuntimeError(f'ERROR: Searched file-tree under {ROOT_DATA_PATH}, '
-                               f'found total number of ARC files = {num_arc_files}, '
-                               f'but need >= {arc_minimum_count}')
+            fail_arc = False
+            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, ARC label = {arc_label}, '
+                          f'found {num_arc_files}, needed >= {arc_minimum_count}')
 
+        if fail_bias or fail_flat or fail_arc:
+            warnings.warn(f'WARNING: did not find enough calibration files to process unit={unit}. Continuing to next unit...')
+            continue
         # =============================================================================
         # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
         # =============================================================================
+        bias_times = [io.get_fits_file_time(name) for name in bias_filenames]
+        flt_times  = [io.get_fits_file_time(name) for name in flt_filenames]
+        arc_times  = [io.get_fits_file_time(name) for name in arc_filenames]
 
-        bias_break_inds = io.get_file_block_break_indices(bias_filenames)
-        chunk_bias_list, chunk_bias_times = io.get_file_break_times(bias_filenames, bias_break_inds)
-
-        flt_break_inds = io.get_file_block_break_indices(flt_filenames)
-        chunk_flat_list, chunk_flat_times = io.get_file_break_times(flt_filenames, flt_break_inds)
-
-        arc_break_inds = io.get_file_block_break_indices(arc_filenames)
-        chunk_arc_list, chunk_arc_times = io.get_file_break_times(arc_filenames, arc_break_inds)
-
-        # =============================================================================
-        # For each science file, find the calibration file block with the closest time and group
         # Generate manifest file for each science file
-        # =============================================================================
+        print(f'Found {len(sci_filenames)} science files. '
+              f'Attempting to find calibrations files withing time_radius of each ...')
+        for sci_file in sci_filenames:
+            fail_bias = False
+            fail_flt = False
+            fail_arc = False
+            # For each science file, find the calibration files within a time radius
+            obs_time_mjd = io.get_fits_file_time(sci_file)
+            time_center = obs_time_mjd
+            bias_files = io.get_elements_within_time_radius(bias_filenames, bias_times, time_center, time_radius)
+            flt_files = io.get_elements_within_time_radius(flt_filenames, flt_times, time_center, time_radius)
+            arc_files = io.get_elements_within_time_radius(arc_filenames, arc_times, time_center, time_radius)
 
-        for obs_file in sci_filenames:
-            obs_data, obs_header = io.load_fits(obs_file)
-            object_name = obs_header.get('OBJECT', None)
-            obs_time = io.get_fits_header_mjd(obs_header)
-            bias_files = io.get_element_with_closest_time(chunk_bias_list, chunk_bias_times, obs_time)
-            flat_files = io.get_element_with_closest_time(chunk_flat_list, chunk_flat_times, obs_time)
-            arc_files = io.get_element_with_closest_time(chunk_arc_list, chunk_arc_times, obs_time)
+            if len(bias_files) == 0:
+                fail_bias = True
+            if len(flt_files) == 0:
+                fail_flt = True
+            if len(arc_files) == 0:
+                fail_arc = True
+
+            if fail_bias or fail_arc or fail_flt:
+                print(f'FAIL: found ZERO calibration files for sci_file={sci_file}: '
+                      f'time_center={time_center}, time_radius={time_radius}')
+                continue
+
+            num_cals = len(bias_files) + len(flt_files) + len(arc_files)
+            print(f'PASS: found {num_cals} calibration files for sci_file={sci_file}: '
+                  f'time_center={time_center}, time_radius={time_radius}')
 
             record = dict()
             now_string = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -269,14 +271,14 @@ def build_manifest_records(infolder, obs_date, obs_name, reduce_all,
             record['unit_date'] = 'unknown'
             record['unit_instrument'] = 'VIRUS2'
             record['unit_id'] = unit
-            record['obs_time'] = obs_time
-            record['obs_name'] = object_name
+            record['obs_date'] = obs_date
+            record['obs_name'] = obs_name
             record['in_folder'] = './'
-            record['observation_files'] = [obs_file]
+            record['observation_files'] = sci_filenames
             record['calibration_files'] = dict()
-            record['calibration_files']['bias'] = bias_files
-            record['calibration_files']['flat'] = flat_files
-            record['calibration_files']['arc'] = arc_files
+            record['calibration_files']['bias'] = bias_filenames
+            record['calibration_files']['flat'] = flt_filenames
+            record['calibration_files']['arc'] = arc_filenames
             manifest_records.append(record)
 
     return manifest_records
@@ -421,7 +423,7 @@ def process_unit(manifest_record, output_path, debug=False):
     return reduction_filename
 
 
-def process(infolder, outfolder, obs_date, obs_name, reduce_all,
+def process(infolder, outfolder, obs_date, obs_name, reduce_all, time_radius,
             bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
     """
     Purpose: data reduction pipeline to process VIRUS2 observation files
@@ -443,7 +445,7 @@ def process(infolder, outfolder, obs_date, obs_name, reduce_all,
     """
     log = utils.setup_logging('virus2_reductions')
 
-    manifest_records = build_manifest_records(infolder, obs_date, obs_name, reduce_all,
+    manifest_records = build_manifest_records(infolder, obs_date, obs_name, reduce_all, time_radius,
                                               bias_label, arc_label, dark_label, flat_label, twilight_flat_label)
 
     os.makedirs(outfolder, exist_ok=True)
