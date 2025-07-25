@@ -1,0 +1,16 @@
+name: env_antigen
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - ipython
+  - pyyaml
+  - astropy
+  - matplotlib
+  - numpy
+  - pandas
+  - psutil
+  - scipy
+  - scikit-learn
+  - seaborn

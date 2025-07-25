@@ -1,0 +1,33 @@
+reduction_name: test_02
+in_folder: ~/data/
+out_folder: reduction
+unit_instrument: VIRUS2
+unit_id: D3G
+unit_date: 20250618
+obs_date: 20250619
+obs_name: M57
+observation_files:
+  - VIRUS2/20250619/0000099/D3G/VIRUS2_20250620_0000017_standard_D3G_exp01_20250621T040909.6_HR4963.fits
+calibration_files:
+  bias:
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp01_20250620T021157.0_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp02_20250620T021608.9_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp03_20250620T021655.1_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp04_20250620T021744.5_zero.fits
+    - VIRUS2/20250619/0000029/D3G/VIRUS2_20250619_0000029_bias_D3G_exp05_20250620T021833.9_zero.fits
+  flat:
+    - VIRUS2/20250619/0000030/D3G/VIRUS2_20250619_0000030_flatp_D3G_exp01_20250620T022204.3_twilight.fits
+  arc:
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp01_20250620T010914.6_fear.fits
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp02_20250620T011523.7_fear.fits
+    - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp03_20250620T012133.2_fear.fits
+
+# unit_id
+#   For VIRUS2, these mean....
+#     [A:F] is the "enclosure input", so 1-of-6 unit enclosures fiber cables, enclosure input IFU
+#     [1:6] if for the "spectrograph" inside enclosure, so the entire litany of all things between the enclosure IFU and the CCDs
+#     [B,D,G,R] is the "channel" specifics, so everything after the BSM
+# unit_date
+#     the unit hardware may change in time, so thi gives a hook connect a given obs date to a unit config valid for that obs
+#     defines the epoch associated with a valid config
+#     e.g. tells you which VERSION of a config file to use from e.g. config_files/VIRUS2/<D3G>/<date_path>/config_files.txt
