@@ -241,7 +241,45 @@ def get_element_with_closest_time(element_list, time_list, target_time):
     return closest_element
 
 
-def get_file_break_times(filenames, breakind):
+def get_elements_within_time_radius(element_list, time_list, time_center, time_radius):
+    """
+    Purpose: Given a list of elements and a list of MJD times for those elements,
+    find the elements that fall within a time_window centered on a time_center
+
+    Args:
+        element_list (list): list of elements corresponding to the times in time_list
+        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
+        time_center (numeric): MJD time
+        time_radius (numeric): a delta which will be used to search for elements that have a time inside [time_center - dt, time_center + dt]
+
+    Returns:
+        elements_inside: elements within the time_radius of the time_center
+    """
+    time_distances = np.abs(np.array(time_list) - time_center)
+    mask_inside = (time_distances <= time_radius)
+    elements_inside = np.array(element_list)[mask_inside].tolist()
+    return elements_inside
+
+
+def get_fits_file_time(fits_file_name):
+    """
+    Purpose: Read FITS header, get header cards 'DATE-OBS' and 'UT', construct a time stamp, convert it to MJD
+
+    Args:
+        fits_file_name (str): file name for FITS file
+    Returns:
+        time_mjd (float): MJD time
+
+    """
+    with fits.open(fits_file_name) as hdul:
+        header = hdul[0].header
+    timestamp = header['DATE-OBS'] + 'T' + header['UT']
+    obs_time = Time(timestamp, format='isot', scale='utc')
+    mjd = obs_time.mjd
+    return mjd
+
+
+def get_file_breakind_times(filenames, breakind):
     """
     Creates a list of master calibration images and corresponding times
     by splitting the input list of filenames at given indices.
