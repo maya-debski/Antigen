@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antigen"
+version = "2025.07.24"
+description = "Data reduction software for the VIRUS-family of spectrographs, including GCMS and VIRUS2"
+authors = [
+    {name = "Maya Debski", email = "maya.h.debski@gmail.com"},
+    {name = "Greg Zeimann", email = "grzeimann@gmail.com"},
+    {name = "Jason Vestuto", email = "jason.vestuto@austin.utexas.edu"},
+]
+maintainers = [
+    {name = "Maya Debski", email = "maya.h.debski@gmail.com"},
+    {name = "Greg Zeimann", email = "grzeimann@gmail.com"},
+]
+dependencies = [
+    'astropy',
+    'numpy',
+    'matplotlib',
+    'pandas',
+    'pyyaml',
+    'psutil',
+    'scikit-learn',
+    'scipy',
+    'seaborn'
+    ]
+requires-python = ">= 3.11"
+readme = {file = "README.txt", content-type = "text/markdown"}
+
+[tool.setuptools.packages.find]
+include = ['antigen', 'antigen.*']
+
+[tool.setuptools]
+include-package-data = true
+script-files = [
+    'scripts/antigen_build_manifest_virus2.py',
+    'scripts/antigen_read_manifest.py',
+    'scripts/antigen_reduce_virus2.py',
+    'scripts/antigen_reduce_virus2_manifest.py',
+    'scripts/antigen_view_fits.py',
+]
+
+[tool.setuptools.package-data]
+"antigen" = ["config_files/**/*"]
