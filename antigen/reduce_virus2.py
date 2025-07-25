@@ -19,9 +19,8 @@ from antigen import utils
 warnings.filterwarnings("ignore")
 
 
-# TODO: rename reduce_science
-def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
-           channel, pca=None, pca_only=False, outfolder=None):
+def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
+                   channel, pca=None, pca_only=False, outfolder=None):
     """
     Purpose: Reduce the raw data by performing a series of processing steps,
     including bias subtraction, flat-fielding, sky subtraction,
@@ -108,17 +107,23 @@ def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wave
     return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
-# TODO: rename process_cals
-def process_unit(manifest_record, output_path):
+def process_calibration(manifest_record, output_path):
     """
-    Purpose: data reduction pipeline to process VIRUS2 observation files
+    Purpose: Process calibration files needed for data reduction for VIRUS2 observation files
 
     Args:
-        manifest_record (dict): dict returned by yaml loading full-path filename to manifest.yaml containing lists of calibration files, etc
+        manifest_record (dict): dict returned by yaml loading full-path filename to manifest.yaml
+                                containing lists of calibration files, etc
         output_path (str): Path where reduction output files will be written
 
     Returns:
-        reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
+        master_bias (arraylike): master bias frames for bias correction.
+        master_flat (arraylike): master flat frame
+        master_arc (arraylike): master arc frame
+        trace (arraylike): fiber trace data for current observation
+        good_fiber_mask (array(bool)): boolean selection mask of good (isfinite) fibers for current observation
+        wavelength (arraylike): wavelength calibration data for the current observation
+        ftf (list): flat-field (fiber_to_fiber) correction array.
     """
     log = utils.setup_logging('virus2_reductions')
 
@@ -225,26 +230,42 @@ def process_unit(manifest_record, output_path):
                                                        wavelength, def_wave)
     ftf, ftf_smooth = fiber.get_fiber_to_fiber(domeflat_rect)
 
-    # =============================================================================
-    # Reduce!
-    # =============================================================================
-    arc_filename = arc_filenames[0]
-    log.info(f'Reducing Arc Frame to generate PCS model: {arc_filename}')
+    return master_bias_data, master_flat_data, master_arc_data, trace, good_fiber_mask, wavelength, ftf
 
-    pca, _, _, _ = reduce(arc_filename, master_bias_data, master_flat_data,
-                       trace, good_fiber_mask, wavelength, ftf, channel,
-                       pca=None, pca_only=True, outfolder=output_path)
 
-    science_file = manifest_record['observation_files'][0]  # TODO: process ALL files from the obs list, not just [0]
-    log.info(f'Reducing Science Frame: {science_file}')
+def reduction_pipeline(dataset_manifest, output_path):
+    """
+    Purpose: data reduction pipeline to process VIRUS2 observation files
 
-    _, sky, cont, reduction_filename = reduce(science_file, master_bias_data, master_flat_data,
-                                              trace, good_fiber_mask, wavelength, ftf, channel,
-                                              pca=pca, outfolder=output_path)
+    Args:
+        dataset_manifest (dict): dataset manifest dictionary returned from e.g. dataset.find_datasets()
+        output_path (str): output file path to which this method will write a reduced FITS file
+    Returns:
+        reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
+    """
 
+    log = utils.setup_logging('virus2_reductions')
+
+    # TODO: replace tuple unpack with a more intentional data structure, e.g. dict, namedtuple, data-class, etc
+    log.info(f'Processing calibration for reduction.')
+    calibration_tuple = process_calibration(dataset_manifest, output_path)
+    (master_bias_data,
+     master_flat_data,
+     master_arc_data,
+     trace, good_fiber_mask,
+     wavelength, ftf) = calibration_tuple
+
+    arc_file = dataset_manifest['calibration_files']['arc'][0]
+    channel = dataset_manifest['unit_id'][-1].lower()
+    log.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
+    pca, _, _, _ = reduce_science(arc_file, master_bias_data, master_flat_data,
+                                  trace, good_fiber_mask, wavelength, ftf, channel,
+                                  pca=None, pca_only=True, outfolder=output_path)
+
+    science_file = dataset_manifest['observation_files'][0]
+    log.info(f'Reducing Science Frame: science_file={science_file}')
+
+    _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
+                                                      trace, good_fiber_mask, wavelength, ftf, channel,
+                                                      pca=pca, outfolder=output_path)
     return reduction_filename
-
-# TODO: refactor, reduction_pipeline does both process_cals and reduce_science
-# TODO: treat manifest as cleaning dataset, then send cleaned dataset into a "pipeline"
-# TODO: Greg: "pipeline" all the things done after decisions
-# TODO: Big wrappers/applications/main, that do the dataset cleanup and call the pipeline would be called "orchestrate"

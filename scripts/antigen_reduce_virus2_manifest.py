@@ -56,7 +56,7 @@ def main():
     for file in obs_filenames:
         if args.verbose:
             print(f'Processing reduction for FITS obs file: {file.name}')
-        output_fits_filename = reduce_virus2.process_unit(manifest_record, output_path=args.out_folder, debug=args.debug)
+        output_fits_filename = reduce_virus2.reduction_pipeline(manifest_record, output_path=args.out_folder)
 
         if args.verbose:
             print(f'Wrote reduction FITS file to {output_fits_filename}')
