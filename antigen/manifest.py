@@ -57,6 +57,14 @@ def load_manifest(filename):
 
 
 def ordered_yaml_loader(stream):
+    """
+    Purpose: replaces yaml.load(), uses OrderedDict to preserve the ordering of param/key read from YAML config file.
+
+    Args:
+        stream: file object e.g. returned from open(filename, 'r')
+    Returns:
+        manifest (OrderedDict): ordered dictionary that preserves the key order seen in the yaml file
+    """
     class OrderedLoader(yaml.SafeLoader):
         pass
 
@@ -72,6 +80,15 @@ def ordered_yaml_loader(stream):
 
 
 def ordered_yaml_dumper(data, stream, **kwargs):
+    """
+    Purpose: replaces yaml.dump(), combining the yaml dump with an OrderedDict to preserve config file key ordering
+    Args:
+        data (dict): e.g. manifest dictionary to write to file
+        stream: file object e.g. returned from open(filename, 'r')
+    Returns:
+        None: if you call ordered_yaml_dumper(data, stream) where stream is NOT None
+              alternative: yaml_string (str): if you call ordered_yaml_dumper(data, stream=None) with the stream=None
+    """
     class OrderedDumper(yaml.SafeDumper):
         pass
 
@@ -82,15 +99,22 @@ def ordered_yaml_dumper(data, stream, **kwargs):
 
     OrderedDumper.add_representer(OrderedDict, represent_ordered_dict)
 
-    # Default: block-style output like safe_dump
+    # default_flow_style=False, preserves block-style yml output like safe_dump
     yaml.dump(data, stream, OrderedDumper, sort_keys=False, default_flow_style=False, **kwargs)
 
 
-def stringify_paths(obj):
+def convert_manifest_paths_to_stings(obj):
+    """
+    Purpose: Convert all pathlib Path objects found in manifest record into strings for writing to YAML files
+    Args:
+        obj: could be a Path, list of Path objs, or dict of Path objs, etc
+    Returns:
+        obj: returns a string, list of stings, or dict of strings
+    """
     if isinstance(obj, dict):
-        return {k: stringify_paths(v) for k, v in obj.items()}
+        return {k: convert_manifest_paths_to_stings(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [stringify_paths(i) for i in obj]
+        return [convert_manifest_paths_to_stings(i) for i in obj]
     elif isinstance(obj, Path):
         return str(obj)
     else:
@@ -108,8 +132,8 @@ def save_manifest(manifest, filename):
     """
     path = Path(filename).expanduser()
     with open(path, 'w') as fob:
-        ordered_yaml_dumper(stringify_paths(manifest), fob)
-        # yaml.safe_dump(stringify_paths(manifest), fob, default_flow_style=False)
+        ordered_yaml_dumper(convert_manifest_paths_to_stings(manifest), fob)
+        # yaml.safe_dump(convert_manifest_paths_to_stings(manifest), fob, default_flow_style=False)
 
 
 def normalize_manifest(manifest):
