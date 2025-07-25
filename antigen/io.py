@@ -108,21 +108,6 @@ def load_fits(fits_filename):
     return obs_data, obs_header
 
 
-def get_fits_header_mjd(fits_header):
-    """
-    Purpose: Open the FITS file and extract header cards needed to construct observation MJD time
-
-    Args:
-        fits_header (astropy.io.fits.Header): FITS header read from FITS obs file, expected cards 'DATE-OBS' and 'UT'
-    Returns:
-        obs_mjd (float): Modified Julian Date (JD - 2400000.5)
-    """
-    datetime_string = fits_header['DATE-OBS'] + 'T' + fits_header['UT']
-    astro_time = Time(datetime_string)
-    obs_mjd = astro_time.mjd
-    return obs_mjd
-
-
 def read_fits(file_name, read_data=False, use_memmap=False):
     """
 	Purpose: Load image data and header from FITS file.
@@ -247,19 +232,34 @@ def write_fits_header_txt(fits_header, file_name):
     return fits_header_str
 
 
-def get_fits_file_time(fits_file_name):
+def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     """
     Purpose: Read FITS header, get header cards 'DATE-OBS' and 'UT', construct a time stamp, convert it to MJD
 
+    Note: VIRUS2 uses both 'DATE-OBS' card to contain YYYYmmdd and 'UT' card to contain HH:MM:SS
+    Note: GCMS and VIRUS-W use 'DATE-OBS' to contain YYYYmmddTHH:MM:SS
+
     Args:
         fits_file_name (str): file name for FITS file
+        instrument (str): choices = ('VIRUS2', 'GCMS')
     Returns:
-        time_mjd (float): MJD time
-
+        obs_time_mjd (float): Modified Julian Date, float decimal days
     """
+    VALID_INSTRUMENTS = ('VIRUS2', 'VIRUSW', 'GCMS')
+    if instrument not in VALID_INSTRUMENTS:
+        raise ValueError(f'ERROR: input instrument={instrument} not in VALID_INSTRUMENTS={VALID_INSTRUMENTS}')
+
     with fits.open(fits_file_name) as hdul:
         header = hdul[0].header
-    timestamp = header['DATE-OBS'] + 'T' + header['UT']
-    obs_time = Time(timestamp, format='isot', scale='utc')
-    mjd = obs_time.mjd
-    return mjd
+
+    if instrument == 'VIRUS2':
+        time_stamp = header['DATE-OBS'] + 'T' + header['UT']
+        obs_time = Time(time_stamp, format='isot', scale='utc')
+        obs_time_mjd = obs_time.mjd
+    elif instrument in ('VIRUSW', 'GCMS'):
+        time_stamp = header['DATE-OBS']
+        obs_time = Time(time_stamp, format='isot', scale='utc')
+        obs_time_mjd = obs_time.mjd
+    else:
+        obs_time_mjd = None
+    return obs_time_mjd
