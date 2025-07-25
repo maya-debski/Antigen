@@ -206,10 +206,15 @@ def get_file_block_break_indices(fits_file_names):
             e.g. if obs_ids for the files are [1,2,3,11,12,13,21,22,23] then obs_id_break_inds = [2,5]
     """
     obs_id_list = get_fits_file_obs_ids(fits_file_names)
-    if len(obs_id_list) > 1:
-        obs_id_break_inds = np.where(np.diff(obs_id_list) > 1)[0]
-    elif len(obs_id_list) == 1:
-        obs_id_break_inds = obs_id_list[-1]
+    obs_id_ints = [int(thing) for thing in obs_id_list]
+    if len(obs_id_ints) > 1:
+        breaks = np.where(np.diff(obs_id_ints) > 1)
+        if len(breaks) > 0:
+            obs_id_break_inds = breaks[0]
+        else:
+            obs_id_break_inds = None
+    elif len(obs_id_ints) == 1:
+        obs_id_break_inds = None
     else:
         raise ValueError(f'Failed to compute gaps in obs_id_list={obs_id_list}')
     return obs_id_break_inds
