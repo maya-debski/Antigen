@@ -44,12 +44,13 @@ def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extens
     # Split the file name stem into at most 8 parts, allows ONLY dunder delimiters,
     # but with the maxsplit, this prevents splitting the last word which is a user-word that can be literally anything
     # including the delimiters WITHIN the word.
-    filename_words = re.split('_', file_name_stem, maxsplit=expected_prefix_parts)
+    number_of_delimiters_to_split = expected_prefix_parts - 1
+    filename_words = re.split('_', file_name_stem, maxsplit=number_of_delimiters_to_split)
 
-    if len(filename_words) != 8:
+    if len(filename_words) != expected_prefix_parts:
         print(f'WARNING: Cannot parse filename, returning None; '
               f' Expected pattern of 8 words delimited by underscores. '
-              f' filename={fits_filename}')
+              f' file_name_stem={file_name_stem}')
         filename_metadata = None
     else:
         filename_metadata = dict()
