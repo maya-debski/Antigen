@@ -13,6 +13,7 @@ setup(
     },
     include_package_data=True,
     scripts=[
+             'scripts/antigen_build_manifest_virus2.py',
              'scripts/antigen_read_manifest.py',
              'scripts/antigen_reduce_virus2.py',
              'scripts/antigen_reduce_virus2_manifest.py',
