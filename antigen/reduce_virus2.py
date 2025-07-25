@@ -19,8 +19,9 @@ from antigen import utils
 warnings.filterwarnings("ignore")
 
 
+# TODO: rename reduce_science
 def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
-           channel, pca=None, pca_only=False, outfolder=None, debug=False):
+           channel, pca=None, pca_only=False, outfolder=None):
     """
     Purpose: Reduce the raw data by performing a series of processing steps,
     including bias subtraction, flat-fielding, sky subtraction,
@@ -37,7 +38,6 @@ def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wave
         pca (sklearn.decomposition.PCA), Default is None, optional, A pre-fitted PCA model for residual map analysis.
         pca_only (bool): if True, return immediately after computing the PCA model fit object
         outfolder (str): file output path to write FITS files to
-        debug (bool): default=False, if True, save PNG plot files for intermediate data artifacts
 
     Returns:
         pca (sklearn.decomposition.PCA): The fitted PCA model
@@ -103,36 +103,19 @@ def reduce(data_filename, master_bias, master_flat, trace, good_fiber_mask, wave
     skysubrect_adv = skysubrect - res
     output_fits_filename = io.write_fits(skysubrect_adv, skysubrect, specrect, errrect, obs_header, channel, outfolder)
 
-    if debug:
-        plot_title = 'skysubrect_adv'
-        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
-        plot.plot_frame(skysubrect_adv, save_file=save_filename, title=plot_title)
-
-        plot_title = 'skysubrect'
-        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
-        plot.plot_frame(skysubrect, save_file=save_filename, title=plot_title)
-
-        plot_title = 'specrect'
-        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
-        plot.plot_frame(specrect, save_file=save_filename, title=plot_title)
-
-        plot_title = 'errrect'
-        save_filename = os.path.abspath(os.path.join(outfolder, f'debug_{plot_title}.png'))
-        plot.plot_frame(errrect, save_file=save_filename, title=plot_title)
-
     # Return the biweighted spectrum and continuum
     biweighted_spectrum = biweight(specrect, axis=0, ignore_nan=True)
     return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
-def process_unit(manifest_record, output_path, debug=False):
+# TODO: rename process_cals
+def process_unit(manifest_record, output_path):
     """
     Purpose: data reduction pipeline to process VIRUS2 observation files
 
     Args:
         manifest_record (dict): dict returned by yaml loading full-path filename to manifest.yaml containing lists of calibration files, etc
         output_path (str): Path where reduction output files will be written
-        debug (bool): default=False, if True, save PNG plot files for intermediate data artifacts
 
     Returns:
         reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
@@ -216,12 +199,10 @@ def process_unit(manifest_record, output_path, debug=False):
     lamp_spec = fiber.get_spectra(master_arc_data - master_bias_data, trace)
 
     # save lamp spec data to FITS and PNG
-    if debug:
-        lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'debug_lamp_spec.fits'))
-        fits.PrimaryHDU(lamp_spec).writeto(lamp_spec_test_fits_filename, overwrite=True)
-
-        lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'debug_lamp_spec.png'))
-        plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
+    lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.fits'))
+    fits.PrimaryHDU(lamp_spec).writeto(lamp_spec_test_fits_filename, overwrite=True)
+    lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.png'))
+    plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
 
     try:
         wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
@@ -252,13 +233,18 @@ def process_unit(manifest_record, output_path, debug=False):
 
     pca, _, _, _ = reduce(arc_filename, master_bias_data, master_flat_data,
                        trace, good_fiber_mask, wavelength, ftf, channel,
-                       pca=None, pca_only=True, outfolder=output_path, debug=debug)
+                       pca=None, pca_only=True, outfolder=output_path)
 
     science_file = manifest_record['observation_files'][0]  # TODO: process ALL files from the obs list, not just [0]
     log.info(f'Reducing Science Frame: {science_file}')
 
     _, sky, cont, reduction_filename = reduce(science_file, master_bias_data, master_flat_data,
                                               trace, good_fiber_mask, wavelength, ftf, channel,
-                                              pca=pca, outfolder=output_path, debug=debug)
+                                              pca=pca, outfolder=output_path)
 
     return reduction_filename
+
+# TODO: refactor, reduction_pipeline does both process_cals and reduce_science
+# TODO: treat manifest as cleaning dataset, then send cleaned dataset into a "pipeline"
+# TODO: Greg: "pipeline" all the things done after decisions
+# TODO: Big wrappers/applications/main, that do the dataset cleanup and call the pipeline would be called "orchestrate"
