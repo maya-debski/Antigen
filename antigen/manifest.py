@@ -30,6 +30,7 @@ calibration_files:
     - VIRUS2/20250619/0000025/D3G/VIRUS2_20250619_0000025_arc_D3G_exp03_20250620T012133.2_fear.fits
 """
 
+from collections import OrderedDict
 from pathlib import Path
 import yaml
 
@@ -51,8 +52,38 @@ def load_manifest(filename):
         manifest (dict): data structure loaded from manifest YAML file
     """
     with open(filename, 'r') as f:
-        manifest = yaml.safe_load(f)
+        manifest = ordered_yaml_loader(f)
     return manifest
+
+
+def ordered_yaml_loader(stream):
+    class OrderedLoader(yaml.SafeLoader):
+        pass
+
+    def construct_mapping(loader, node):
+        loader.flatten_mapping(node)
+        return OrderedDict(loader.construct_pairs(node))
+
+    OrderedLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        construct_mapping)
+
+    return yaml.load(stream, OrderedLoader)
+
+
+def ordered_yaml_dumper(data, stream, **kwargs):
+    class OrderedDumper(yaml.SafeDumper):
+        pass
+
+    def represent_ordered_dict(dumper, data):
+        return dumper.represent_mapping(
+            yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+            data.items())
+
+    OrderedDumper.add_representer(OrderedDict, represent_ordered_dict)
+
+    # Default: block-style output like safe_dump
+    yaml.dump(data, stream, OrderedDumper, sort_keys=False, default_flow_style=False, **kwargs)
 
 
 def stringify_paths(obj):
@@ -77,7 +108,8 @@ def save_manifest(manifest, filename):
     """
     path = Path(filename).expanduser()
     with open(path, 'w') as fob:
-        yaml.safe_dump(stringify_paths(manifest), fob, default_flow_style=False)
+        ordered_yaml_dumper(stringify_paths(manifest), fob)
+        # yaml.safe_dump(stringify_paths(manifest), fob, default_flow_style=False)
 
 
 def normalize_manifest(manifest):
