@@ -3,7 +3,7 @@
 import os
 import sys
 from antigen.cli import get_args
-from antigen.reduce_virus2 import build_manifest_records
+from antigen.process import build_manifest_records
 from antigen.manifest import save_manifest
 
 

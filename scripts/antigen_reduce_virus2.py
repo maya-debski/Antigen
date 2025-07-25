@@ -2,7 +2,7 @@
 
 import sys
 from antigen.cli import get_args
-from antigen.reduce_virus2 import process
+from antigen.process import process
 
 
 def main():
