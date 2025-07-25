@@ -1,7 +1,7 @@
 import logging
 
 
-def setup_logging(log_name='antigen.logger'):
+def setup_logging(log_name='antigen', debug=False, verbose=False):
     """
     Purpose: Set up a logger object with specific log level time and message string format
     Note: Use a StreamHandler to write to stdout and set the level to DEBUG if verbose is set from the command line
@@ -12,18 +12,24 @@ def setup_logging(log_name='antigen.logger'):
     Returns:
         log (logging.Logger): Logger object
     """
-    log = logging.getLogger(log_name)
-    if not len(log.handlers):
-        fmt = '[%(levelname)s - %(asctime)s] %(message)s'
-        fmt = logging.Formatter(fmt)
 
+    logger = logging.getLogger(log_name)
+
+    if debug:
+        level = logging.DEBUG
+    elif verbose:
         level = logging.INFO
+    else:
+        level = logging.WARNING
+    logger.setLevel(level)
 
+    if not logger.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(fmt)
-        handler.setLevel(level)
+        formatter = logging.Formatter(
+            "[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+            datefmt="%H:%M:%S"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
-        log = logging.getLogger('input_utils')
-        log.setLevel(logging.DEBUG)
-        log.addHandler(handler)
-    return log
+    return logger

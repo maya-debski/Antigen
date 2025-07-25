@@ -5,8 +5,9 @@ import datetime
 import os
 import sys
 
-from antigen.manifest import read_manifest, save_manifest
 from antigen.config import get_config_filepath
+from antigen.manifest import read_manifest, save_manifest
+from antigen.utils import setup_logging
 
 
 def get_args():
@@ -44,6 +45,10 @@ def print_example_manifest():
 
 def main():
     args = get_args()
+
+    logger = setup_logging('antigen', debug=args.validate, verbose=True)
+    logger.info(f'Starting application...')
+
     if args.example:
         print_example_manifest()
         sys.exit(0)
@@ -54,6 +59,9 @@ def main():
         manifest_save_name_stem = datetime.datetime.now().strftime('antigen_read_manifest_save_%Y%m%d_%H%M%S')
         manifest_savefile = os.path.join(os.path.abspath(os.curdir), f'{manifest_save_name_stem}.yml')
         save_manifest(manifest, manifest_savefile)
+
+    logger.info(f'Completed application.')
+
     return None
 
 

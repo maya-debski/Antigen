@@ -1,4 +1,5 @@
 import os
+import logging
 import warnings
 
 from astropy.io import fits
@@ -13,10 +14,10 @@ from antigen import fiber
 from antigen import io
 from antigen import plot
 from antigen import sky
-from antigen import utils
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
+logger = logging.getLogger('antigen.reduce.virus2')
 
 
 def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
@@ -125,7 +126,6 @@ def process_calibration(manifest_record, output_path):
         wavelength (arraylike): wavelength calibration data for the current observation
         ftf (list): flat-field (fiber_to_fiber) correction array.
     """
-    log = utils.setup_logging('virus2_reductions')
 
     os.makedirs(output_path, exist_ok=True)
 
@@ -167,13 +167,13 @@ def process_calibration(manifest_record, output_path):
     flat_filenames = manifest_record['calibration_files']['flat']
     arc_filenames = manifest_record['calibration_files']['arc']
 
-    log.info('Making master bias frames')
+    logger.info('Making master bias frames')
     master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames, channel)
 
-    log.info('Making master flat frames')
+    logger.info('Making master flat frames')
     master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames, channel)
 
-    log.info('Making master arc frames')
+    logger.info('Making master arc frames')
     master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames, channel)
 
     # =============================================================================
@@ -188,7 +188,7 @@ def process_calibration(manifest_record, output_path):
     # =============================================================================
     # Get trace from the dome flat
     # =============================================================================
-    log.info('Getting trace for each master flat')
+    logger.info('Getting trace for each master flat')
 
     trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data, ref)
     _, _ = plot.plot_trace(trace, Tchunk, xchunk, outfolder=output_path)
@@ -199,7 +199,7 @@ def process_calibration(manifest_record, output_path):
     # =============================================================================
     # Get wavelength from arc lamps
     # =============================================================================
-    log.info('Getting wavelength for each master arc')
+    logger.info('Getting wavelength for each master arc')
 
     lamp_spec = fiber.get_spectra(master_arc_data - master_bias_data, trace)
 
@@ -218,13 +218,13 @@ def process_calibration(manifest_record, output_path):
         plot.plot_wavelength(lines, W, wavelength, output_path)
     except:
         error_message = 'Could not get wavelength solution for arc_filenames from manifest'
-        log.warning(error_message)
+        logger.warning(error_message)
         raise RuntimeError(error_message)
 
     # =============================================================================
     # Rectify domeflat spectra and get fiber to fiber
     # =============================================================================
-    log.info('Getting fiber to fiber for each master domeFlat')
+    logger.info('Getting fiber to fiber for each master domeFlat')
 
     domeflat_rect, domeflat_error_rect = fiber.rectify(domeflat_spec, domeflat_error,
                                                        wavelength, def_wave)
@@ -244,10 +244,8 @@ def reduction_pipeline(dataset_manifest, output_path):
         reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
     """
 
-    log = utils.setup_logging('virus2_reductions')
-
     # TODO: replace tuple unpack with a more intentional data structure, e.g. dict, namedtuple, data-class, etc
-    log.info(f'Processing calibration for reduction.')
+    logger.info(f'Processing calibration for reduction.')
     calibration_tuple = process_calibration(dataset_manifest, output_path)
     (master_bias_data,
      master_flat_data,
@@ -257,13 +255,13 @@ def reduction_pipeline(dataset_manifest, output_path):
 
     arc_file = dataset_manifest['calibration_files']['arc'][0]
     channel = dataset_manifest['unit_id'][-1].lower()
-    log.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
+    logger.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
     pca, _, _, _ = reduce_science(arc_file, master_bias_data, master_flat_data,
                                   trace, good_fiber_mask, wavelength, ftf, channel,
                                   pca=None, pca_only=True, outfolder=output_path)
 
     science_file = dataset_manifest['observation_files'][0]
-    log.info(f'Reducing Science Frame: science_file={science_file}')
+    logger.info(f'Reducing Science Frame: science_file={science_file}')
 
     _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
                                                       trace, good_fiber_mask, wavelength, ftf, channel,

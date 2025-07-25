@@ -23,6 +23,7 @@ def get_args():
         'dark_label': 'dark',
         'flat_label': 'flat',
         'twilight_flat_label': 'twi',
+        'verbose': False,
     }
 
     helps = {
@@ -37,6 +38,7 @@ def get_args():
         'dark_label': 'The object name from the FITS header card for dark files, (default: %(default)s)',
         'flat_label': 'The object name from the FITS header card for flat files, (default: %(default)s)',
         'twilight_flat_label': 'The object name from the FITS header card for twilight flat files, (default: %(default)s)',
+        'verbose': 'if True, print more process details and logger.info to console, (default: %(default)s)',
     }
 
     parser = ArgumentParser(add_help=True)
@@ -52,6 +54,8 @@ def get_args():
     parser.add_argument('-d', '--dark_label', type=str, help=helps['dark_label'], default=defaults['dark_label'])
     parser.add_argument('-f', '--flat_label', type=str, help=helps['flat_label'], default=defaults['flat_label'])
     parser.add_argument('-t', '--twilight_flat_label', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
+    parser.add_argument('-v', '--verbose', action='store_true', help=helps['verbose'], default=defaults['verbose'])
+
     argv = None
     args = parser.parse_args(args=argv)
 

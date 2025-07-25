@@ -31,8 +31,12 @@ calibration_files:
 """
 
 from collections import OrderedDict
+import logging
 from pathlib import Path
 import yaml
+
+
+logger = logging.getLogger('antigen.manifest')
 
 
 MANIFEST_PARAMETER_KEYS = ('reduction_name', 'in_folder', 'out_folder',
@@ -259,9 +263,7 @@ def read_manifest(filename, validate=False, verbose=False):
         print_manifest(manifest_normalized)
     if validate:
         valid = validate_manifest(manifest_normalized)
-        if verbose:
-            result = 'PASS' if valid else 'FAIL'
-            result_message = f'{result}: manifest validation: valid={valid}, filename={filename}'
-            print(result_message + '\n')
+        result = 'PASS' if valid else 'FAIL'
+        logger.info(f'{result}: manifest validation: valid={valid}, filename={filename}')
     return manifest_normalized
 

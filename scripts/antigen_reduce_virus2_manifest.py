@@ -5,8 +5,9 @@ import datetime
 import os
 import sys
 
-from antigen import reduce_virus2
 from antigen import manifest
+from antigen import reduce_virus2
+from antigen import utils
 
 
 def get_args():
@@ -42,24 +43,27 @@ def get_args():
 
 def main():
 
+
     args = get_args()
+
+    logger = utils.setup_logging('antigen', verbose=args.verbose, debug=args.debug)
+    logger.info(f'Starting application...')
 
     if args.out_folder:
         if not os.path.isdir(args.out_folder):
             os.makedirs(args.out_folder)
 
+    logger.info(f'Reading dataset manifest for reduction: {args.manifest_filename}')
     manifest_record = manifest.read_manifest(args.manifest_filename, validate=args.verbose, verbose=args.verbose)
     manifest_savefile = os.path.join(os.path.abspath(args.out_folder), 'reduction_manifest.yml')
     manifest.save_manifest(manifest_record, manifest_savefile)
 
     obs_filenames = manifest_record[manifest.MANIFEST_OBSERVATION_LIST_KEY]
     for file in obs_filenames:
-        if args.verbose:
-            print(f'Processing reduction for FITS obs file: {file.name}')
+        logger.info(f'Processing reduction for FITS obs file: {file.name}')
         output_fits_filename = reduce_virus2.reduction_pipeline(manifest_record, output_path=args.out_folder)
 
-        if args.verbose:
-            print(f'Wrote reduction FITS file to {output_fits_filename}')
+        logger.info(f'Wrote reduction FITS file to {output_fits_filename}')
 
     return None
 

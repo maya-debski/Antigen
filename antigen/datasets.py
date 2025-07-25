@@ -1,15 +1,17 @@
 import datetime
 import datetime as dt
 import glob
+import logging
 import os
 import re
-import warnings
 from pathlib import Path
 
 import numpy as np
 
 from antigen import io
 from antigen.io import get_fits_file_time
+
+logger = logging.getLogger('antigen.datasets')
 
 
 def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extension='.fits'):
@@ -48,9 +50,9 @@ def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extens
     filename_words = re.split('_', file_name_stem, maxsplit=number_of_delimiters_to_split)
 
     if len(filename_words) != expected_prefix_parts:
-        print(f'WARNING: Cannot parse filename, returning None; '
-              f' Expected pattern of 8 words delimited by underscores. '
-              f' file_name_stem={file_name_stem}')
+        logger.warning(f'WARNING: Cannot parse filename, returning None; '
+                       f' Expected pattern of 8 words delimited by underscores. '
+                       f' file_name_stem={file_name_stem}')
         filename_metadata = None
     else:
         filename_metadata = dict()
@@ -93,8 +95,7 @@ def get_fits_filenames(root_path, date=None, verbose=False):
         file_names (list(dict)): List of files
     """
 
-    if verbose:
-        print(f'VERBOSE: Searching for FITS files under in root_path={root_path} for date={date} ...')
+    logger.info(f'Searching for FITS files under in root_path={root_path} for date={date} ...')
 
     # Construct the path components
     virus_root_path = os.path.join(root_path, 'VIRUS2')
@@ -113,7 +114,7 @@ def get_fits_filenames(root_path, date=None, verbose=False):
 
     if verbose:
         num_files = len(fits_filenames)
-        print(f'VERBOSE: Found {num_files} files under.')
+        logger.info(f'VERBOSE: Found {num_files} files under.')
         if num_files < 1:
             raise FileNotFoundError(f'ERROR: found no files matching fits_glob_pattern={fits_glob_pattern}. Exiting...')
 
@@ -357,7 +358,7 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
 
     dataset_records = []
     for unit in unique_units_found:
-        # find subset of file records with matching spec_id, e.g. 'D3G' and get their filenames and frame types
+        logger.info(f'Search for subset of file records with matching unit={unit} ...')
         unit_records = [record for record in metadata_records if record['spec_id'] == unit]
 
         # Group subsets of filenames into lists based on the frame types
@@ -376,12 +377,15 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
             sci_filenames = []
 
         if len(sci_filenames) == 0 and not reduce_all:
-            warnings.warn(f'unit={unit}, found ZERO matching files for obs_name={obs_name}. Continuing to next unit...')
+            logger.warning(f'unit={unit}, found ZERO matching files for obs_name={obs_name}. Continuing to next unit...')
             continue
+        else:
+            logger.info(f'unit={unit}, Found len(sci_filenames)={len(sci_filenames)} matching files for obs_name={obs_name}')
 
         if reduce_all:
             calibration_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
             sci_filenames = [name for name in unit_filenames if name not in calibration_files]
+            logger.info(f'reduce_all==True, expanding dataset to reduce all non_calibration_files')
 
         if len(twiflt_filenames) > 0:
             flt_filenames = twiflt_filenames
@@ -401,25 +405,25 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
         num_bias_files = len(bias_filenames)
         if num_bias_files < bias_minimum_count:
             fail_bias = True
-            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, found BIAS label = {bias_label}, '
-                          f'found {num_bias_files}, needed >= {bias_minimum_count}')
+            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, found bias_label={bias_label}, '
+                           f'found {num_bias_files}, needed >= {bias_minimum_count}')
 
         flat_minimum_count = minimum_file_count_for_break
         num_flt_files = len(flt_filenames)
         if num_flt_files < flat_minimum_count:
             fail_flat = True
-            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, FLAT label = {flat_label}, '
-                          f'found {num_flt_files}, needed >= {flat_minimum_count}')
+            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, flat_label={flat_label}, '
+                           f'found {num_flt_files}, needed >= {flat_minimum_count}')
 
         arc_minimum_count = minimum_file_count_for_break
         num_arc_files = len(arc_filenames)
         if num_arc_files < arc_minimum_count:
             fail_arc = False
-            warnings.warn(f'WARNING: unit={unit}, Searched {ROOT_DATA_PATH}, ARC label = {arc_label}, '
-                          f'found {num_arc_files}, needed >= {arc_minimum_count}')
+            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, arc_label={arc_label}, '
+                           f'found {num_arc_files}, needed >= {arc_minimum_count}')
 
         if fail_bias or fail_flat or fail_arc:
-            warnings.warn(f'WARNING: did not find enough calibration files to process unit={unit}. Continuing to next unit...')
+            logger.warning(f'Did not find enough calibration files to process unit={unit}. Continuing to next unit...')
             continue
         # =============================================================================
         # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
@@ -429,8 +433,8 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
         arc_times  = [get_fits_file_time(name) for name in arc_filenames]
 
         # Generate manifest file for each science file
-        print(f'Found {len(sci_filenames)} science files. '
-              f'Attempting to find calibrations files withing time_radius of each ...')
+        logger.info(f'Found {len(sci_filenames)} science files. '
+                    f'Attempting to find calibrations files withing time_radius of each ...')
         for sci_file in sci_filenames:
             fail_bias = False
             fail_flt = False
@@ -450,13 +454,13 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
                 fail_arc = True
 
             if fail_bias or fail_arc or fail_flt:
-                print(f'FAIL: found ZERO calibration files for sci_file={sci_file}: '
-                      f'time_center={time_center}, time_radius={time_radius}')
+                logger.warning(f'FAIL: found ZERO calibration files for sci_file={sci_file}: '
+                               f'time_center={time_center}, time_radius={time_radius}')
                 continue
 
             num_cals = len(bias_files) + len(flt_files) + len(arc_files)
-            print(f'PASS: found {num_cals} calibration files for sci_file={sci_file}: '
-                  f'time_center={time_center}, time_radius={time_radius}')
+            logger.info(f'PASS: found {num_cals} calibration files for sci_file={sci_file}: '
+                        f'time_center={time_center}, time_radius={time_radius}')
 
             record = dict()
             now_string = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
