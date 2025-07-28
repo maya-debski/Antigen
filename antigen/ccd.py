@@ -51,7 +51,7 @@ def base_reduction(data, masterbias, channel):
     # TODO: update docstring to match input args, function signature
 
     # Preprocess the raw image (e.g., background subtraction, padding)
-    image = prep_image(data, channel)
+    image = prep_image(data)
 
     # Subtract the master bias from the image
     image[:] -= masterbias
@@ -80,7 +80,7 @@ def make_master_cal(filenames, channel):
     Returns:
     """
     # Extract from the files, re-oriented by prep_image()
-    frames = [prep_image(fits.open(file)[0].data, channel) for file in filenames]
+    frames = [prep_image(fits.open(file)[0].data) for file in filenames]
 
     # Extract observation times (MJD) for frames in the current chunk
     times = [Time(fits.open(file)[0].header['DATE-OBS']).mjd for file in filenames]
