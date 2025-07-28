@@ -6,14 +6,13 @@ from astropy.time import Time
 from antigen import config
 
 
-def prep_image(image, channel):
+def prep_image(image):
     """
-    Orient the images from blue to red (left to right). Fibers are oriented to match configuration files.
-    Note: These flips are unique to the VIRUS/LRS2 amplifiers
+    Measure the bias in the overscan region, trim the overscan and subtract the bias
+    Perform any flips that are necessary
 
     Args:
         image (np.ndarray): FITS 2D image data array
-        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
 
     Returns:
         image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
