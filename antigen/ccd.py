@@ -20,21 +20,17 @@ def prep_image(image, channel):
     """
     # TODO: update docstring to match input args, function signature
     # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
-
+    # Should be read by config rather than hardcoded
     overscan_length = 32
+    flipx = True
+    flipy = False
+
     bias_value = biweight(image[:, -(overscan_length-2):])
     image = image[:, :-overscan_length] - bias_value
-
-    if channel == "b":
-        image[:] = image[::-1, :] # flip-Y, due to how amplifier is reading the CCD
-    if channel == "g":
-        image[:] = image[:, ::-1] # flip-X
-    if channel == "r":
-        image[:] = image[::-1, :] # flip-Y
-    if channel == "d":
-        image[:] = image[:, ::-1] # flip-X
-    # Overscan subtraction
-    # TODO: comment line above implies something is missing?
+    if flipx:
+        image = np.flip(image, axis=1)
+    if flipy:
+        image = np.flip(image, axis=0)
 
     return image
 
