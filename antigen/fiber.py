@@ -84,9 +84,8 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
                                   for smoothing. Default is 100.
 
     Returns:
-        tuple:
-            - initial_ftf (2D array): Initial fiber-to-fiber correction factors.
-            - ftf (2D array): Smoothed fiber-to-fiber correction factors.
+        initial_ftf (2D array): Initial fiber-to-fiber correction factors.
+        ftf (2D array): Smoothed fiber-to-fiber correction factors.
     """
     # Compute the average spectrum across all fibers using a robust biweight statistic
     average = biweight(spectrum, axis=0, ignore_nan=True)
@@ -95,8 +94,8 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     initial_ftf = spectrum / average[np.newaxis, :]
 
     # Create a wavelength grid and divide it into chunks for smoothing
-    X = np.arange(spectrum.shape[1])
-    x = np.array([np.mean(chunk) for chunk in np.array_split(X, n_chunks)])
+    columns = np.arange(spectrum.shape[1])
+    chunked_columns = np.array([np.mean(chunk) for chunk in np.array_split(columns, n_chunks)])
 
     # Initialize the smoothed correction array
     ftf = spectrum * 0.
@@ -104,17 +103,18 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     # Loop through each fiber to compute the smoothed correction factor
     for i in np.arange(len(spectrum)):
         # Compute the biweight statistic for each chunk of the initial correction factor
-        y = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(initial_ftf[i], n_chunks)])
+        chunked_ftf = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(initial_ftf[i], n_chunks)])
 
         # Select valid (finite) values for interpolation
-        sel = np.isfinite(y)
+        sel = np.isfinite(chunked_ftf)
         if sel.sum() == 0.:
             continue
         # Interpolate the correction factor using quadratic interpolation
-        I = interp1d(x[sel], y[sel], kind='quadratic', bounds_error=False, fill_value='extrapolate')
+        interp_func = interp1d(chunked_columns[sel], chunked_ftf[sel], kind='quadratic', bounds_error=False,
+                     fill_value='extrapolate')
 
         # Apply the interpolation to the full wavelength range
-        ftf[i] = I(X)
+        ftf[i] = interp_func(columns)
 
     # Return both the initial and smoothed fiber-to-fiber correction factors
     return initial_ftf, ftf
