@@ -36,68 +36,40 @@ def identify_sky_pixels(sky, per=50, size=50):
     return mask.mask, cont
 
 
-def rectify(scispectra, errspectra, wave_all, def_wave):
+def rectify(science_spectra, error_spectra, wave_all, def_wave):
     """
     Rectifies scientific and error spectra by interpolating them onto a common wavelength grid.
 
     Parameters:
-        scispectra (2D array): Array of scientific spectra to be rectified.
-        errspectra (2D array): Corresponding error spectra for each scientific spectrum.
+        science_spectra (2D array): Array of scientific spectra to be rectified.
+        error_spectra (2D array): Corresponding error spectra for each scientific spectrum.
         wave_all (2D array): Wavelength grids corresponding to each input spectrum.
         def_wave (1D array): Target wavelength grid for interpolation.
 
     Returns:
         tuple:
-            - scirect (2D array): Rectified scientific spectra on the target wavelength grid.
-            - errorrect (2D array): Rectified error spectra on the target wavelength grid.
+            - science_rect (2D array): Rectified scientific spectra on the target wavelength grid.
+            - error_rect (2D array): Rectified error spectra on the target wavelength grid.
     """
     # Initialize arrays to store rectified scientific spectra and errors
-    scirect = np.zeros((scispectra.shape[0], len(def_wave)))
-    errorrect = np.zeros((scispectra.shape[0], len(def_wave)))
-
-    # Placeholder for wavelength grid indices (used in optional refinement)
-    indices1 = np.ones(scirect.shape, dtype=int)
+    science_rect = np.zeros((science_spectra.shape[0], len(def_wave)))
+    error_rect = np.zeros((science_spectra.shape[0], len(def_wave)))
 
     # Loop through each spectrum to interpolate onto the target wavelength grid
-    for i in np.arange(scispectra.shape[0]):
+    for i in np.arange(science_spectra.shape[0]):
         # Compute wavelength bin sizes for flux normalization
-        dw = np.diff(wave_all[i])
-        dw = np.hstack([dw[0], dw])  # Ensure length matches the wavelength array
+        diff_wave = np.diff(wave_all[i])
+        diff_wave = np.hstack([diff_wave[0], diff_wave])  # Ensure length matches the wavelength array
 
         # Interpolate the scientific spectrum, normalizing by wavelength bin size
-        scirect[i] = np.interp(def_wave, wave_all[i], scispectra[i] / dw,
+        science_rect[i] = np.interp(def_wave, wave_all[i], science_spectra[i] / diff_wave,
                                left=np.nan, right=np.nan)
 
         # Interpolate the error spectrum, normalizing by wavelength bin size
-        errorrect[i] = np.interp(def_wave, wave_all[i], errspectra[i] / dw,
+        error_rect[i] = np.interp(def_wave, wave_all[i], error_spectra[i] / diff_wave,
                                  left=np.nan, right=np.nan)
 
-        # Store indices for possible further refinement (optional block below)
-        indices1[i] = np.searchsorted(wave_all[i], def_wave) + i * 1032
-
-    # Optional: Weighted error interpolation for more accurate error propagation
-    # Uncomment the following block if needed for error refinement:
-    #
-    # x_var = (def_wave[np.newaxis, :] * np.ones((scirect.shape[0], 1))).ravel()
-    # x_fix = wave_all.ravel()
-    # indices1 = indices1.ravel()
-    # indices2 = indices1 - 1
-    # indices2[indices2 < 0] = 0
-    # indices1[indices1 >= len(x_fix)] = len(x_fix) - 1
-    #
-    # distances1 = np.abs(x_fix[indices1] - x_var)
-    # distances2 = np.abs(x_fix[indices2] - x_var)
-    # total_distance = distances1 + distances2
-    # weight1 = distances1 / total_distance
-    # weight2 = distances2 / total_distance
-    # errorrect = (weight2**2 * errspectra.ravel()[indices1]**2 +
-    #              weight1**2 * errspectra.ravel()[indices2]**2)
-    # errorrect = np.sqrt(errorrect)
-    # errorrect = np.reshape(errorrect, scirect.shape)
-    # errorrect[np.isnan(scirect)] = np.nan
-
-    # Return the rectified scientific and error spectra
-    return scirect, errorrect
+    return science_rect, error_rect
 
 
 def get_fiber_to_fiber(spectrum, n_chunks=100):
