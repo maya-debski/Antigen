@@ -355,7 +355,7 @@ def get_spectra(array_flt, array_trace, npix=5):
             spec[fiber] += array_flt[indv + j, x] * w
 
     # Normalize the spectrum by the number of extracted pixels
-    return spec / npix
+    return spec
 
 
 def get_spectra_error(array_flt, array_trace, npix=5):
@@ -418,7 +418,7 @@ def get_spectra_error(array_flt, array_trace, npix=5):
             spec[fiber] += array_flt[indv + j, x] ** 2 * w
 
     # Return the root mean square error normalized by npix
-    return np.sqrt(spec) / npix
+    return np.sqrt(spec)
 
 
 def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
