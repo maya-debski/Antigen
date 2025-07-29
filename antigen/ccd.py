@@ -3,6 +3,7 @@ from astropy.io import fits
 from astropy.stats import biweight_location as biweight
 from astropy.time import Time
 
+from scipy.interpolate import LSQUnivariateSpline
 from antigen import config
 
 
@@ -146,3 +147,90 @@ def get_cal_index(mtime, time_list):
         index (int): The index of the closest calibration time in `time_list`.
     """
     return np.argmin(np.abs(mtime - np.array(time_list)))
+
+
+def make_mask_for_trace(image, trace, fiber_profile_mask_size=7):
+    """
+    Creates a boolean mask to exclude regions near the trace from further processing.
+
+    Args:
+        image (np.ndarray): 2D numpy array image for which the mask is created.
+        trace (np.ndarray): 2D numpy array describing the trace position as a function of fiber
+        fiber_profile_mask_size (int, optional): Vertical size (in pixels) of the mask region
+            above and below the trace. Default is 11.
+
+    Returns:
+        mask: 2D binary mask with the same shape as the input image. The region
+        around the trace is set to 1 (or `wave` values, if provided), indicating
+        where the mask covers; the rest is set to 0.
+    """
+    mask = np.zeros(image.shape, dtype=bool)
+    columns = np.arange(image.shape[1])
+    lower_bound = -int(fiber_profile_mask_size / 2)
+    for fiber_trace in trace:
+        for column in columns:
+            if np.isnan(fiber_trace[column]):
+                continue
+            bottom = int(fiber_trace[column]) + lower_bound
+            top = bottom + fiber_profile_mask_size
+            mask[bottom:top, column] = True
+    return mask
+
+def get_scattered_light(image, trace, fiber_profile_mask_size=11, nchunks=20):
+    """
+    Estimates the scattered light background in an image by masking out a region around the trace
+    of each fiber and fitting splines in the row direction then column direction
+
+    Args:
+        image (np.ndarray): 2D numpy image array.
+        trace (np.ndarray): 2D numpy array describing the trace position as a function of fiber
+        fiber_profile_mask_size (int, optional): Vertical size (in pixels) of the mask region
+            above and below the trace. Default is 11.
+        nchunks (int, optional): Number of column chunks for Spline fitting
+    Returns:
+        scattered_light: Estimated background image with the same shape as `image`.
+    """
+    mask = make_mask_for_trace(image, trace, fiber_profile_mask_size=fiber_profile_mask_size)
+    columns = np.arange(image.shape[1])
+    row_fit = np.arange(image.shape[0]) / image.shape[0]
+
+    masked_image = image * 1.
+    masked_image[mask] = np.nan
+    scattered_light = np.zeros_like(image)
+    masked_image_chunks = np.array_split(masked_image, nchunks, axis=1)
+    column_chunks = np.array_split(columns, nchunks)
+    for masked_image_chunk, column_chunk in zip(masked_image_chunks, column_chunks):
+        column_average = np.nanmedian(masked_image_chunk, axis=1)
+        unmasked = np.isfinite(column_average)
+        # Find break points to set spline knots
+        diff = np.diff(unmasked.astype(int))
+        # Start = 1 in diff → next index starts new unmasked chunk
+        starts = np.where(diff == 1)[0] + 1
+        # Stop = -1 in diff → current index ends unmasked chunk
+        stops = np.where(diff == -1)[0] + 1
+        # Handle edge cases:
+        if unmasked[0]:
+            starts = np.insert(starts, 0, 0)
+        if unmasked[-1]:
+            stops = np.append(stops, len(unmasked))
+        # Get average normalized row value in each chunk
+        row_chunk_means = []
+        for start, stop in zip(starts, stops):
+            indices = np.arange(start, stop)
+            chunk_mean = row_fit[indices].mean()
+            row_chunk_means.append(chunk_mean)
+
+        # Fit a spline with knots at the average row chunk values
+        spline = LSQUnivariateSpline(row_fit[unmasked], column_average[unmasked], t=row_chunk_means, k=3)
+        scattered_light[:, column_chunk] = spline(row_fit)[:, np.newaxis]
+
+    # Take initial 1D fit and fit a second spline in the column direction for smoothness
+    column_fit = np.arange(image.shape[1]) / image.shape[1]
+    number_fit_chunks = int(nchunks / 2)
+    mean_column_chunks = [np.mean(column_fit_chunk) for column_fit_chunk in np.array_split(column_fit,
+                                                                                           number_fit_chunks)]
+    for row in np.arange(image.shape[0]):
+        spline = LSQUnivariateSpline(column_fit, scattered_light[row], t=mean_column_chunks, k=3)
+        scattered_light[row] = spline(column_fit)
+
+    return scattered_light
