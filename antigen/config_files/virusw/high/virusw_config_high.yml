@@ -1,0 +1,21 @@
+instrument_element: "high"
+gain: 0.62
+read_noise: 2.55
+fiber_radius: 2.2
+pca_components_arc: 10
+reference_fiber_index: 130
+sample_fiber_indices:
+  - 5
+  - 130
+  - 230
+start_wavelength: 4830
+end_wavelength: 5489.81
+detector_dimensions:
+  - 2064 # incorrect
+  - 2064
+arc_flux_limit: 5
+telescope_diameter: 2.72
+overscan_length: 43
+flip_x: true
+flip_y: false
+rotate: true
