@@ -1,0 +1,27 @@
+instrument_element: "VP1Red"
+gain: 0.25
+read_noise: 3.7
+fiber_radius: 2.1
+pca_components_arc: 10
+reference_fiber_index: 130
+sample_fiber_indices:
+  - 5
+  - 130
+  - 230
+start_wavelength: 4730
+end_wavelength: 6940
+detector_dimensions:
+  binned:
+    - 1024
+    - 2048
+  unbinned:
+    - 2048
+    - 2048
+arc_flux_limit: 100
+telescope_diameter: 2.72
+overscan_length:
+  binned: 32 # need to subtract 2 for bias value
+  unbinned: 32 # need to subtract 4 for bias value
+flip_x: false
+flip_y: false
+rotate: false
