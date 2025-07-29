@@ -53,6 +53,10 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
     # Perform basic image reduction (bias subtraction, gain adjustment)
     image, E = ccd.base_reduction(obs_data, master_bias, channel)
 
+    # Scattered light correction
+    scattered_light = ccd.get_scattered_light(image, trace)
+    image -= scattered_light
+
     # Extract spectra from the image using the trace data
     spec = fiber.get_spectra(image, trace)
 
