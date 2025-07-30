@@ -107,6 +107,57 @@ def load_fits(fits_filename):
         obs_header = fob[0].header
     return obs_data, obs_header
 
+def validate_fits_header(header, required_cards=None):
+    """
+    Check that required FITS header keywords exist.
+
+    Args:
+        header (fits.Header): FITS header to check.
+        required_cards (list, optional): Keywords to validate. Default: ['OBJECT', 'DATE-OBS', 'UT'].
+
+    Returns:
+        is_valid (bool): True if all required keywords are present in header.
+        missing (list): list of keywords not present in header.
+    """
+    if required_cards is None:
+        required_cards = ['OBJECT', 'DATE-OBS', 'UT']
+
+    missing = [key for key in required_cards if key not in header]
+    is_valid = len(missing) == 0
+    return is_valid, missing
+
+
+def load_fits_header(fits_filename, validate=True, strict=False):
+    """
+    Load FITS header and optionally validate required keywords.
+
+    Args:
+        fits_filename (str): Full path to FITS file.
+        validate (bool): Whether to validate required keywords.
+        strict (bool): If True, raise error if validation fails.
+
+    Returns:
+        header (fits.Header): FITS Header object
+        header_is_valid (bool or None)): True if header is valid, False otherwise. None if no validation.
+    """
+    if not os.path.isfile(fits_filename):
+        raise FileNotFoundError(f"File not found: {fits_filename}")
+
+    with fits.open(fits_filename) as fob:
+        header = fob[0].header
+
+    header_is_valid = None
+    if validate:
+        header_is_valid, missing = validate_fits_header(header)
+        if not header_is_valid:
+            msg = f"{fits_filename} missing required cards: {', '.join(missing)}"
+            if strict:
+                raise ValueError(msg)
+            else:
+                print(msg)
+
+    return header, header_is_valid
+
 
 def read_fits(file_name, read_data=False, use_memmap=False):
     """
