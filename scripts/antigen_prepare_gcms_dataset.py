@@ -12,22 +12,21 @@ def main():
     args = get_args()
     logger = setup_logging('antigen', verbose=args.verbose)
 
-    filenames = sorted(glob.glob(os.path.join(args.input_folder, '*.fits')))
+    filenames = sorted(glob.glob(os.path.join(args.in_folder, '*.fits')))
 
     # TODO: Change this to be read from the arguments later
     instrument = 'GCMS'
-    setup = 'VP1B'
-    
+    config_element = 'VP1B'
+
     required_keywords = ['OBJECT', 'DATE-OBS', 'UT']
     bias_labels = ['zero', 'bias', args.bias_label]
     flat_labels = ['ldls', 'flat', 'flt', 'dome', 'twilight', args.flat_label]
     lamp_labels = ['arc', 'comp', 'HgNe', 'FeAr', args.arc_label]
     dark_labels = ['dark', args.dark_label]
 
-    exposure_counter = 1
-    observation_counter = 1
+    exposure_counter = 1 # Starts at 1 and moves up if there is an object repeat
+    observation_counter = 0 # Starts at zero and goes to 1 for first file
     previous_object = ''
-
     for filename in filenames:
         with fits.open(filename) as hdu:
             header = hdu[0].header
@@ -59,18 +58,17 @@ def main():
                         frametype = framelabel
 
             clean_object_name = ''.join(object_name.split())
-            output_dir = Path(args.out_folder) / instrument / args.obsdate / obs_string / args.setup
+            output_dir = Path(args.out_folder) / instrument / args.obs_date / obs_string / config_element
 
-            filename = (
-                f"{instrument}_{args.obsdate}_{obs_string}_"
-                f"{frametype}_{setup}_{exp_string}_{date}T{ut}_{clean_object_name}.fits"
+            output_filename = (
+                f"{instrument}_{args.obs_date}_{obs_string}_"
+                f"{frametype}_{config_element}_{exp_string}_{date}T{ut}_{clean_object_name}.fits"
             )
 
-            output_path = output_dir / filename
+            output_path = output_dir / output_filename
 
             dst_file = Path(output_path)
             dst_file.parent.mkdir(parents=True, exist_ok=True)
-
             shutil.copy2(filename, dst_file)
             logger.info(f"Copied {filename} -> {dst_file}")
 
