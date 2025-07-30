@@ -40,6 +40,7 @@ script-files = [
     'scripts/antigen_reduce_virus2.py',
     'scripts/antigen_reduce_virus2_manifest.py',
     'scripts/antigen_view_fits.py',
+    'scripts/antigen_prepare_gcms_dataset.py',
 ]
 
 [tool.setuptools.package-data]
