@@ -2,9 +2,11 @@
 
 import os
 import glob
-import shutil
 from pathlib import Path
+import shutil
+
 from astropy.io import fits
+
 from antigen.cli import get_args
 from antigen.utils import setup_logging
 
