@@ -8,6 +8,7 @@ import shutil
 from astropy.io import fits
 
 from antigen.cli import get_args
+from antigen.io import load_fits_header
 from antigen.utils import setup_logging
 
 def main():
@@ -30,49 +31,43 @@ def main():
     observation_counter = 0 # Starts at zero and goes to 1 for first file
     previous_object = ''
     for filename in filenames:
-        with fits.open(filename) as hdu:
-            header = hdu[0].header
+        header, is_header_valid = load_fits_header(filename)
 
-            missing = [key for key in required_keywords if key not in header]
-            if missing:
-                logger.warning(f"{filename} missing required keywords: {', '.join(missing)}")
-                continue
+        object_name = header['OBJECT']
+        date = ''.join(header['DATE-OBS'].split('-'))
+        ut = ''.join(header['UT'].split(':'))
 
-            object_name = header['OBJECT']
-            date = ''.join(header['DATE-OBS'].split('-'))
-            ut = ''.join(header['UT'].split(':'))
+        if object_name == previous_object:
+            exposure_counter += 1
+        else:
+            exposure_counter = 1
+            observation_counter += 1
+            previous_object = object_name
 
-            if object_name == previous_object:
-                exposure_counter += 1
-            else:
-                exposure_counter = 1
-                observation_counter += 1
-                previous_object = object_name
+        obs_string = f"{observation_counter:07d}"
+        exp_string = f"exp{exposure_counter:02d}"
 
-            obs_string = f"{observation_counter:07d}"
-            exp_string = f"exp{exposure_counter:02d}"
+        frametype = 'sci'
+        for labels, framelabel in zip([bias_labels, flat_labels, lamp_labels, dark_labels],
+                                      ['bias', 'flat', 'arc', 'dark']):
+            for label in labels:
+                if label.lower() in object_name.lower():
+                    frametype = framelabel
 
-            frametype = 'sci'
-            for labels, framelabel in zip([bias_labels, flat_labels, lamp_labels, dark_labels],
-                                          ['bias', 'flat', 'arc', 'dark']):
-                for label in labels:
-                    if label.lower() in object_name.lower():
-                        frametype = framelabel
+        clean_object_name = ''.join(object_name.split())
+        output_dir = Path(args.out_folder) / instrument / args.obs_date / obs_string / config_element
 
-            clean_object_name = ''.join(object_name.split())
-            output_dir = Path(args.out_folder) / instrument / args.obs_date / obs_string / config_element
+        output_filename = (
+            f"{instrument}_{args.obs_date}_{obs_string}_"
+            f"{frametype}_{config_element}_{exp_string}_{date}T{ut}_{clean_object_name}.fits"
+        )
 
-            output_filename = (
-                f"{instrument}_{args.obs_date}_{obs_string}_"
-                f"{frametype}_{config_element}_{exp_string}_{date}T{ut}_{clean_object_name}.fits"
-            )
+        output_path = output_dir / output_filename
 
-            output_path = output_dir / output_filename
-
-            dst_file = Path(output_path)
-            dst_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(filename, dst_file)
-            logger.info(f"Copied {filename} -> {dst_file}")
+        dst_file = Path(output_path)
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(filename, dst_file)
+        logger.info(f"Copied {filename} -> {dst_file}")
 
 if __name__ == "__main__":
     main()
