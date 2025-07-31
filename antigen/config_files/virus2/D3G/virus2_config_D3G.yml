@@ -1,0 +1,21 @@
+instrument_element: "D3G"
+gain: 2.017
+read_noise: 3.09
+fiber_radius: 1.2415
+pca_components_arc: 15
+reference_fiber_index: 130
+sample_fiber_indices:
+  - 5
+  - 130
+  - 230
+start_wavelength: 4610
+end_wavelength: 5925
+detector_dimensions:
+  - 2064
+  - 2064
+arc_flux_limit: 5
+telescope_diameter: 2.72
+overscan_length: 32
+flip_x: true
+flip_y: false
+rotate: false
