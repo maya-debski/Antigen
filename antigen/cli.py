@@ -1,18 +1,83 @@
 from argparse import ArgumentParser
 import datetime
 import os
-import sys
-from datetime import datetime as dt
 
 
-def get_args():
+def add_args_from_dicts(parser, arg_names, defaults, helps, abbrevs):
+    """Add arguments to an ArgumentParser based on provided defaults and help strings.
+
+    Args:
+        parser (ArgumentParser): The parser to which arguments will be added.
+        arg_names (list[str]): A list of argument names (keys in `defaults` and `helps`).
+        defaults (dict): A dictionary of default values.
+        helps (dict): A dictionary of help strings.
+        abbrevs (dict): A list of abbreviations.
+
+    Returns:
+        parser (ArgumentParser): The updated parser.
     """
-    Purpose: Input arg handling for VIRUS2 data reduction CLI tools, e.g. antigen_build_manifest_virus2.py
-    Example: antigen_build_manifest_virus2.py -c 20250619 -f flatp --obs_name standard -w 2
+    for name in arg_names:
+        default = defaults[name]
+        help_msg = helps[name]
+        abbrev = abbrevs[name]
+
+        if isinstance(default, bool):
+            parser.add_argument(f'-{abbrev}', f'--{name}', action='store_true',  default=default,  help=help_msg)
+        elif isinstance(default, float):
+            parser.add_argument(f'-{abbrev}', f'--{name}', type=float, default=default, help=help_msg)
+        else:
+            parser.add_argument(f'-{abbrev}', f'--{name}',  type=str, default=default, help=help_msg)
+
+    return parser
+
+
+def add_common_args(parser, defaults, helps, abbrevs):
+    """Add common arguments to the parser.
+
+    Args:
+        parser (ArgumentParser): The parser to extend.
+        defaults (dict): A dictionary of default values.
+        helps (dict): A dictionary of help strings.
+        abbrevs (dict): A list of abbreviations.
+
+    Returns:
+        parser (ArgumentParser): The updated parser with common args.
+    """
+    common_args = ['in_folder', 'out_folder', 'obs_date', 'obs_name', 'reduce_all', 'time_radius', 'verbose']
+    return add_args_from_dicts(parser, common_args, defaults, helps,abbrevs)
+
+
+def add_calibration_args(parser, defaults, helps, abbrevs):
+    """Add common arguments to the parser.
+
+    Args:
+        parser (ArgumentParser): The parser to extend.
+        defaults (dict): A dictionary of default values.
+        helps (dict): A dictionary of help strings.
+        abbrevs (dict): A list of abbreviations.
+
+    Returns:
+        parser (ArgumentParser): The updated parser with common args.
+    """
+    common_args = ['bias_label', 'arc_label', 'dark_label', 'flat_label', 'twilight_flat_label']
+    return add_args_from_dicts(parser, common_args, defaults, helps, abbrevs)
+
+
+def get_args(include_common=True, include_calibration=True):
+    """Create and parse command line arguments for a script.
+
+    Args:
+        include_common (bool, optional): Whether to include common arguments.
+            Defaults to True.
+        include_calibration (bool, optional): Whether to include calibration arguments.
+            Defaults to True.
+
+    Returns:
+        Namespace: The parsed command line arguments.
     """
 
     defaults = {
-        'in_folder' : os.path.abspath(os.curdir),
+        'in_folder': os.path.abspath(os.curdir),
         'out_folder': datetime.datetime.now().strftime('antigen_reduce_virus2_%Y%m%d_%H%M%S'),
         'obs_date': datetime.datetime.now().strftime('%Y%m%d'),
         'obs_name': None,
@@ -27,8 +92,8 @@ def get_args():
     }
 
     helps = {
-        'in_folder' : 'Root path where reduction input file tree is located, (default: %(default)s)',
-        'out_folder' : 'Path where reduction output files will be written, (default: %(default)s)',
+        'in_folder': 'Root path where reduction input file tree is located, (default: %(default)s)',
+        'out_folder': 'Path where reduction output files will be written, (default: %(default)s)',
         'obs_date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
         'obs_name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
         'reduce_all': 'Reduce all files found under infolder file tree, (default: %(default)s)',
@@ -41,133 +106,24 @@ def get_args():
         'verbose': 'if True, print more process details and logger.info to console, (default: %(default)s)',
     }
 
+    abbrevs = {
+        'in_folder' : 'i',
+        'out_folder': 'o',
+        'obs_date': 'c',
+        'obs_name': 'n',
+        'reduce_all': 'r',
+        'time_radius': 'w',
+        'bias_label': 'b',
+        'arc_label': 'a',
+        'dark_label': 'd',
+        'flat_label': 'f',
+        'twilight_flat_label': 't',
+        'verbose': 'v',
+    }
+
     parser = ArgumentParser(add_help=True)
-
-    parser.add_argument('-i', '--in_folder', type=str, help=helps['in_folder'], default=defaults['in_folder'])
-    parser.add_argument('-o', '--out_folder', type=str, help=helps['out_folder'], default=defaults['out_folder'])
-    parser.add_argument('-c', '--obs_date', type=str, help=helps['obs_date'], default=defaults['obs_date'])
-    parser.add_argument('-n', '--obs_name', type=str, help=helps['obs_name'], default=defaults['obs_name'])
-    parser.add_argument('-r', '--reduce_all', action='store_true', help=helps['reduce_all'], default=defaults['reduce_all'])
-    parser.add_argument('-w', '--time_radius', type=float, help=helps['time_radius'], default=defaults['time_radius'])
-    parser.add_argument('-b', '--bias_label', type=str, help=helps['bias_label'], default=defaults['bias_label'])
-    parser.add_argument('-a', '--arc_label', type=str, help=helps['arc_label'], default=defaults['arc_label'])
-    parser.add_argument('-d', '--dark_label', type=str, help=helps['dark_label'], default=defaults['dark_label'])
-    parser.add_argument('-f', '--flat_label', type=str, help=helps['flat_label'], default=defaults['flat_label'])
-    parser.add_argument('-t', '--twilight_flat_label', type=str, help=helps['twilight_flat_label'], default=defaults['twilight_flat_label'])
-    parser.add_argument('-v', '--verbose', action='store_true', help=helps['verbose'], default=defaults['verbose'])
-
-    argv = None
-    args = parser.parse_args(args=argv)
-
-    return args
-
-
-def setup_parser():
-    ''' BRIEF DESCRIPTION '''
-    # TODO: update docstring
-    # TODO: specify what CLI tool or script this is used for?
-    parser = ArgumentParser(add_help=True)
-
-    parser.add_argument("-sd", "--start_date",
-                        help='''Start Date, e.g., 20170321, YYYYMMDD''',
-                        type=str, default=None)
-
-    parser.add_argument("-ed", "--end_date",
-                        help='''Start Date, e.g., 20170326, YYYYMMDD''',
-                        type=str, default=None)
-
-    parser.add_argument("-dl", "--date_length",
-                        help='''Days after/before start/end date, e.g., 10''',
-                        type=int, default=None)
-
-    parser.add_argument("-r", "--rootdir",
-                        help='''Root Directory for Date''',
-                        type=str, default='/work/03946/hetdex/maverick')
-
-    parser.add_argument("-in", "--instrument",
-                        help='''Instrument, e.g., virus''',
-                        type=str, default='virus')
-
-    return parser
-
-
-def setup_basic_parser():
-    ''' BRIEF DESCRIPTION '''
-    # TODO: update docstring
-    # TODO: specify what CLI tool or script this is used for?
-    parser = ArgumentParser(add_help=True)
-
-    parser.add_argument("-d", "--date",
-                        help='''Date, e.g., 20170321, YYYYMMDD''',
-                        type=str, default=None)
-
-    parser.add_argument("-o", "--observation",
-                        help='''Observation number, "00000007" or "7"''',
-                        type=str, default=None)
-
-    parser.add_argument("-e", "--exposure_number",
-                        help='''Exposure number, 10''',
-                        type=int, default=None)
-
-    parser.add_argument("-r", "--rootdir",
-                        help='''Root Directory for Reductions''',
-                        type=str, default='/work/03946/hetdex/maverick')
-
-    parser.add_argument("-in", "--instrument",
-                        help='''Instrument, e.g., lrs2''',
-                        type=str, default='lrs2')
-
-    parser.add_argument("-i", "--ifuslot",
-                        help='''Ifuslot, e.g., 066''',
-                        type=str, default='066')
-
-    parser.add_argument("-s", "--side",
-                        help='''Instrument Side, e.g., L''',
-                        type=str, default='L')
-
-    return parser
-
-
-def set_daterange(args):
-    # TODO: add docstring
-    # TODO: specify what CLI tool or script this is used for? location here is based on input/output of Argparser object
-    dateatt = ['start_date', 'end_date']
-    if args.date_length is None:
-        if args.start_date is None:
-            args.log.error('You must include two of the following: '
-                           '"start_date", "end_date", or "date_length"')
-            sys.exit(1)
-        if args.end_date is None:
-            args.log.error('You must include two of the following: '
-                           '"start_date", "end_date", or "date_length"')
-            sys.exit(1)
-        dates = {}
-        for da in dateatt:
-            dates[da] = dt(int(getattr(args, da)[:4]),
-                           int(getattr(args, da)[4:6]),
-                           int(getattr(args, da)[6:]))
-
-        args.daterange = [datetime.date.fromordinal(i)
-                          for i in range(dates[dateatt[0]].toordinal(),
-                                         dates[dateatt[1]].toordinal())]
-    else:
-        if args.start_date is not None and args.end_date is not None:
-            args.log.warning('Using "start_date" and "date_length", '
-                             'however, you specified "end_date" as well '
-                             'which will not be used.')
-            args.end_date = None
-        if args.start_date is not None:
-            base = dt(int(args.start_date[:4]),
-                      int(args.start_date[4:6]),
-                      int(args.start_date[6:]))
-            args.daterange = [base + datetime.timedelta(days=x)
-                              for x in range(0, args.date_length)]
-
-        if args.end_date is not None:
-            base = dt(int(args.end_date[:4]),
-                      int(args.end_date[4:6]),
-                      int(args.end_date[6:]))
-            args.daterange = [base - datetime.timedelta(days=x)
-                              for x in range(0, args.date_length)]
-
-    return args
+    if include_common:
+        add_common_args(parser, defaults, helps, abbrevs)
+    if include_calibration:
+        add_calibration_args(parser, defaults, helps, abbrevs)
+    return parser.parse_args()
