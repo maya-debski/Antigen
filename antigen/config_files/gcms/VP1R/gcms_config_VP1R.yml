@@ -1,4 +1,4 @@
-instrument_element: "VP1Blue"
+instrument_element: "VP1R"
 gain: 0.25
 read_noise: 3.7
 fiber_radius: 2.1
@@ -8,8 +8,8 @@ sample_fiber_indices:
   - 5
   - 130
   - 230
-start_wavelength: 3570
-end_wavelength: 5810
+start_wavelength: 4730
+end_wavelength: 6940
 detector_dimensions:
   binned:
     - 1024
