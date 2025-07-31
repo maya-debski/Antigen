@@ -78,7 +78,7 @@ def add_args_from_dicts(parser, arg_names):
         abbrev = ABBREVS[name]
         argtype = TYPES[name]
 
-        if isinstance(argtype, bool):
+        if argtype is bool:
             parser.add_argument(f'-{abbrev}', f'--{name}', action='store_true',  default=default,  help=help_msg)
         else:
             parser.add_argument(f'-{abbrev}', f'--{name}', type=argtype, default=default, help=help_msg)
@@ -96,7 +96,7 @@ def add_common_args(parser):
         parser (ArgumentParser): The updated parser with common args.
     """
     common_args = ['in_folder', 'out_folder', 'obs_date', 'obs_name', 'reduce_all', 'time_radius', 'verbose']
-    return add_args_from_dicts(parser)
+    return add_args_from_dicts(parser, common_args)
 
 
 def add_calibration_args(parser):
