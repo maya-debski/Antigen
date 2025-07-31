@@ -1,15 +1,37 @@
 #!/usr/bin/env python
 
+import argparse
 import os
 import glob
 from pathlib import Path
 import shutil
 
-from astropy.io import fits
-
-from antigen.cli import get_args
+from antigen.cli import add_calibration_args, add_common_args
 from antigen.io import load_fits_header
 from antigen.utils import setup_logging
+
+DESCRIPTION = r"""
+Purpose: Create a folder structure for a night of GCMS data from the following pattern:
+IN_FOLDER/
+    *0001.fits
+    *0002.fits
+    *0003.fits
+    *0004.fits
+
+to this pattern:
+OUT_FOLDER/GCMS/<obsdate>/<obsid>/<specid>/
+    GCMS_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<objectname>.fits
+
+Examples:
+    antigen_prepare_gcms_dataset.py -i <input_folder> -o <output_folder> -c <obs_date>
+"""
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_common_args(parser)
+    add_calibration_args(parser)
+    return parser.parse_args()
 
 def main():
     args = get_args()
