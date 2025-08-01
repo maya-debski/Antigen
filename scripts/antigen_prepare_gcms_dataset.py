@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 
 from antigen.cli import add_calibration_args, add_common_args
-from antigen.io import load_fits_header
+from antigen.io import load_fits_header, get_fits_files_in_path
 from antigen.utils import setup_logging
 
 DESCRIPTION = r"""
@@ -51,8 +51,6 @@ Notes:
     - Supported setups for GCMS include VP1B and VP1R.
 """
 
-
-
 def get_args():
     parser = argparse.ArgumentParser(
         description=DESCRIPTION,
@@ -83,13 +81,11 @@ def main():
     args = get_args()
     logger = setup_logging('antigen', verbose=args.verbose)
 
-    filenames = sorted(Path(args.in_folder).glob('*.fits'))
-    
-    # TODO: Change this to be read from the arguments later
+    filenames = get_fits_files_in_path(args.in_folder, pattern='*.fits')
+
     instrument = args.instrument
     config_element = args.element
 
-    required_keywords = ['OBJECT', 'DATE-OBS', 'UT']
     bias_labels = ['zero', 'bias', args.bias_label]
     flat_labels = ['ldls', 'flat', 'flt', 'dome', 'twilight', args.flat_label]
     lamp_labels = ['arc', 'comp', 'HgNe', 'FeAr', args.arc_label]
