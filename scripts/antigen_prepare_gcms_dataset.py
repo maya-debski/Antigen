@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import argparse
-import os
 from pathlib import Path
 import shutil
 
