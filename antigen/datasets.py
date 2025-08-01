@@ -1,8 +1,5 @@
-import datetime
 import datetime as dt
-import glob
 import logging
-import os
 import re
 from pathlib import Path
 
@@ -79,7 +76,7 @@ def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extens
     return filename_metadata
 
 
-def get_fits_filenames(root_path, date=None, verbose=False):
+def get_fits_filenames(root_path, instrument='VIRUS2', date=None, verbose=False):
     """
     Purpose: Search file-tree below given root_path, find all FITS filenames that match VIRUS2 name pattern
     Note: Expected filename pattern is
@@ -87,9 +84,10 @@ def get_fits_filenames(root_path, date=None, verbose=False):
         VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
 
     Args:
-        root_path (str): top-level of file-tree containing VIRUS2 exposure FITS files
-        date (str): date string of format 'YYYYMMDD'
-        verbose (bool): if True, print more info to console
+        root_path (Path): top-level of file-tree containing VIRUS2 exposure FITS files
+        instrument (str, optional): e.g. VIRUS2, defaults to VIRUS2
+        date (str, optional): date string of format 'YYYYMMDD', defaults to None
+        verbose (bool, optional): if True, print more info to console, defaults to False
 
     Returns:
         file_names (list(dict)): List of files
@@ -98,30 +96,22 @@ def get_fits_filenames(root_path, date=None, verbose=False):
     logger.info(f'Searching for FITS files under in root_path={root_path} for date={date} ...')
 
     # Construct the path components
-    virus_root_path = os.path.join(root_path, 'VIRUS2')
-    if date:
-        date_dir = os.path.join(virus_root_path, date)
-    else:
-        date_dir = os.path.join(virus_root_path, '*')
-
-    # Add wildcard subdirectories
-    obs_id_dir = os.path.join(date_dir, '*')
-    spec_id_dir = os.path.join(obs_id_dir, '*')
-    fits_glob_pattern = os.path.join(spec_id_dir, '*.fits')
+    virus_root_path = Path(root_path) / instrument
+    date_dir = virus_root_path / (date if date else '*')
 
     # find all files matching this file-tree glob pattern
-    fits_filenames = sorted(glob.glob(fits_glob_pattern))
+    fits_filenames = sorted(date_dir.glob('*/*/*.fits'))
 
     if verbose:
         num_files = len(fits_filenames)
         logger.info(f'VERBOSE: Found {num_files} files under.')
         if num_files < 1:
-            raise FileNotFoundError(f'ERROR: found no files matching fits_glob_pattern={fits_glob_pattern}. Exiting...')
-
+            raise FileNotFoundError(
+                f'ERROR: found no files matching pattern: {date_dir}/<obsid>/<specid>/*.fits. Exiting...')
     return fits_filenames
 
 
-def parse_fits_file_tree(root_path, date=None, verbose=False):
+def parse_fits_file_tree(root_path, instrument='VIRUS2', date=None, verbose=False):
     """
     Purpose: Parse all FITS filenames found in file-tree below given root_path
     Note: Expected filename pattern is
@@ -129,15 +119,16 @@ def parse_fits_file_tree(root_path, date=None, verbose=False):
         VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
 
     Args:
-        root_path (str): top-level of file-tree containing VIRUS2 exposure FITS files
-        date (str): date string of format 'YYYYMMDD'
-        verbose (bool): if True, print more info to console
+        root_path (Path): top-level of file-tree containing VIRUS2 exposure FITS files
+        instrument (str, optional): e.g. VIRUS2, defaults to VIRUS2
+        date (str, optional): date string of format 'YYYYMMDD', defaults to None
+        verbose (bool, optional): if True, print more info to console, defaults to False
 
     Returns:
         metadata_records (list(dict)): List of dictionaries with keys =  ['filename', 'instrument',
                  'obs_date', 'obs_id', 'frame_type', spec_id', exp_index', 'utc_str', 'user_label']
     """
-    fits_filenames = get_fits_filenames(root_path, date, verbose)
+    fits_filenames = get_fits_filenames(root_path, instrument, date, verbose)
 
     metadata_records = list()
     for filename in fits_filenames:
@@ -159,12 +150,11 @@ def parse_file_dir_obs_id(file_name):
     Returns:
         dir_obs_id (int): e.g. 1 for directory name string '0000001'
     """
-    parent_dir = os.path.dirname(os.path.dirname(file_name))  # Go up two levels
-    dir_name = os.path.basename(parent_dir)  # Get the directory name
+    dir_name = Path(file_name).parent.parent.name
     try:
         dir_obs_id = int(dir_name)
     except ValueError:
-        dir_obs_id = None  # or raise, or log error
+        dir_obs_id = None
     return dir_obs_id
 
 
@@ -320,14 +310,15 @@ def get_matching_filenames(file_name_list, type_list, match_keywords):
     return matched_filenames
 
 
-def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
-                  bias_label, arc_label, dark_label, flat_label, twilight_flat_label):
+def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
+                  bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
+                  instrument='VIRUS2'):
     """
     Purpose: Search FITS file tree and generate groupings of calibration and science files by FITS header times,
     organized into dataset records to then later help build a dataset file manifest
 
     Args:
-        infolder (str): Root path where reduction input file tree is located
+        in_folder (str): Root path where reduction input file tree is located
         obs_date (str): Observation calendar date string formatted as YYYYMMDD
         obs_name (str): Observation object/target name, e.g. from FITS header card
         reduce_all (bool): Reduce all files found under infolder file tree
@@ -337,6 +328,7 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
         dark_label (str): string label from FITS file header for dark frames
         flat_label (str): string label from FITS file header for flat frames
         twilight_flat_label (str): string label from FITS file header for twilight frames
+        instrument (str, optional): instrument to use, e.g. VIRUS2, defaults to VIRUS2
 
     Returns:
         dataset_records (list(dict)): list of dicts/records, where each dict has the following keys:
@@ -347,12 +339,12 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
             record['calibration_files']['arc']: list of arc FITS file names to use for calibration
     """
 
-    ROOT_DATA_PATH = os.path.abspath(infolder)
-    if not os.path.isdir(ROOT_DATA_PATH):
-        raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {ROOT_DATA_PATH}')
+    root_data_path = Path(in_folder).expanduser().resolve()
+    if not root_data_path.is_dir():
+        raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {root_data_path}')
 
     # time filtering: Get FITS files in file-tree that match the obs_date
-    metadata_records = parse_fits_file_tree(ROOT_DATA_PATH, date=obs_date, verbose=True)
+    metadata_records = parse_fits_file_tree(root_data_path, instrument=instrument, date=obs_date, verbose=True)
     units_found = [record['spec_id'] for record in metadata_records]
     unique_units_found = list(set(units_found))
 
@@ -405,21 +397,21 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
         num_bias_files = len(bias_filenames)
         if num_bias_files < bias_minimum_count:
             fail_bias = True
-            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, found bias_label={bias_label}, '
+            logger.warning(f'Searched {root_data_path}, unit={unit}, found bias_label={bias_label}, '
                            f'found {num_bias_files}, needed >= {bias_minimum_count}')
 
         flat_minimum_count = minimum_file_count_for_break
         num_flt_files = len(flt_filenames)
         if num_flt_files < flat_minimum_count:
             fail_flat = True
-            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, flat_label={flat_label}, '
+            logger.warning(f'Searched {root_data_path}, unit={unit}, flat_label={flat_label}, '
                            f'found {num_flt_files}, needed >= {flat_minimum_count}')
 
         arc_minimum_count = minimum_file_count_for_break
         num_arc_files = len(arc_filenames)
         if num_arc_files < arc_minimum_count:
             fail_arc = False
-            logger.warning(f'Searched {ROOT_DATA_PATH}, unit={unit}, arc_label={arc_label}, '
+            logger.warning(f'Searched {root_data_path}, unit={unit}, arc_label={arc_label}, '
                            f'found {num_arc_files}, needed >= {arc_minimum_count}')
 
         if fail_bias or fail_flat or fail_arc:
@@ -463,7 +455,7 @@ def find_datasets(infolder, obs_date, obs_name, reduce_all, time_radius,
                         f'time_center={time_center}, time_radius={time_radius}')
 
             record = dict()
-            now_string = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
             record['reduction_name'] = f'antigen_manifest_{now_string}'
             record['unit_date'] = 'unknown'
             record['unit_instrument'] = 'VIRUS2'
