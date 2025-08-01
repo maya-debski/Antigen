@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import psutil
 
 import numpy as np
@@ -314,3 +315,16 @@ def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     else:
         obs_time_mjd = None
     return obs_time_mjd
+
+def get_fits_files_in_path(input_path, pattern='*.fits'):
+    """
+    Find and return all FITS files in the given directory.
+
+    Args:
+        input_path (str): Path to the directory to search.
+        pattern (str, optional): Glob pattern to match files. Defaults to '*.fits'.
+
+    Returns:
+        list (Path): A sorted list of Path objects matching the pattern.
+    """
+    return sorted(Path(input_path).glob(pattern))
