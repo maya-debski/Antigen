@@ -1,4 +1,3 @@
-from argparse import ArgumentParser
 import datetime
 import os
 
@@ -37,7 +36,7 @@ HELPS = {
     'out_folder': 'Path where reduction output files will be written, (default: %(default)s)',
     'obs_date': 'Observation calendar date string formatted as YYYYMMDD, ex: 20250613, (default: %(default)s)',
     'obs_name': 'Observation object/target name, e.g. from FITS header card, (default: %(default)s)',
-    'reduce_all': 'Reduce all files found under infolder file tree, (default: %(default)s)',
+    'reduce_all': 'Reduce all files found under in_folder file tree, (default: %(default)s)',
     'time_radius': 'All calibration files within this MJD radius of a science file will be added to its manifest, (default: %(default)s)',
     'bias_label': 'The object name from the FITS header card for bias files, (default: %(default)s)',
     'arc_label': 'The object name from the FITS header card for arc files, (default: %(default)s)',
