@@ -2,7 +2,6 @@
 
 import argparse
 import os
-import glob
 from pathlib import Path
 import shutil
 
@@ -84,8 +83,8 @@ def main():
     args = get_args()
     logger = setup_logging('antigen', verbose=args.verbose)
 
-    filenames = sorted(glob.glob(os.path.join(args.in_folder, '*.fits')))
-
+    filenames = sorted(Path(args.in_folder).glob('*.fits'))
+    
     # TODO: Change this to be read from the arguments later
     instrument = args.instrument
     config_element = args.element
