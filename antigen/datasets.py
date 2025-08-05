@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 
-from antigen import io
 from antigen.io import get_fits_file_time
 
 logger = logging.getLogger('antigen.datasets')
@@ -193,9 +192,10 @@ def get_elements_within_time_radius(element_list, time_list, time_center, time_r
     Returns:
         elements_inside: elements within the time_radius of the time_center
     """
-    time_distances = np.abs(np.array(time_list) - time_center)
-    mask_inside = (time_distances <= time_radius)
-    elements_inside = np.array(element_list)[mask_inside].tolist()
+    elements_inside = [
+        element for element, time in zip(element_list, time_list)
+        if abs(time - time_center) <= time_radius
+    ]
     return elements_inside
 
 
@@ -243,6 +243,76 @@ def check_file_count(label, filenames, minimum_count, root_data_path, unit):
         return True
     return False
 
+
+def build_calibration_groups(calibrations, time_radius):
+    """
+    Groups calibration frames (bias, arc, flat) that are within `time_radius` MJD of each other.
+
+    Args:
+        calibrations (list of dict): Each dict has 'name', 'mjd', and 'type'
+        time_radius (float): time window (in MJD days) for grouping
+
+    Returns:
+        list of dict: calibration groups with lists of biases, arcs, and flats
+    """
+    remaining = calibrations.copy()
+    groups = []
+
+    while remaining:
+        # Start with the first remaining time
+        first = remaining[0]
+        first_time = first['mjd']
+        grouped = get_elements_within_time_radius(remaining, [cal['mjd'] for cal in remaining],
+                                                  first_time, time_radius)
+
+        # Iterate with the new average time (once should be enough, but you could iterate until no change occurs)
+        new_average_time = np.mean([cal['mjd'] for cal in grouped])
+        grouped = get_elements_within_time_radius(remaining, [cal['mjd'] for cal in remaining],
+                                                  new_average_time, time_radius)
+
+        final_average_time = np.mean([cal['mjd'] for cal in grouped])
+        # Organize by type
+        group = {'bias': [], 'arc': [], 'flat': []}
+        for cal in grouped:
+            group[cal['type']].append(cal['name'])
+
+        # Keep the final average time of the cal group
+        group['mjd'] = final_average_time
+
+        # Remove used calibrations
+        used_names = {cal['name'] for cal in grouped}
+        remaining = [cal for cal in remaining if cal['name'] not in used_names]
+
+        # TODO: Check that each of the cals meets the minimum length
+        groups.append(group)
+
+    return groups
+
+
+def assign_science_to_groups(science_frames, cal_groups):
+    """
+    Assign science frames to the closest matching calibration group.
+
+    Args:
+        science_frames (list of dict): Each has 'name' and 'mjd'
+        cal_groups (list of dict): Each group has 'bias', 'arc', 'flat' lists and 'mjd' of the central time
+
+    Returns:
+        cal_groups (list of dict): Each dict contains a calibration group and a list of matched science frames.
+    """
+    for group in cal_groups:
+        group['sci'] = []
+
+    for sci in science_frames:
+        sci_time = sci['mjd']
+
+        # Find group center times
+        group_times = [group['mjd'] for group in cal_groups]
+
+        closest_idx = np.argmin(np.abs(np.array(group_times) - sci_time))
+        cal_groups[closest_idx]['sci'].append(sci['name'])
+
+    return cal_groups
 
 def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
@@ -359,37 +429,32 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         arc_times  = [get_fits_file_time(name) for name in arc_filenames]
         sci_times  = [get_fits_file_time(name) for name in sci_filenames]
 
+        cal_dict_list = []
+        sci_dict_list = []
+        for time, name in zip(bias_times, bias_filenames):
+            cal_dict_list.append({'type': 'bias', 'mjd': time, 'name': name})
 
-        # Generate manifest file for each science file
-        logger.info(f'Found {len(sci_filenames)} science files. '
-                    f'Attempting to find calibrations files withing time_radius of each ...')
-        for sci_file in sci_filenames:
-            fail_bias = False
-            fail_flt = False
-            fail_arc = False
-            # For each science file, find the calibration files within a time radius
-            obs_time_mjd = get_fits_file_time(sci_file)
-            time_center = obs_time_mjd
-            bias_files = get_elements_within_time_radius(bias_filenames, bias_times, time_center, time_radius)
-            flt_files = get_elements_within_time_radius(flt_filenames, flt_times, time_center, time_radius)
-            arc_files = get_elements_within_time_radius(arc_filenames, arc_times, time_center, time_radius)
+        for time, name in zip(arc_times, arc_filenames):
+            cal_dict_list.append({'type': 'arc', 'mjd': time, 'name': name})
 
-            if len(bias_files) == 0:
-                fail_bias = True
-            if len(flt_files) == 0:
-                fail_flt = True
-            if len(arc_files) == 0:
-                fail_arc = True
+        for time, name in zip(flt_times, flt_filenames):
+            cal_dict_list.append({'type': 'flat', 'mjd': time, 'name': name})
 
-            if fail_bias or fail_arc or fail_flt:
-                logger.warning(f'FAIL: found ZERO calibration files for sci_file={sci_file}: '
-                               f'time_center={time_center}, time_radius={time_radius}')
+        for time, name in zip(sci_times, sci_filenames):
+            sci_dict_list.append({'type': 'sci', 'mjd': time, 'name': name})
+
+        cal_groups = build_calibration_groups(cal_dict_list, time_radius)
+        cal_groups = assign_science_to_groups(sci_dict_list, cal_groups)
+
+        for cal_group in cal_groups:
+            not_all_cals_in_group = False
+            time_center = cal_group['mjd']
+            for cal_type in ['bias', 'flat', 'arc']:
+                if len(cal_group[cal_type]) == 0:
+                    logger.warning(f'FAIL: found ZERO {cal_type} calibration files: '
+                                   f'time_center={time_center}, time_radius={time_radius}')
+            if not_all_cals_in_group:
                 continue
-
-            num_cals = len(bias_files) + len(flt_files) + len(arc_files)
-            logger.info(f'PASS: found {num_cals} calibration files for sci_file={sci_file}: '
-                        f'time_center={time_center}, time_radius={time_radius}')
-
             record = dict()
             now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
             record['reduction_name'] = f'antigen_manifest_{now_string}'
@@ -399,11 +464,11 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
             record['obs_date'] = obs_date
             record['obs_name'] = obs_name
             record['in_folder'] = './'
-            record['observation_files'] = sci_filenames
+            record['observation_files'] = cal_group['sci']
             record['calibration_files'] = dict()
-            record['calibration_files']['bias'] = bias_filenames
-            record['calibration_files']['flat'] = flt_filenames
-            record['calibration_files']['arc'] = arc_filenames
+            record['calibration_files']['bias'] = cal_group['bias']
+            record['calibration_files']['flat'] = cal_group['flat']
+            record['calibration_files']['arc'] = cal_group['arc']
 
             dataset_records.append(record)
 
