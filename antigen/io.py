@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import psutil
 
 import numpy as np
@@ -106,6 +107,57 @@ def load_fits(fits_filename):
         obs_data = fob[0].data
         obs_header = fob[0].header
     return obs_data, obs_header
+
+def validate_fits_header(header, required_cards=None):
+    """
+    Check that required FITS header keywords exist.
+
+    Args:
+        header (fits.Header): FITS header to check.
+        required_cards (list, optional): Keywords to validate. Default: ['OBJECT', 'DATE-OBS', 'UT'].
+
+    Returns:
+        is_valid (bool): True if all required keywords are present in header.
+        missing (list): list of keywords not present in header.
+    """
+    if required_cards is None:
+        required_cards = ['OBJECT', 'DATE-OBS', 'UT']
+
+    missing = [key for key in required_cards if key not in header]
+    is_valid = len(missing) == 0
+    return is_valid, missing
+
+
+def load_fits_header(fits_filename, validate=True, strict=False):
+    """
+    Load FITS header and optionally validate required keywords.
+
+    Args:
+        fits_filename (str): Full path to FITS file.
+        validate (bool): Whether to validate required keywords.
+        strict (bool): If True, raise error if validation fails.
+
+    Returns:
+        header (fits.Header): FITS Header object
+        header_is_valid (bool or None)): True if header is valid, False otherwise. None if no validation.
+    """
+    if not os.path.isfile(fits_filename):
+        raise FileNotFoundError(f"File not found: {fits_filename}")
+
+    with fits.open(fits_filename) as fob:
+        header = fob[0].header
+
+    header_is_valid = None
+    if validate:
+        header_is_valid, missing = validate_fits_header(header)
+        if not header_is_valid:
+            msg = f"{fits_filename} missing required cards: {', '.join(missing)}"
+            if strict:
+                raise ValueError(msg)
+            else:
+                print(msg)
+
+    return header, header_is_valid
 
 
 def read_fits(file_name, read_data=False, use_memmap=False):
@@ -263,3 +315,16 @@ def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     else:
         obs_time_mjd = None
     return obs_time_mjd
+
+def get_fits_files_in_path(input_path, pattern='*.fits'):
+    """
+    Find and return all FITS files in the given directory.
+
+    Args:
+        input_path (str): Path to the directory to search.
+        pattern (str, optional): Glob pattern to match files. Defaults to '*.fits'.
+
+    Returns:
+        list (Path): A sorted list of Path objects matching the pattern.
+    """
+    return sorted(Path(input_path).glob(pattern))

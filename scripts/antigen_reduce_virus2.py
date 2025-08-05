@@ -1,11 +1,62 @@
 #!/usr/bin/env python
+
+import argparse
 import os
 import sys
 
-from antigen.cli import get_args
+from antigen.cli import add_calibration_args, add_common_args
 from antigen.datasets import find_datasets
 from antigen.reduce_virus2 import reduction_pipeline
 from antigen.utils import setup_logging
+
+DESCRIPTION = r"""
+Purpose:
+    This script runs the full reduction pipeline for VIRUS2 instrument datasets
+    for a given night of observations. It uses manifest files to locate input
+    science and calibration data, applies the standard reduction steps, and
+    writes reduced science-ready FITS files to the specified output directory.
+
+What it does:
+    - Searches the input folder for datasets matching the given observation date,
+      observation name, and calibration frame labels.
+    - Groups raw files into logical datasets for reduction.
+    - Runs the VIRUS2 reduction pipeline on each dataset, which includes:
+        * Bias correction
+        * Dark subtraction
+        * Flat fielding
+        * Wavelength calibration
+        * Science frame spectral extraction
+    - Writes the reduced, calibrated science frames to the output folder.
+
+Inputs:
+    - Input folder: Directory containing raw VIRUS2 FITS files.
+    - Output folder: Destination for reduced FITS files.
+    - Observation date: Date of the observation run (YYYYMMDD format).
+    - Optional: Observation name, time radius, and custom labels for calibration frames.
+    - Other common flags: e.g., --reduce-all to include all matching datasets.
+
+Outputs:
+    - One reduced, science-ready FITS file per dataset found.
+    - Files are saved in the output folder with names indicating unit ID and processing details.
+
+Example:
+    Reduce all VIRUS2 data for the night of 20250801:
+
+    $ antigen_reduce_virus2.py -i /data/virus2/raw/ -o /data/virus2/reduced/ -c 20250801
+
+Notes:
+    - The script logs all processing steps and reports any datasets that failed to reduce.
+    - Reduction uses calibration frames as specified by bias, dark, arc, flat, and twilight labels.
+    - This script assumes a valid configuration of the VIRUS2 reduction pipeline.
+"""
+
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_common_args(parser)
+    add_calibration_args(parser)
+    return parser.parse_args()
 
 
 def main():
