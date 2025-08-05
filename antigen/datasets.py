@@ -310,6 +310,31 @@ def get_matching_filenames(file_name_list, type_list, match_keywords):
     return matched_filenames
 
 
+def check_file_count(label, filenames, minimum_count, root_data_path, unit, logger):
+    """
+    Check whether a list of files meets the minimum required count, and log a warning if not.
+
+    Args:
+        label (str): Descriptive label for the file type (e.g., 'bias_label=BIAS').
+        filenames (list): List of filenames to check.
+        minimum_count (int): Minimum number of files required.
+        root_data_path (Path or str): Path where the files were searched.
+        unit (str): Identifier for the current instrument or observation unit.
+        logger (logging.Logger): Logger instance for emitting warnings.
+
+    Returns:
+        bool: True if the number of files is below the required minimum (i.e., check failed), False otherwise.
+    """
+    num_files = len(filenames)
+    if num_files < minimum_count:
+        logger.warning(
+            f"Searched {root_data_path}, unit={unit}, {label} "
+            f"found {num_files}, needed >= {minimum_count}"
+        )
+        return True
+    return False
+
+
 def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
                   instrument='VIRUS2'):
@@ -388,31 +413,34 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         # Validate number of files found before attempting to use diffs on file obs_ids
         # Use exceptions to exit process if needed frame-types file counts were not found
         # =============================================================================
-        fail_bias = False
-        fail_flat = False
-        fail_arc = False
         minimum_file_count_for_break = 1
 
-        bias_minimum_count = minimum_file_count_for_break
-        num_bias_files = len(bias_filenames)
-        if num_bias_files < bias_minimum_count:
-            fail_bias = True
-            logger.warning(f'Searched {root_data_path}, unit={unit}, found bias_label={bias_label}, '
-                           f'found {num_bias_files}, needed >= {bias_minimum_count}')
+        fail_bias = check_file_count(
+            label=f"bias_label={bias_label}",
+            filenames=bias_filenames,
+            minimum_count=minimum_file_count_for_break,
+            root_data_path=root_data_path,
+            unit=unit,
+            logger=logger
+        )
 
-        flat_minimum_count = minimum_file_count_for_break
-        num_flt_files = len(flt_filenames)
-        if num_flt_files < flat_minimum_count:
-            fail_flat = True
-            logger.warning(f'Searched {root_data_path}, unit={unit}, flat_label={flat_label}, '
-                           f'found {num_flt_files}, needed >= {flat_minimum_count}')
+        fail_flat = check_file_count(
+            label=f"flat_label={flat_label}",
+            filenames=flt_filenames,
+            minimum_count=minimum_file_count_for_break,
+            root_data_path=root_data_path,
+            unit=unit,
+            logger=logger
+        )
 
-        arc_minimum_count = minimum_file_count_for_break
-        num_arc_files = len(arc_filenames)
-        if num_arc_files < arc_minimum_count:
-            fail_arc = False
-            logger.warning(f'Searched {root_data_path}, unit={unit}, arc_label={arc_label}, '
-                           f'found {num_arc_files}, needed >= {arc_minimum_count}')
+        fail_arc = check_file_count(
+            label=f"arc_label={arc_label}",
+            filenames=arc_filenames,
+            minimum_count=minimum_file_count_for_break,
+            root_data_path=root_data_path,
+            unit=unit,
+            logger=logger
+        )
 
         if fail_bias or fail_flat or fail_arc:
             logger.warning(f'Did not find enough calibration files to process unit={unit}. Continuing to next unit...')
