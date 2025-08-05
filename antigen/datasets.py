@@ -181,36 +181,6 @@ def get_fits_file_obs_ids(fits_file_names):
     return obs_id_list
 
 
-def get_file_block_break_indices(fits_file_names):
-    """
-    Purpose: for a given list of VIRUS2 FITS files, which have integer obs-id in their full path names,
-    find all the obs-ids, and find the location of the last ID before a "jump" or "break" larger than 1, e.g.
-        In [1]: obs_id_list = [1,2,3,10]
-        In [2]: np.where(np.diff(obs_id_list) > 1)[0]
-        Out[3]: array([2])
-
-    Args:
-        fits_file_names (list(str)): list of FITS filepaths, assumed to contain a substring like "/00001/"
-
-    Returns:
-        obs_id_break_inds (np.ndarray): a numpy array of the indices of the right-edge/last-element in each contiguous block for filenames
-            e.g. if obs_ids for the files are [1,2,3,11,12,13,21,22,23] then obs_id_break_inds = [2,5]
-    """
-    obs_id_list = get_fits_file_obs_ids(fits_file_names)
-    obs_id_ints = [int(thing) for thing in obs_id_list]
-    if len(obs_id_ints) > 1:
-        breaks = np.where(np.diff(obs_id_ints) > 1)
-        if len(breaks) > 0:
-            obs_id_break_inds = breaks[0]
-        else:
-            obs_id_break_inds = None
-    elif len(obs_id_ints) == 1:
-        obs_id_break_inds = None
-    else:
-        raise ValueError(f'Failed to compute gaps in obs_id_list={obs_id_list}')
-    return obs_id_break_inds
-
-
 def get_element_with_closest_time(element_list, time_list, target_time):
     """
     Purpose: Given a list of elements and a list of MJD times for those elements,
@@ -252,43 +222,6 @@ def get_elements_within_time_radius(element_list, time_list, time_center, time_r
     return elements_inside
 
 
-def get_file_breakind_times(filenames, breakind):
-    """
-    Creates a list of master calibration images and corresponding times
-    by splitting the input list of filenames at given indices.
-
-    Args:
-        filenames (list(list(str))): List of FITS file paths containing calibration data.
-        breakind (list(int)): List of indices to split the filenames into different chunks.
-
-    Returns
-        chunked_file_names (list(str)): list of files, for each chunk.
-        chunked_file_times (list(float)): mean observation time (MJD float) for each file chunk.
-    """
-
-    # Define break points for splitting the filenames into chunks
-    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
-    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
-
-    chunked_file_names = []
-    chunked_file_times = []
-
-    # Iterate over the file-list chunks defined by breakind1 and breakind2
-    for bk1, bk2 in zip(breakind1, breakind2):
-        # Collect and preprocess frames within the current chunk
-        chunk_files = [f for cnt, f in enumerate(filenames)
-                       if ((cnt > bk1) * (cnt < bk2))]  # Only include files in the current file-list-chunk
-
-        # Extract observation times (MJD) for frames in the current chunk
-        chunk_times = [io.get_fits_file_time(filename) for filename in chunk_files]
-
-        # Append the median frame and the mean time for the current chunk
-        chunked_file_names.append(chunk_files)
-        chunked_file_times.append(np.mean(chunk_times))
-
-    return chunked_file_names, chunked_file_times
-
-
 def get_matching_filenames(file_name_list, type_list, match_keywords):
     """
     Purpose: Finds filenames that match a list of keywords by checking if any of the keywords
@@ -310,7 +243,7 @@ def get_matching_filenames(file_name_list, type_list, match_keywords):
     return matched_filenames
 
 
-def check_file_count(label, filenames, minimum_count, root_data_path, unit, logger):
+def check_file_count(label, filenames, minimum_count, root_data_path, unit):
     """
     Check whether a list of files meets the minimum required count, and log a warning if not.
 
@@ -320,7 +253,6 @@ def check_file_count(label, filenames, minimum_count, root_data_path, unit, logg
         minimum_count (int): Minimum number of files required.
         root_data_path (Path or str): Path where the files were searched.
         unit (str): Identifier for the current instrument or observation unit.
-        logger (logging.Logger): Logger instance for emitting warnings.
 
     Returns:
         bool: True if the number of files is below the required minimum (i.e., check failed), False otherwise.
@@ -421,7 +353,6 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
             minimum_count=minimum_file_count_for_break,
             root_data_path=root_data_path,
             unit=unit,
-            logger=logger
         )
 
         fail_flat = check_file_count(
@@ -430,7 +361,6 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
             minimum_count=minimum_file_count_for_break,
             root_data_path=root_data_path,
             unit=unit,
-            logger=logger
         )
 
         fail_arc = check_file_count(
@@ -439,7 +369,6 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
             minimum_count=minimum_file_count_for_break,
             root_data_path=root_data_path,
             unit=unit,
-            logger=logger
         )
 
         if fail_bias or fail_flat or fail_arc:
@@ -451,6 +380,8 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         bias_times = [get_fits_file_time(name) for name in bias_filenames]
         flt_times  = [get_fits_file_time(name) for name in flt_filenames]
         arc_times  = [get_fits_file_time(name) for name in arc_filenames]
+        sci_times  = [get_fits_file_time(name) for name in sci_filenames]
+
 
         # Generate manifest file for each science file
         logger.info(f'Found {len(sci_filenames)} science files. '
@@ -486,7 +417,7 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
             now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
             record['reduction_name'] = f'antigen_manifest_{now_string}'
             record['unit_date'] = 'unknown'
-            record['unit_instrument'] = 'VIRUS2'
+            record['unit_instrument'] = instrument
             record['unit_id'] = unit
             record['obs_date'] = obs_date
             record['obs_name'] = obs_name
