@@ -158,29 +158,6 @@ def parse_file_dir_obs_id(file_name):
     return dir_obs_id
 
 
-def get_fits_file_obs_ids(fits_file_names):
-    """
-    Purpose: Extract the obs ID string e.g. 0000001 from ALL fits_file_names passed in, assumed to be found in a VIRUS2 obs FITS file-tree
-    Note: Expected filename pattern is for each filename in the input list:
-        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-        VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
-
-    Args:
-        fits_file_names (list(str)): list of VIRUS2 obs FITS filenames
-
-    Returns:
-        obs_id_list (list(str)): list of string IDs for directory name string '0000001'
-
-    Note: replaces lines like [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in bias_filenames]
-    """
-    obs_id_list = list()
-    for filename in fits_file_names:
-        filename_metadata = parse_fits_file_name(filename)
-        if filename_metadata:
-            obs_id_list.append(filename_metadata['obs_id'])
-    return obs_id_list
-
-
 def get_element_with_closest_time(element_list, time_list, target_time):
     """
     Purpose: Given a list of elements and a list of MJD times for those elements,
