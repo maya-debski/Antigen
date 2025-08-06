@@ -138,46 +138,6 @@ def parse_fits_file_tree(root_path, instrument='VIRUS2', date=None, verbose=Fals
     return metadata_records
 
 
-def parse_file_dir_obs_id(file_name):
-    """
-    Purpose: Extract the obs ID string e.g. 0000001 from expected FITS obs filename pattern like the following:
-        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-
-    Args:
-        file_name (str): VIRUS2 obs FITS filename
-
-    Returns:
-        dir_obs_id (int): e.g. 1 for directory name string '0000001'
-    """
-    dir_name = Path(file_name).parent.parent.name
-    try:
-        dir_obs_id = int(dir_name)
-    except ValueError:
-        dir_obs_id = None
-    return dir_obs_id
-
-
-def get_element_with_closest_time(element_list, time_list, target_time):
-    """
-    Purpose: Given a list of elements and a list of MJD times for those elements,
-    find the element that has a time closest to the target_time
-
-    Args:
-        element_list (list): list of elements corresponding to the times in time_list
-        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
-        target_time (numeric): MJD time
-
-    Returns:
-        closest_element: element for closest_time from time_list compared to target_time
-    """
-    # Find index of time closest to target_time
-    index = np.argmin(np.abs(np.array(time_list) - target_time))
-
-    # Use the index directly in the original file list
-    closest_element = element_list[index]
-    return closest_element
-
-
 def get_elements_within_time_radius(element_list, time_list, time_center, time_radius):
     """
     Purpose: Given a list of elements and a list of MJD times for those elements,
