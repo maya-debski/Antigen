@@ -38,7 +38,6 @@ Examples:
     $ antigen_build_manifest_virus2.py -i /data/virus2/raw/ -o /data/virus2/manifests/ -c 20240801 -n M57
 
 Notes:
-    - You can use the --reduce-all flag to include all datasets regardless of name match.
     - The manifest files are used as input for downstream reduction pipelines.
 """
 
@@ -57,7 +56,7 @@ def main():
     logger.info(f'Starting application...')
 
     dataset_manifests = find_datasets(args.in_folder, args.obs_date,
-                                      args.obs_name, args.reduce_all, args.time_radius,
+                                      args.obs_name, args.time_radius,
                                       args.bias_label, args.arc_label, args.dark_label,
                                       args.flat_label, args.twilight_flat_label
                                       )
