@@ -71,14 +71,16 @@ def base_reduction(data, masterbias, channel):
     return image, error_estimate
 
 
-def make_master_cal(filenames, channel):
+def make_master_cal(filenames):
     """
     Purpose: Load all files, slice array into 4 channels, select single channel slice, compute aggregate, return result
 
     Args:
-        filenames (list(str)):
-        channel (str): 'g', 'b'
+        filenames (list(str)): list of filenames
+        
     Returns:
+        master_cal (np.ndarray): median stacked calibration frame
+        master_cal_time (float): average MJD of the frames that were stacked
     """
     # Extract from the files, re-oriented by prep_image()
     frames = [prep_image(fits.open(file)[0].data) for file in filenames]
