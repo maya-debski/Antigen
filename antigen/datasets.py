@@ -272,163 +272,179 @@ def assign_science_to_groups(science_frames, cal_groups):
 
     return cal_groups
 
+def get_calibration_and_science_files(unit_records, obs_name, reduce_all,
+                                      bias_label, flat_label, twilight_flat_label,
+                                      arc_label, dark_label):
+    """
+    Categorize files into calibration and science types.
+
+    Args:
+        unit_records (list): Records for a unit.
+        obs_name (str): Science target name.
+        reduce_all (bool): Whether to include all non-calibration files.
+        bias_label, flat_label, twilight_flat_label, arc_label, dark_label (str): Frame type labels.
+
+    Returns:
+        cal_files_dict (dict): calibration files dictionary
+        sci_files (list): science filenames
+    """
+    filenames = [rec['filename'] for rec in unit_records]
+    types = [rec['frame_type'] for rec in unit_records]
+
+    bias = get_matching_filenames(filenames, types, [bias_label])
+    twi = get_matching_filenames(filenames, types, [twilight_flat_label])
+    dome = get_matching_filenames(filenames, types, [flat_label])
+    arc = get_matching_filenames(filenames, types, [arc_label])
+    dark = get_matching_filenames(filenames, types, [dark_label])
+
+    flats = twi if twi else dome
+
+    if obs_name:
+        sci_files = get_matching_filenames(filenames, types, [obs_name])
+    else:
+        sci_files = []
+
+    if reduce_all:
+        all_cal = set(bias + flats + arc + dark)
+        sci_files = [filename for filename in filenames if filename not in all_cal]
+
+    cal_files_dict = {'bias': bias, 'flat': flats, 'arc': arc}
+    return cal_files_dict, sci_files
+
+
+def validate_calibration_counts(cal_files, unit, root_data_path, minimum=1):
+    """
+    Ensure each calibration type has at least the minimum required files.
+
+    Args:
+        cal_files (dict): Dictionary of calibration file lists.
+        unit (str): Unit name.
+        root_data_path (Path): Root directory.
+        minimum (int): Minimum required files per type.
+
+    Returns:
+        bool: True if all checks pass.
+    """
+    fail = False
+    for key, files in cal_files.items():
+        if len(files) < minimum:
+            logger.warning(f'Searched {root_data_path}, unit={unit}, found {len(files)} < {minimum} {key} files')
+            fail = True
+    return not fail
+
+
+def prepare_group_input_dicts(cal_files, sci_filenames):
+    """
+    Build calibration and science input lists for grouping.
+
+    Args:
+        cal_files (dict): Calibration file dict.
+        sci_filenames (list): Science file names.
+
+    Returns:
+        cal_dict_list (list of dicts): Calibration list of dictionaries with type, filename, and mjd.
+        sci_dict_list (list of dicts): Science file list of dictionaries.
+    """
+    cal_dict_list = []
+    for typ in ['bias', 'flat', 'arc']:
+        times = [get_fits_file_time(f) for f in cal_files[typ]]
+        cal_dict_list += [{'type': typ, 'mjd': t, 'name': f} for t, f in zip(times, cal_files[typ])]
+
+    sci_times = [get_fits_file_time(f) for f in sci_filenames]
+    sci_dict_list = [{'type': 'sci', 'mjd': t, 'name': f} for t, f in zip(sci_times, sci_filenames)]
+
+    return cal_dict_list, sci_dict_list
+
+
+def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
+    """
+    Build manifest-style dataset records.
+
+    Args:
+        cal_groups (list): Groups of calibration + science files.
+        instrument (str): Instrument name.
+        unit (str): Unit identifier.
+        obs_date (str): Observation date.
+        obs_name (str): Science target name.
+
+    Returns:
+        list of dict: Dataset records.
+    """
+    records = []
+    now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    for group in cal_groups:
+        if not group['bias'] or not group['flat'] or not group['arc']:
+            continue
+
+        record = {
+            'reduction_name': f'antigen_manifest_{now_string}',
+            'unit_date': 'unknown',
+            'unit_instrument': instrument,
+            'unit_id': unit,
+            'obs_date': obs_date,
+            'obs_name': obs_name,
+            'in_folder': './',
+            'observation_files': group['sci'],
+            'calibration_files': {
+                'bias': group['bias'],
+                'flat': group['flat'],
+                'arc': group['arc']
+            }
+        }
+        records.append(record)
+
+    return records
+
 def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
                   instrument='VIRUS2'):
     """
-    Purpose: Search FITS file tree and generate groupings of calibration and science files by FITS header times,
-    organized into dataset records to then later help build a dataset file manifest
+    Search FITS file tree and generate groupings of calibration and science files by FITS header times.
 
     Args:
-        in_folder (str): Root path where reduction input file tree is located
-        obs_date (str): Observation calendar date string formatted as YYYYMMDD
-        obs_name (str): Observation object/target name, e.g. from FITS header card
-        reduce_all (bool): Reduce all files found under infolder file tree
-        time_radius (float) will group calibration files with times that fall within this distance from a given science file time
-        bias_label (str): string label from FITS file header for bias frames
-        arc_label (str): string label from FITS file header for arc frames
-        dark_label (str): string label from FITS file header for dark frames
-        flat_label (str): string label from FITS file header for flat frames
-        twilight_flat_label (str): string label from FITS file header for twilight frames
-        instrument (str, optional): instrument to use, e.g. VIRUS2, defaults to VIRUS2
+        in_folder (str): Root path to search.
+        obs_date (str): Observation date in YYYYMMDD.
+        obs_name (str): Object name to search for in science frames.
+        reduce_all (bool): If True, reduce all non-calibration frames.
+        time_radius (float): MJD time radius for grouping science with calibration.
+        bias_label (str): Label for bias frames.
+        arc_label (str): Label for arc frames.
+        dark_label (str): Label for dark frames.
+        flat_label (str): Label for dome flat frames.
+        twilight_flat_label (str): Label for twilight flat frames.
+        instrument (str): Instrument name (default 'VIRUS2').
 
     Returns:
-        dataset_records (list(dict)): list of dicts/records, where each dict has the following keys:
-            record['obs_time']: Obs time as MJD float
-            record[observation_files']: filename of obs file to be reduced
-            record['calibration_files']['bias']: list of bias FITS file names to use for calibration
-            record['calibration_files']['flat']: list of flat FITS file names to use for calibration
-            record['calibration_files']['arc']: list of arc FITS file names to use for calibration
+        list of dict: Dataset records.
     """
-
     root_data_path = Path(in_folder).expanduser().resolve()
     if not root_data_path.is_dir():
-        raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {root_data_path}')
+        raise NotADirectoryError(f'Input path does not exist: {root_data_path}')
 
-    # time filtering: Get FITS files in file-tree that match the obs_date
     metadata_records = parse_fits_file_tree(root_data_path, instrument=instrument, date=obs_date, verbose=True)
-    units_found = [record['spec_id'] for record in metadata_records]
-    unique_units_found = list(set(units_found))
-
+    unique_units_found = list(set([record['spec_id'] for record in metadata_records]))
     dataset_records = []
+
     for unit in unique_units_found:
-        logger.info(f'Search for subset of file records with matching unit={unit} ...')
         unit_records = [record for record in metadata_records if record['spec_id'] == unit]
+        cal_files, sci_filenames = get_calibration_and_science_files(
+            unit_records, obs_name, reduce_all,
+            bias_label, flat_label, twilight_flat_label, arc_label, dark_label)
 
-        # Group subsets of filenames into lists based on the frame types
-        unit_frame_types = [record['frame_type'] for record in unit_records]
-        unit_filenames = [record['filename'] for record in unit_records]
-
-        bias_filenames    = get_matching_filenames(unit_filenames, unit_frame_types, [bias_label])
-        twiflt_filenames  = get_matching_filenames(unit_filenames, unit_frame_types, [twilight_flat_label])
-        domeflt_filenames = get_matching_filenames(unit_filenames, unit_frame_types, [flat_label])
-        arc_filenames     = get_matching_filenames(unit_filenames, unit_frame_types, [arc_label])
-        dark_filenames    = get_matching_filenames(unit_filenames, unit_frame_types, [dark_label])
-
-        if obs_name is not None:
-            sci_filenames = get_matching_filenames(unit_filenames, unit_frame_types, [obs_name])
-        else:
-            sci_filenames = []
-
-        if len(sci_filenames) == 0 and not reduce_all:
-            logger.warning(f'unit={unit}, found ZERO matching files for obs_name={obs_name}. Continuing to next unit...')
+        if not sci_filenames:
+            logger.warning(f'unit={unit}, no matching science files')
             continue
-        else:
-            logger.info(f'unit={unit}, Found len(sci_filenames)={len(sci_filenames)} matching files for obs_name={obs_name}')
 
-        if reduce_all:
-            calibration_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
-            sci_filenames = [name for name in unit_filenames if name not in calibration_files]
-            logger.info(f'reduce_all==True, expanding dataset to reduce all non_calibration_files')
-
-        if len(twiflt_filenames) > 0:
-            flt_filenames = twiflt_filenames
-        else:
-            flt_filenames = domeflt_filenames
-
-        # =============================================================================
-        # Validate number of files found before attempting to use diffs on file obs_ids
-        # Use exceptions to exit process if needed frame-types file counts were not found
-        # =============================================================================
-        minimum_file_count_for_break = 1
-
-        fail_bias = check_file_count(
-            label=f"bias_label={bias_label}",
-            filenames=bias_filenames,
-            minimum_count=minimum_file_count_for_break,
-            root_data_path=root_data_path,
-            unit=unit,
-        )
-
-        fail_flat = check_file_count(
-            label=f"flat_label={flat_label}",
-            filenames=flt_filenames,
-            minimum_count=minimum_file_count_for_break,
-            root_data_path=root_data_path,
-            unit=unit,
-        )
-
-        fail_arc = check_file_count(
-            label=f"arc_label={arc_label}",
-            filenames=arc_filenames,
-            minimum_count=minimum_file_count_for_break,
-            root_data_path=root_data_path,
-            unit=unit,
-        )
-
-        if fail_bias or fail_flat or fail_arc:
-            logger.warning(f'Did not find enough calibration files to process unit={unit}. Continuing to next unit...')
+        if not validate_calibration_counts(cal_files, unit, root_data_path):
+            logger.warning(f'unit={unit}, calibration files insufficient. Skipping.')
             continue
-        # =============================================================================
-        # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
-        # =============================================================================
-        bias_times = [get_fits_file_time(name) for name in bias_filenames]
-        flt_times  = [get_fits_file_time(name) for name in flt_filenames]
-        arc_times  = [get_fits_file_time(name) for name in arc_filenames]
-        sci_times  = [get_fits_file_time(name) for name in sci_filenames]
 
-        cal_dict_list = []
-        sci_dict_list = []
-        for time, name in zip(bias_times, bias_filenames):
-            cal_dict_list.append({'type': 'bias', 'mjd': time, 'name': name})
+        cal_dict_list, sci_dict_list = prepare_group_input_dicts(cal_files, sci_filenames)
 
-        for time, name in zip(arc_times, arc_filenames):
-            cal_dict_list.append({'type': 'arc', 'mjd': time, 'name': name})
-
-        for time, name in zip(flt_times, flt_filenames):
-            cal_dict_list.append({'type': 'flat', 'mjd': time, 'name': name})
-
-        for time, name in zip(sci_times, sci_filenames):
-            sci_dict_list.append({'type': 'sci', 'mjd': time, 'name': name})
-
-        # Create a dictionary with keywords: bias(list), flat(list), arc(list), sci(list), and mjd (float)
         cal_groups = build_calibration_groups(cal_dict_list, time_radius)
         cal_groups = assign_science_to_groups(sci_dict_list, cal_groups)
 
-        for cal_group in cal_groups:
-            not_all_cals_in_group = False
-            time_center = cal_group['mjd']
-            for cal_type in ['bias', 'flat', 'arc']:
-                if len(cal_group[cal_type]) == 0:
-                    logger.warning(f'FAIL: found ZERO {cal_type} calibration files: '
-                                   f'time_center={time_center}, time_radius={time_radius}')
-            if not_all_cals_in_group:
-                continue
-            record = dict()
-            now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-            record['reduction_name'] = f'antigen_manifest_{now_string}'
-            record['unit_date'] = 'unknown'
-            record['unit_instrument'] = instrument
-            record['unit_id'] = unit
-            record['obs_date'] = obs_date
-            record['obs_name'] = obs_name
-            record['in_folder'] = './'
-            record['observation_files'] = cal_group['sci']
-            record['calibration_files'] = dict()
-            record['calibration_files']['bias'] = cal_group['bias']
-            record['calibration_files']['flat'] = cal_group['flat']
-            record['calibration_files']['arc'] = cal_group['arc']
-
-            dataset_records.append(record)
+        dataset_records += build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name)
 
     return dataset_records
