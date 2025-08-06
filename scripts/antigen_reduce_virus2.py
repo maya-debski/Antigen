@@ -67,8 +67,7 @@ def main():
 
     os.makedirs(args.out_folder, exist_ok=True)
 
-    dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name,
-                                      args.reduce_all, args.time_radius,
+    dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
                                       args.bias_label, args.arc_label, args.dark_label,
                                       args.flat_label, args.twilight_flat_label)
 
