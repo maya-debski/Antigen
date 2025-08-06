@@ -416,7 +416,7 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         instrument (str): Instrument name (default 'VIRUS2').
 
     Returns:
-        list of dict: Dataset records.
+        dataset_records (list of dict): Dataset records for manifest file
     """
     root_data_path = Path(in_folder).expanduser().resolve()
     if not root_data_path.is_dir():
