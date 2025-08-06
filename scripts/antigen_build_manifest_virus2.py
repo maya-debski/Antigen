@@ -11,7 +11,7 @@ from antigen.utils import setup_logging
 
 DESCRIPTION = r"""
 Purpose:
-    This script builds a manifest file for the VIRUS2 instrument for a given night of observations.
+    This script builds a manifest file for the VIRUS2/GCMS instruments for a given night of observations.
     The manifest serves as an index of all relevant datasets found in the specified input folder,
     grouped and labeled according to observation date, target name, and calibration frames.
     It is intended to assist in organizing and tracking raw data before further reduction.
@@ -46,6 +46,22 @@ def get_args():
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
     add_calibration_args(parser)
+
+    parser.add_argument(
+        '-m', '--instrument',
+        type=str,
+        default='GCMS',
+        help='Name of the instrument used for the observation '
+             '(default: %(default)s). Example: GCMS.'
+    )
+
+    parser.add_argument(
+        '-l', '--element',
+        type=str,
+        default='VP1B',
+        help='Spectrograph setup or configuration element, such as VP1B or VP1R '
+             '(default: %(default)s).'
+    )
     return parser.parse_args()
 
 def main():
