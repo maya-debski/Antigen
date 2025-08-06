@@ -242,8 +242,6 @@ def build_calibration_groups(calibrations, time_radius):
         # Remove used calibrations
         used_names = {cal['name'] for cal in grouped}
         remaining = [cal for cal in remaining if cal['name'] not in used_names]
-
-        # TODO: Check that each of the cals meets the minimum length
         groups.append(group)
 
     return groups
@@ -403,6 +401,7 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         for time, name in zip(sci_times, sci_filenames):
             sci_dict_list.append({'type': 'sci', 'mjd': time, 'name': name})
 
+        # Create a dictionary with keywords: bias(list), flat(list), arc(list), sci(list), and mjd (float)
         cal_groups = build_calibration_groups(cal_dict_list, time_radius)
         cal_groups = assign_science_to_groups(sci_dict_list, cal_groups)
 
