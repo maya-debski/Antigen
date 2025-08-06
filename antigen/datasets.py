@@ -89,7 +89,7 @@ def get_fits_filenames(root_path, instrument='VIRUS2', date=None, verbose=False)
         verbose (bool, optional): if True, print more info to console, defaults to False
 
     Returns:
-        file_names (list(dict)): List of files
+        file_names (list(str)): List of file name strings
     """
 
     logger.info(f'Searching for FITS files under in root_path={root_path} for date={date} ...')
@@ -101,6 +101,8 @@ def get_fits_filenames(root_path, instrument='VIRUS2', date=None, verbose=False)
     # find all files matching this file-tree glob pattern
     fits_filenames = sorted(date_dir.glob('*/*/*.fits'))
 
+    # Converting list of Paths to list of strings
+    fits_filenames = [str(filename) for filename in fits_filenames]
     if verbose:
         num_files = len(fits_filenames)
         logger.info(f'VERBOSE: Found {num_files} files under.')
