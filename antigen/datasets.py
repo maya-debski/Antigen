@@ -272,7 +272,7 @@ def assign_science_to_groups(science_frames, cal_groups):
 
     return cal_groups
 
-def get_calibration_and_science_files(unit_records, obs_name, reduce_all,
+def get_calibration_and_science_files(unit_records, obs_name,
                                       bias_label, flat_label, twilight_flat_label,
                                       arc_label, dark_label):
     """
@@ -281,7 +281,6 @@ def get_calibration_and_science_files(unit_records, obs_name, reduce_all,
     Args:
         unit_records (list): Records for a unit.
         obs_name (str): Science target name.
-        reduce_all (bool): Whether to include all non-calibration files.
         bias_label, flat_label, twilight_flat_label, arc_label, dark_label (str): Frame type labels.
 
     Returns:
@@ -302,9 +301,6 @@ def get_calibration_and_science_files(unit_records, obs_name, reduce_all,
     if obs_name:
         sci_files = get_matching_filenames(filenames, types, [obs_name])
     else:
-        sci_files = []
-
-    if reduce_all:
         all_cal = set(bias + flats + arc + dark)
         sci_files = [filename for filename in filenames if filename not in all_cal]
 
@@ -396,7 +392,7 @@ def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
 
     return records
 
-def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
+def find_datasets(in_folder, obs_date, obs_name, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
                   instrument='VIRUS2'):
     """
@@ -406,7 +402,6 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
         in_folder (str): Root path to search.
         obs_date (str): Observation date in YYYYMMDD.
         obs_name (str): Object name to search for in science frames.
-        reduce_all (bool): If True, reduce all non-calibration frames.
         time_radius (float): MJD time radius for grouping science with calibration.
         bias_label (str): Label for bias frames.
         arc_label (str): Label for arc frames.
@@ -429,7 +424,7 @@ def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
     for unit in unique_units_found:
         unit_records = [record for record in metadata_records if record['spec_id'] == unit]
         cal_files, sci_filenames = get_calibration_and_science_files(
-            unit_records, obs_name, reduce_all,
+            unit_records, obs_name,
             bias_label, flat_label, twilight_flat_label, arc_label, dark_label)
 
         if not sci_filenames:
