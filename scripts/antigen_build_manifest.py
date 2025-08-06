@@ -17,7 +17,7 @@ Purpose:
     It is intended to assist in organizing and tracking raw data before further reduction.
 
 What it does:
-    - Searches a given input directory for raw VIRUS2 datasets.
+    - Searches a given input directory for raw VIRUS2/GCMS datasets.
     - Groups exposures by science target and calibration type (bias, dark, arc, flat, twilight flat).
     - Writes one or more manifest files in YAML format to the specified output directory.
     - Each manifest file includes paths and metadata for the matched datasets.
@@ -35,7 +35,7 @@ Outputs:
 Examples:
     Build a manifest for the night of 20240801 for object M57:
 
-    $ antigen_build_manifest_virus2.py -i /data/virus2/raw/ -o /data/virus2/manifests/ -c 20240801 -n M57
+    $ antigen_build_manifest.py -i /data/virus2/raw/ -o /data/virus2/manifests/ -c 20240801 -n M57
 
 Notes:
     - The manifest files are used as input for downstream reduction pipelines.
@@ -55,13 +55,6 @@ def get_args():
              '(default: %(default)s). Example: GCMS.'
     )
 
-    parser.add_argument(
-        '-l', '--element',
-        type=str,
-        default='VP1B',
-        help='Spectrograph setup or configuration element, such as VP1B or VP1R '
-             '(default: %(default)s).'
-    )
     return parser.parse_args()
 
 def main():
@@ -74,7 +67,7 @@ def main():
     dataset_manifests = find_datasets(args.in_folder, args.obs_date,
                                       args.obs_name, args.time_radius,
                                       args.bias_label, args.arc_label, args.dark_label,
-                                      args.flat_label, args.twilight_flat_label
+                                      args.flat_label, args.twilight_flat_label, instrument=args.instrument,
                                       )
 
     for nr, record in enumerate(dataset_manifests):
