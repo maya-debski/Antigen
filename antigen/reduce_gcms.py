@@ -20,8 +20,9 @@ warnings.filterwarnings("ignore")
 logger = logging.getLogger('antigen.reduce.gcms')
 
 
-def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_mask, wavelength_cal, ftf_correction,
-                   channel, pca=None, pca_only=False, outfolder=None):
+def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_mask,
+                   wavelength_cal, ftf_correction,
+                   config_dict, pca=None, pca_only=False, outfolder=None):
     """
     Purpose: Reduce the raw data by performing a series of processing steps,
     including bias subtraction, flat-fielding, sky subtraction,
@@ -35,6 +36,7 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
         good_fiber_mask (array(bool)): boolean selecttion mask of good (isfinite) fibers for current observation
         wavelength_cal (): wavelength calibration data for the current observation
         ftf_correction (list): flat-field (fiber_to_fiber) correction array.
+        config_dict (dict): configuration dictionary for fits file
         pca (sklearn.decomposition.PCA), Default is None, optional, A pre-fitted PCA model for residual map analysis.
         pca_only (bool): if True, return immediately after computing the PCA model fit object
         outfolder (str): file output path to write FITS files to
@@ -46,12 +48,11 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
         continuum (np.ndarray): 1d numpy array, The computed continuum for the spectrum.
     """
 
-    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
 
     obs_data, obs_header = io.load_fits(data_filename)
 
     # Perform basic image reduction (bias subtraction, gain adjustment)
-    image, E = ccd.base_reduction(obs_data, master_bias, channel)
+    image, E = ccd.base_reduction(obs_data, master_bias, config_dict)
 
     # Scattered light correction
     scattered_light = ccd.get_scattered_light(image, trace)
@@ -70,7 +71,9 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
     spec[badpix] = np.nan
 
     # Rectify the spectrum and error based on the wavelength
-    def_wave = CONFIG_DEF_WAVE[channel]
+    def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
+                           config_dict['detector_dimensions']['X'])
+
     specrect, errrect = fiber.rectify(spec, specerr, wavelength_cal, def_wave)
 
     # Apply flat-field correction
@@ -105,7 +108,8 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
 
     # Write the final reduced data to a new FITS file
     skysubrect_adv = skysubrect - res
-    output_fits_filename = io.write_fits(skysubrect_adv, skysubrect, specrect, errrect, obs_header, channel, outfolder)
+    output_fits_filename = io.write_fits(skysubrect_adv, skysubrect, specrect, errrect, obs_header, config_dict,
+                                         outfolder)
 
     # Return the biweighted spectrum and continuum
     biweighted_spectrum = biweight(specrect, axis=0, ignore_nan=True)
@@ -135,11 +139,12 @@ def process_calibration(manifest_record, output_path, config_dict):
     os.makedirs(output_path, exist_ok=True)
 
     def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
-                           config_dict['detector_dimensions'])
+                           config_dict['detector_dimensions']['X'])
 
     lines = config_dict['wavelength']
     xref = config_dict['column']
-    limit = config_dict['limit']
+    limit = config_dict['arc_flux_limit']
+    fiber_ref = config_dict['reference_fiber_index']
     use_kernel = True
     #TODO: Decide how to do the VIRUS2 ifucen file
     trace_rows = config_dict['trace_row']
@@ -156,13 +161,13 @@ def process_calibration(manifest_record, output_path, config_dict):
     arc_filenames = manifest_record['calibration_files']['arc']
 
     logger.info('Making master bias frames')
-    master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames)
+    master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames, config_dict)
 
     logger.info('Making master flat frames')
-    master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames)
+    master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames, config_dict)
 
     logger.info('Making master arc frames')
-    master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames)
+    master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames, config_dict)
 
     # =============================================================================
     # Get trace from the dome flat
@@ -171,7 +176,8 @@ def process_calibration(manifest_record, output_path, config_dict):
 
     trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data,
                                                              trace_rows, exclude_fiber)
-    _, _ = plot.plot_trace(trace, Tchunk, xchunk, outfolder=output_path)
+    _, _ = plot.plot_trace(trace, Tchunk, xchunk, fiber_indices=config_dict['sample_fiber_indices'],
+                           outfolder=output_path)
 
     domeflat_spec = fiber.get_spectra(master_flat_data - master_bias_data, trace)
     domeflat_error = 0. * domeflat_spec
@@ -189,17 +195,17 @@ def process_calibration(manifest_record, output_path, config_dict):
     lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.png'))
     plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
 
-    try:
-        wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
-                                                     xref, lines, limit=limit,
-                                                     use_kernel=use_kernel)
+    #try:
+    wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
+                                                 xref, lines, limit=limit,
+                                                 fiberref=fiber_ref,
+                                                 use_kernel=use_kernel)
 
-        # Plot wavelength solution for inspection
-        plot.plot_wavelength(lines, W, wavelength, output_path)
-    except:
-        error_message = 'Could not get wavelength solution for arc_filenames from manifest'
-        logger.warning(error_message)
-        raise RuntimeError(error_message)
+    # Plot wavelength solution for inspection
+    plot.plot_wavelength(lines, W, wavelength, output_path)
+    #except:
+    #    error_message = 'Could not get wavelength solution for arc_filenames from manifest'
+    #    raise RuntimeError(error_message)
 
     # =============================================================================
     # Rectify domeflat spectra and get fiber to fiber
@@ -213,14 +219,13 @@ def process_calibration(manifest_record, output_path, config_dict):
     return master_bias_data, master_flat_data, master_arc_data, trace, good_fiber_mask, wavelength, ftf
 
 
-def reduction_pipeline(dataset_manifest, output_path, config_dict):
+def reduction_pipeline(dataset_manifest, output_path):
     """
     Purpose: data reduction pipeline to process VIRUS2 observation files
 
     Args:
         dataset_manifest (dict): dataset manifest dictionary returned from e.g. dataset.find_datasets()
         output_path (str): output file path to which this method will write a reduced FITS file
-        config_dict (dict): Dictionary of configuration parameters
 
     Returns:
         reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
@@ -243,13 +248,15 @@ def reduction_pipeline(dataset_manifest, output_path, config_dict):
     channel = dataset_manifest['unit_id'][-1].lower()
     logger.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
     pca, _, _, _ = reduce_science(arc_file, master_bias_data, master_flat_data,
-                                  trace, good_fiber_mask, wavelength, ftf, channel,
+                                  trace, good_fiber_mask, wavelength, ftf, config_dict,
                                   pca=None, pca_only=True, outfolder=output_path)
 
-    science_file = dataset_manifest['observation_files'][0]
-    logger.info(f'Reducing Science Frame: science_file={science_file}')
+    for science_file in dataset_manifest['observation_files']:
+        logger.info(f'Reducing Science Frame: science_file={science_file}')
 
-    _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
-                                                      trace, good_fiber_mask, wavelength, ftf, channel,
-                                                      pca=pca, outfolder=output_path)
+        _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
+                                                          trace, good_fiber_mask, wavelength, ftf, config_dict,
+                                                          pca=pca, outfolder=output_path)
+        logger.info(f'Wrote reduction to FITS file {reduction_filename}')
+
     return reduction_filename
