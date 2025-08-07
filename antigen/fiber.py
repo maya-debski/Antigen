@@ -120,7 +120,7 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
-def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=config.VIRUS2_FIBER_REF):
+def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=130):
     """
     Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
 
@@ -128,16 +128,17 @@ def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=10
         spectrum (ndarray): 2D array of spectra, each row corresponding to a fiber.
         trace (ndarray): 2D array with trace positions for each fiber.
         good (ndarray): Boolean array indicating which fibers have valid data.
+        xref (ndarray): Reference column for each arc line
+        lines (ndarray): arc line wavelengths
         use_kernel (bool): Whether to apply kernel smoothing when identifying arc lines. Default is True.
         limit (float): Limit on how far to search for matching arc lines. Default is 100.
-        fiberref (int): default = config.VIRUS2_FIBER_REF=130
+        fiberref (int): default = 130
 
     Returns:
-        tuple: (wavelength, res, X, W)
-            - wavelength (ndarray): Wavelength solution for each fiber.
-            - res (ndarray): Residuals from the biweight mean calculation.
-            - X (ndarray): Adjusted positions in trace space for arc lines.
-            - W (ndarray): Arc line positions for each fiber.
+        wavelength (ndarray): Wavelength solution for each fiber.
+        res (ndarray): Residuals from the biweight mean calculation.
+        X (ndarray): Adjusted positions in trace space for arc lines.
+        W (ndarray): Arc line positions for each fiber.
     """
 
     # Initialize wavelength array and starting fiber position
@@ -196,7 +197,7 @@ def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=10
 
         # Compute residuals using biweight mean
         res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
-    fits.HDUList([fits.PrimaryHDU(X), fits.ImageHDU(lines)]).writeto('test.fits', overwrite=True)
+
     goodlines = res < 0.2
     # Compute final wavelength solution for each fiber
     for j in range(W.shape[0]):
