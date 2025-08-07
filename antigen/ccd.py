@@ -5,6 +5,7 @@ from astropy.time import Time
 
 from scipy.interpolate import LSQUnivariateSpline
 from antigen import config
+from antigen.io import load_fits
 
 
 def prep_image(image):
@@ -35,14 +36,14 @@ def prep_image(image):
     return image
 
 
-def base_reduction(data, masterbias, channel):
+def base_reduction(data, master_bias):
     """
     Perform basic image reduction by applying bias subtraction,
     gain correction, and calculating the error estimate.
 
     Args:
         data (np.ndarray): 2d numpy array, Raw input image to be reduced.
-        masterbias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
+        master_bias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
         channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
 
     Returns:
@@ -55,7 +56,7 @@ def base_reduction(data, masterbias, channel):
     image = prep_image(data)
 
     # Subtract the master bias from the image
-    image[:] -= masterbias
+    image[:] -= master_bias
 
     CHANNEL_DETECTOR, _ = config.get_channel_config_virus2()
 
@@ -73,7 +74,7 @@ def base_reduction(data, masterbias, channel):
 
 def make_master_cal(filenames):
     """
-    Purpose: Load all files, slice array into 4 channels, select single channel slice, compute aggregate, return result
+    Load a list of calibration FITS files, apply basic CCD preprocessing, and create a master calibration frame.
 
     Args:
         filenames (list(str)): list of filenames
@@ -83,10 +84,14 @@ def make_master_cal(filenames):
         master_cal_time (float): average MJD of the frames that were stacked
     """
     # Extract from the files, re-oriented by prep_image()
-    frames = [prep_image(fits.open(file)[0].data) for file in filenames]
-
     # Extract observation times (MJD) for frames in the current chunk
-    times = [Time(fits.open(file)[0].header['DATE-OBS']).mjd for file in filenames]
+    frames, times = ([], [])
+    for filename in filenames:
+        frame, header = load_fits(filename)
+        prepped_frame = prep_image(frame)
+        frames.append(prepped_frame)
+        mjd = Time(header['DATE-OBS']).mjd
+        times.append(mjd)
 
     # Compute median frame and the mean time for the current chunk
     master_cal      = np.nanmedian(frames, axis=0)  # maybe biweight() as an alternate method
