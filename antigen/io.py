@@ -54,7 +54,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_d
 
         # Define your wavelength solution
         def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
-                               config_dict['detector_dimensions'])
+                               config_dict['detector_dimensions']['X'])
         wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
 
         # Set WCS parameters correctly
