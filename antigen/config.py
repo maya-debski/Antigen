@@ -330,6 +330,7 @@ def build_config_for_element(instrument, instrument_element,validate = False):
                    'start_wavelength': config_yaml['start_wavelength'],
                    'end_wavelength': config_yaml['end_wavelength'],
                    'detector_dimensions': config_yaml['detector_dimensions'],
+                   'add_rows': config_yaml['add_rows'],
                    'arc_flux_limit': config_yaml['arc_flux_limit'],
                    'telescope_diameter': config_yaml['telescope_diameter'],
                    'overscan_length': config_yaml['overscan_length'],
