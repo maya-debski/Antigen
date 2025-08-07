@@ -77,7 +77,7 @@ def make_master_cal(filenames):
 
     Args:
         filenames (list(str)): list of filenames
-        
+
     Returns:
         master_cal (np.ndarray): median stacked calibration frame
         master_cal_time (float): average MJD of the frames that were stacked
