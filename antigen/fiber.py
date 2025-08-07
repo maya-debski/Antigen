@@ -476,120 +476,88 @@ def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
     return spec
 
 
-def get_trace(twilight, ref):
+def get_trace(twilight, trace_rows, exclude_fibers):
     """
     Extract fiber traces from a twilight flat field image.
 
-    Parameters
-    ----------
-    twilight : 2d numpy array
-        Twilight flat field image used to determine fiber locations.
+    Args:
+        twilight (np.ndarray): 2D array representing the twilight flat field image used to determine fiber locations.
+        trace_rows (np.ndarray): 1D array of nominal y-positions for each fiber's trace in pixels.
+        exclude_fibers (np.ndarray):  array float specifying fibers to exclude.
 
-    Returns
-    -------
-    trace : 2d numpy array
-        The calculated trace positions for each fiber across the image.
-    good : 1d numpy array (boolean)
-        Boolean mask indicating which fibers are valid (non-missing).
+    Returns:
+        trace (np.ndarray): 2D array of the calculated trace positions for each fiber across the image.
+        good_fiber_mask (np.ndarray): 1D boolean array indicating which fibers are valid (not excluded).
+        Trace (np.ndarray): Intermediate 2D array of trace positions before polynomial smoothing.
+        xchunks (np.ndarray): 1D array of x-axis chunk centers used during trace extraction.
     """
 
-    # Determine the number of valid (good) fibers
-    N1 = np.isfinite(ref['px']).sum()
-    good = np.where(np.isfinite(ref['px']))[0]  # Indices of good fibers
+    total_fibers = len(trace_rows)
 
-    # Helper function to calculate trace positions for a chunk of the image
+    exclude_mask = np.array(exclude_fibers, dtype=bool)
+
+    good = np.where(~exclude_mask)[0]
+    N1 = len(good)
+
     def get_trace_chunk(flat, XN):
-        # YM represents the y-axis pixel coordinates
         YM = np.arange(flat.shape[0])
-
-        # Create a 3-row array for XN-1, XN, and XN+1 indices
         inds = np.zeros((3, len(XN)))
         inds[0] = XN - 1.
         inds[1] = XN + 0.
         inds[2] = XN + 1.
         inds = np.array(inds, dtype=int)
-
-        # Calculate the trace using a second-order derivative method
         Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
                  (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
         return Trace
 
-    # Assign the input image to a variable
     image = twilight
-
-    # Determine the number of chunks based on whether the image is binned
     N = 80
-
-    # Split the x-axis into chunks and calculate the mean x-position for each chunk
     xchunks = np.array([np.mean(x)
                         for x in np.array_split(np.arange(image.shape[1]), N)])
-
-    # Split the image into vertical chunks
     chunks = np.array_split(image, N, axis=1)
 
-    # TODO: strip off outside fibers, but improve this implementation to be more explicit
+    # Remove first and last chunks (border cleanup)
     chunks = chunks[1:-1]
     xchunks = xchunks[1:-1]
-
-    # Calculate the mean flat field for each chunk
     flats = [np.mean(chunk, axis=1) for chunk in chunks]
 
-    # Initialize an array to hold the trace positions for each fiber
-    Trace = np.zeros((len(ref), len(chunks)))
-
-    # Initialize a counter and a list to store peak positions
+    Trace = np.zeros((total_fibers, len(chunks)))
     k = 0
     P = []
 
-    # Iterate over each chunk to calculate the fiber traces
     for flat, x in zip(flats, xchunks):
-        # Calculate the difference between adjacent pixels
         diff_array = flat[1:] - flat[:-1]
-
-        # Identify peaks by finding zero-crossings in the difference array
         loc = np.where((diff_array[:-1] > 0.) & (diff_array[1:] < 0.))[0]
-        loc = loc[loc > 2]  # Ignore peaks near the image edges
+        loc = loc[loc > 2]
 
-        # Filter out weak peaks
         peaks = flat[loc + 1]
         loc = loc[peaks > 0.3 * np.median(peaks)] + 1
-
-        # Store the detected peak positions
         P.append(loc)
 
-        # Get the trace positions for the detected peaks
         trace = get_trace_chunk(flat, loc)
+        T = np.zeros(total_fibers)
 
-        # Initialize an array to hold the trace for this chunk
-        T = np.zeros((len(ref)))
-
-        # If the number of detected peaks exceeds the number of good fibers, trim the excess
         if len(trace) > N1:
             trace = trace[-N1:]
 
-        # If the number of detected peaks matches the number of good fibers
         if len(trace) == N1:
             T[good] = trace
-            # Interpolate missing fibers based on nearby good fibers
-            for missing in np.where(np.isnan(ref['px']))[0]:
+            for missing in np.where(exclude_mask)[0]:
                 gind = np.argmin(np.abs(missing - good))
-                T[missing] = T[good[gind]] + ref['px'][missing] - ref['px'][good[gind]]
+                T[missing] = T[good[gind]] + trace_rows[missing] - trace_rows[good[gind]]
 
-        # If the number of detected peaks matches the total number of fibers
-        if len(trace) == len(ref):
+        if len(trace) == total_fibers:
             T = trace
 
-        # Store the calculated trace for this chunk
         Trace[:, k] = T
         k += 1
 
-    # Fit a 7th-order polynomial to smooth the traces across the x-axis
     x = np.arange(twilight.shape[1])
     trace = np.zeros((Trace.shape[0], twilight.shape[1]))
-    for i in np.arange(Trace.shape[0]):
+    for i in range(Trace.shape[0]):
         sel = Trace[i, :] != 0.
-        trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
+        if np.any(sel):
+            trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
 
-    # Return the final trace array and the good fiber mask
-    good_fiber_mask = np.isfinite(ref['px'])
+    good_fiber_mask = ~exclude_mask
     return trace, good_fiber_mask, Trace, xchunks
