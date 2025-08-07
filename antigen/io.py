@@ -9,7 +9,7 @@ from astropy.time import Time
 from antigen import config
 
 
-def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel, outfolder):
+def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_dict, outfolder):
     """
     Purpose: Writes the sky-subtracted, rectified spectra and error data to a FITS file,
     preserving the header information and adding necessary meta-information.
@@ -20,7 +20,7 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
         specrect (np.ndarray): 2D numpy array, The rectified spectrum.
         errorrect (np.ndarray): 2D numpy array, The error associated with the rectified spectrum.
         header (fits.Header): The header information to be preserved in the output FITS file.
-        channel (str): name of frequency channel, options = ['g', 'b', 'r', 'd']
+        config_dict (dict): Dictionary containing the configuration information.
         outfolder (str): existing path of directory to write the FITS file to
 
     Returns:
@@ -53,8 +53,8 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, channel,
                 del hdu.header[key]
 
         # Define your wavelength solution
-        _, CHANNEL_DEF_WAVE = config.get_channel_config_virus2()
-        def_wave = CHANNEL_DEF_WAVE[channel]
+        def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
+                               config_dict['detector_dimensions'])
         wavelength_step = def_wave[1] - def_wave[0]  # Compute wavelength step
 
         # Set WCS parameters correctly
