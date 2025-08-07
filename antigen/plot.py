@@ -78,7 +78,7 @@ def plot_trace(full_trace, chunk_trace, chunk_column, fiber_indices=[5, 130, 230
 
     colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(fiber_indices)))
     for fiber_index, color in zip(fiber_indices, colors):
-        fiber_label = order+1
+        fiber_label = fiber_index+1
         mean_trace = np.mean(full_trace[fiber_index])
         plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color='k', edgecolor='k', s=30,)
         plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color=color, edgecolor='k', s=20, alpha=0.5)
