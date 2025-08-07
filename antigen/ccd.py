@@ -99,63 +99,6 @@ def make_master_cal(filenames):
     return master_cal, master_cal_time
 
 
-def make_mastercal_list(filenames, breakind, channel):
-    """
-    Creates a list of master calibration images and corresponding times
-    by splitting the input list of filenames at given indices.
-
-    Args:
-        filenames (list(str)): List of FITS file paths containing calibration data.
-        breakind (list(int)): List of indices to split the filenames into different chunks.
-        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
-
-    Returns
-        masters (list(np.ndarray)): List of median calibration images (2D arrays) for each chunk.
-        times (list(float)): List of mean observation times (MJD floats) corresponding to each chunk.
-    """
-
-    # Define break points for splitting the filenames into chunks
-    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
-    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
-
-    masters = []  # List to store median calibration images
-    times = []    # List to store mean observation times
-
-    # Iterate over the chunks defined by breakind1 and breakind2
-    for bk1, bk2 in zip(breakind1, breakind2):
-        # Collect and preprocess frames within the current chunk
-        frames = [prep_image(fits.open(f)[0].data, channel)
-                  for cnt, f in enumerate(filenames)
-                  if ((cnt > bk1) * (cnt < bk2))]  # Only include frames in the current chunk
-
-        # Extract observation times (MJD) for frames in the current chunk
-        t = [Time(fits.open(f)[0].header['DATE-OBS']).mjd
-             for cnt, f in enumerate(filenames)
-             if ((cnt > bk1) * (cnt < bk2))]
-
-
-        # Append the median frame and the mean time for the current chunk
-        masters.append(np.nanmedian(frames, axis=0))
-        times.append(np.mean(t))
-
-    return masters, times
-
-
-def get_cal_index(mtime, time_list):
-    """
-    Finds the index of the closest calibration time to a given observation time, by
-    finding the minimized absolute time difference between mtime and all time_list elements.
-
-    Args:
-        mtime (float): The observation time (MJD float) to compare against the calibration times.
-        time_list (list(float)): A list of calibration times (MJD floats).
-
-    Returns:
-        index (int): The index of the closest calibration time in `time_list`.
-    """
-    return np.argmin(np.abs(mtime - np.array(time_list)))
-
-
 def make_mask_for_trace(image, trace, fiber_profile_mask_size=7):
     """
     Creates a boolean mask to exclude regions near the trace from further processing.
