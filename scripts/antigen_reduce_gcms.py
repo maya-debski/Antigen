@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
 import argparse
-import os
+from pathlib import Path
 import sys
 
 from antigen.cli import add_calibration_args, add_common_args
-from antigen.config import build_config_for_element
 from antigen.datasets import find_datasets
+from antigen.manifest import save_manifest
 from antigen.reduce_gcms import reduction_pipeline
 from antigen.utils import setup_logging
 
@@ -43,7 +43,7 @@ Outputs:
 Example:
     Reduce all VIRUS2 data for the night of 20250801:
 
-    $ antigen_reduce_virus2.py -i /data/virus2/raw/ -o /data/virus2/reduced/ -c 20250801
+    $ antigen_reduce_gcms.py -i /data/virus2/raw/ -o /data/virus2/reduced/ -c 20250801
 
 Notes:
     - The script logs all processing steps and reports any datasets that failed to reduce.
@@ -75,7 +75,8 @@ def main():
     logger = setup_logging('antigen', verbose=args.verbose)
     logger.info(f'Starting application...')
 
-    os.makedirs(args.out_folder, exist_ok=True)
+    save_path = Path(args.out_folder).expanduser().resolve()
+    save_path.mkdir(parents=True, exist_ok=True)
 
     dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
                                       args.bias_label, args.arc_label, args.dark_label,
@@ -84,18 +85,16 @@ def main():
     logger.info(f'Found {len(dataset_manifests)} datasets to reduce.')
 
     save_files = []
-    for manifest in dataset_manifests:
+    for nr, manifest in enumerate(dataset_manifests):
         reduction_name = manifest['reduction_name']
-        unit_id = manifest['unit_id']
-        instrument_id = manifest['instrument_id']
-        config_dict = build_config_for_element(instrument_id, unit_id)
-        logger.info(f'Processing {reduction_name} for unit={unit_id}')
-        try:
-            output_fits_filename = reduction_pipeline(manifest, args.out_folder, config_dict)
-            save_files.append(output_fits_filename)
-            logger.info(f'Processing reduction for unit = {unit_id}: PASS: wrote reduction to FITS file {output_fits_filename}')
-        except Exception as error:
-            logger.error(f'Processing reduction for unit = {unit_id}: FAILED: {error}')
+        manifest_filename = f'manifest_{args.obs_date}_{args.obs_name}_record{nr}.yml'
+        save_filepath = save_path / manifest_filename
+        save_manifest(manifest, str(save_filepath))
+        element = manifest['unit_id']
+        instrument = manifest['unit_instrument']
+        logger.info(f'Processing {reduction_name} for unit={element}')
+        output_fits_filename = reduction_pipeline(manifest, args.out_folder)
+        save_files.append(output_fits_filename)
 
     logger.info(f'Application completed: Completed reduction and FITS save for {len(save_files)} out of {len(dataset_manifests)} datasets found.')
 
