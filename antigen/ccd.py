@@ -1,20 +1,20 @@
 import numpy as np
-from astropy.io import fits
 from astropy.stats import biweight_location as biweight
 from astropy.time import Time
 
 from scipy.interpolate import LSQUnivariateSpline
-from antigen import config
+
 from antigen.io import load_fits
 
 
-def prep_image(image):
+def prep_image(image, config_dict):
     """
     Measure the bias in the overscan region, trim the overscan and subtract the bias
     Perform any flips that are necessary
 
     Args:
         image (np.ndarray): FITS 2D image data array
+        config_dict (dict): Dictionary of configuration parameters
 
     Returns:
         image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
@@ -22,9 +22,10 @@ def prep_image(image):
     # TODO: update docstring to match input args, function signature
     # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
     # Should be read by config rather than hardcoded
-    overscan_length = 32
-    flipx = True
-    flipy = False
+    overscan_length = config_dict['overscan_length']
+    flipx = config_dict['flip_x']
+    flipy = config_dict['flip_y']
+    rotate = config_dict['rotate']
 
     bias_value = biweight(image[:, -(overscan_length-2):])
     image = image[:, :-overscan_length] - bias_value
@@ -32,11 +33,13 @@ def prep_image(image):
         image = np.flip(image, axis=1)
     if flipy:
         image = np.flip(image, axis=0)
+    if rotate:
+        image = np.rot90(image)
 
     return image
 
 
-def base_reduction(data, master_bias):
+def base_reduction(data, master_bias, config_dict):
     """
     Perform basic image reduction by applying bias subtraction,
     gain correction, and calculating the error estimate.
@@ -44,7 +47,7 @@ def base_reduction(data, master_bias):
     Args:
         data (np.ndarray): 2d numpy array, Raw input image to be reduced.
         master_bias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
-        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
+        config_dict: Dictionary of configuration parameters
 
     Returns:
         image (np.ndarray): 2d numpy array, Reduced image with bias subtracted and gain applied.
@@ -53,32 +56,30 @@ def base_reduction(data, master_bias):
     # TODO: update docstring to match input args, function signature
 
     # Preprocess the raw image (e.g., background subtraction, padding)
-    image = prep_image(data)
+    image = prep_image(data, config_dict)
 
     # Subtract the master bias from the image
     image[:] -= master_bias
 
-    CHANNEL_DETECTOR, _ = config.get_channel_config_virus2()
-
     # Apply gain correction to convert counts to electrons
-    gain = CHANNEL_DETECTOR[channel]['gain']
+    gain = config_dict['gain']
     image[:] *= gain
 
     # Calculate the error estimate (read noise + photon noise)
-    rdnoise = CHANNEL_DETECTOR[channel]['rdnoise']
-    error_estimate = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
+    read_noise = config_dict['read_noise']
+    error_estimate = np.sqrt(read_noise**2 + np.where(image > 0., image, 0.))
 
     # Return the reduced image and the error estimate
     return image, error_estimate
 
 
-def make_master_cal(filenames):
+def make_master_cal(filenames, config_dict):
     """
     Load a list of calibration FITS files, apply basic CCD preprocessing, and create a master calibration frame.
 
     Args:
         filenames (list(str)): list of filenames
-
+        config_dict: Dictionary of configuration parameters
     Returns:
         master_cal (np.ndarray): median stacked calibration frame
         master_cal_time (float): average MJD of the frames that were stacked
@@ -88,7 +89,7 @@ def make_master_cal(filenames):
     frames, times = ([], [])
     for filename in filenames:
         frame, header = load_fits(filename)
-        prepped_frame = prep_image(frame)
+        prepped_frame = prep_image(frame, config_dict)
         frames.append(prepped_frame)
         mjd = Time(header['DATE-OBS']).mjd
         times.append(mjd)
