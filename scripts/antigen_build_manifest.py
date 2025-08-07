@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
-import os
+from pathlib import Path
 import sys
 
 from antigen.cli import add_calibration_args, add_common_args
@@ -72,10 +72,10 @@ def main():
 
     for nr, record in enumerate(dataset_manifests):
         manifest_filename = f'manifest_{args.obs_date}_{args.obs_name}_record{nr}.yml'
-        save_path = os.path.abspath(args.out_folder)
-        os.makedirs(save_path, exist_ok=True)
-        save_filepath = os.path.join(save_path, manifest_filename)
-        save_manifest(record, save_filepath)
+        save_path = Path(args.out_folder).expanduser().resolve()
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_filepath = save_path / manifest_filename
+        save_manifest(record, str(save_filepath))
         logger.info(f'Application completed: Wrote manifest file: {save_filepath}')
 
 

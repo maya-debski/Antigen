@@ -213,13 +213,15 @@ def process_calibration(manifest_record, output_path, config_dict):
     return master_bias_data, master_flat_data, master_arc_data, trace, good_fiber_mask, wavelength, ftf
 
 
-def reduction_pipeline(dataset_manifest, output_path):
+def reduction_pipeline(dataset_manifest, output_path, config_dict):
     """
     Purpose: data reduction pipeline to process VIRUS2 observation files
 
     Args:
         dataset_manifest (dict): dataset manifest dictionary returned from e.g. dataset.find_datasets()
         output_path (str): output file path to which this method will write a reduced FITS file
+        config_dict (dict): Dictionary of configuration parameters
+
     Returns:
         reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
     """
