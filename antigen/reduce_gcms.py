@@ -112,7 +112,7 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
     return pca, biweighted_spectrum, continuum, output_fits_filename
 
 
-def process_calibration(manifest_record, output_path):
+def process_calibration(manifest_record, output_path, config_dict):
     """
     Purpose: Process calibration files needed for data reduction for VIRUS2 observation files
 
@@ -120,6 +120,7 @@ def process_calibration(manifest_record, output_path):
         manifest_record (dict): dict returned by yaml loading full-path filename to manifest.yaml
                                 containing lists of calibration files, etc
         output_path (str): Path where reduction output files will be written
+        config_dict (dict): Dictionary of configuration parameters
 
     Returns:
         master_bias (arraylike): master bias frames for bias correction.
@@ -133,34 +134,17 @@ def process_calibration(manifest_record, output_path):
 
     os.makedirs(output_path, exist_ok=True)
 
-    CONFIG_DETECTOR, CONFIG_DEF_WAVE = config.get_channel_config_virus2()
+    def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
+                           config_dict['detector_dimensions'])
 
-    # =========================================
-    # Get def_wave and line_list for given channel
-    # TODO: implemented the other three channels, using green as a template
-    # =========================================
-    unit_id = manifest_record['unit_id']
-    channel = unit_id[-1].lower()  # for VIRUS2, the unit is 'D3G', so 'D3G'[-1] returns 'G'
-
-    line_list = None
-    limit = None
-    def_wave = None
-
-    if channel == 'b':
-        def_wave = CONFIG_DEF_WAVE[channel]
-    if channel == 'g':
-        def_wave = CONFIG_DEF_WAVE[channel]
-        line_list_filepath = config.get_config_filepath('virus2', f'{unit_id}', 'virus2_lines_green.txt')
-        line_list = Table.read(line_list_filepath, format="ascii")
-        limit = CONFIG_DETECTOR[channel]['limit']
-    if channel == 'r':
-        def_wave = CONFIG_DEF_WAVE[channel]
-    if channel == 'd':
-        def_wave = CONFIG_DEF_WAVE[channel]
-
-    lines = np.array(line_list['wavelength'])
-    xref = np.array(line_list['col'])
+    lines = config_dict['wavelength']
+    xref = config_dict['column']
+    limit = config_dict['limit']
     use_kernel = True
+    #TODO: Decide how to do the VIRUS2 ifucen file
+    trace_rows = config_dict['trace_row']
+    exclude_fiber = config_dict['exclude_fiber']
+    #ref.reverse()
 
     # =============================================================================
     # Make a master bias, master dome flat, and master arc for the first set of OBS
@@ -172,29 +156,21 @@ def process_calibration(manifest_record, output_path):
     arc_filenames = manifest_record['calibration_files']['arc']
 
     logger.info('Making master bias frames')
-    master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames, channel)
+    master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames)
 
     logger.info('Making master flat frames')
-    master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames, channel)
+    master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames)
 
     logger.info('Making master arc frames')
-    master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames, channel)
-
-    # =============================================================================
-    # Load reference fiber locations from a predefined file
-    # =============================================================================
-
-    ifu_cen_filepath = config.get_config_filepath('virus2', f'{unit_id}', f'virus2_ifucen_{unit_id}.txt')
-    ifu_cen_file_data = Table.read(ifu_cen_filepath, format="ascii")
-    ref = ifu_cen_file_data
-    ref.reverse()
+    master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames)
 
     # =============================================================================
     # Get trace from the dome flat
     # =============================================================================
     logger.info('Getting trace for each master flat')
 
-    trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data, ref)
+    trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data,
+                                                             trace_rows, exclude_fiber)
     _, _ = plot.plot_trace(trace, Tchunk, xchunk, outfolder=output_path)
 
     domeflat_spec = fiber.get_spectra(master_flat_data - master_bias_data, trace)
@@ -247,15 +223,19 @@ def reduction_pipeline(dataset_manifest, output_path):
     Returns:
         reduction_filename (str): full-path filename of FITS file written herein, containing obs file data reduction
     """
+    # TODO: config file naming conventions are lower case instrument and upper case element.
+    config_dict = config.build_config_for_element(dataset_manifest['unit_instrument'].lower(),
+                                                  dataset_manifest['unit_id'].upper())
 
     # TODO: replace tuple unpack with a more intentional data structure, e.g. dict, namedtuple, data-class, etc
     logger.info(f'Processing calibration for reduction.')
-    calibration_tuple = process_calibration(dataset_manifest, output_path)
+    calibration_tuple = process_calibration(dataset_manifest, output_path, config_dict)
     (master_bias_data,
      master_flat_data,
      master_arc_data,
      trace, good_fiber_mask,
      wavelength, ftf) = calibration_tuple
+
 
     arc_file = dataset_manifest['calibration_files']['arc'][0]
     channel = dataset_manifest['unit_id'][-1].lower()
