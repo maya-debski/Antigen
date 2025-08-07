@@ -10,7 +10,9 @@ sample_fiber_indices:
   - 230
 start_wavelength: 4730
 end_wavelength: 6940
-detector_dimensions: 2048 # 2048x2048, if binned, 1024x2048
+detector_dimensions:
+  X: 1024 # X
+  Y: 2048 # Y
 arc_flux_limit: 100
 telescope_diameter: 2.72
 overscan_length: 32
