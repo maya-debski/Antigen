@@ -23,18 +23,26 @@ def prep_image(image, config_dict):
     # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
     # Should be read by config rather than hardcoded
     overscan_length = config_dict['overscan_length']
-    flipx = config_dict['flip_x']
-    flipy = config_dict['flip_y']
+    flip_x = config_dict['flip_x']
+    flip_y = config_dict['flip_y']
     rotate = config_dict['rotate']
+    add_rows = config_dict['add_rows']
 
     bias_value = biweight(image[:, -(overscan_length-2):])
     image = image[:, :-overscan_length] - bias_value
-    if flipx:
+    if flip_x:
         image = np.flip(image, axis=1)
-    if flipy:
+    if flip_y:
         image = np.flip(image, axis=0)
     if rotate:
         image = np.rot90(image)
+    if add_rows:
+        # Initialize a new image array with additional rows for padding
+        new_image = np.zeros((len(image) + add_rows, image.shape[1]))
+
+        # Copy the processed image into the new array, leaving the top rows as padding
+        new_image[add_rows:, :] = image
+        image = new_image
 
     return image
 
