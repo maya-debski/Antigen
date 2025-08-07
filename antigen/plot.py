@@ -54,7 +54,7 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     return None
 
 
-def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outfolder=None, ylims=(-10,10)):
+def plot_trace(full_trace, chunk_trace, chunk_column, fiber_index=[5, 130, 230], outfolder=None, ylims=(-10,10)):
     """
     Purpose: Plots the residuals of the trace correction and saves the figure.
 
@@ -62,7 +62,7 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
         full_trace (np.ndarray): 2D ndarray, The array of trace correction residuals to be plotted.
         chunk_trace (np.ndarray?): undocumented
         chunk_column (np.ndarray?) undocumented
-        orders (list): 'orders' of what? fibers? undocumented
+        fiber_index (list): fiber indices to investigate the trace
         outfolder (str): directory to save PNG file
 
     Returns:
@@ -76,13 +76,13 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
     plt.figure(figsize=(8, 7))
     fig = plt.gcf()  # Get Current Figure
 
-    colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(orders)))
-    for order, color in zip(orders, colors):
+    colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(fiber_index)))
+    for fiber_index, color in zip(fiber_index, colors):
         fiber_label = order+1
-        mean_trace = np.mean(full_trace[order])
-        plt.scatter(chunk_column, chunk_trace[order] - mean_trace, color='k', edgecolor='k', s=30,)
-        plt.scatter(chunk_column, chunk_trace[order] - mean_trace, color=color, edgecolor='k', s=20, alpha=0.5)
-        plt.plot(full_trace_X, full_trace[order] - mean_trace, color=color, lw=1, label=f'Fiber: {fiber_label}')
+        mean_trace = np.mean(full_trace[fiber_index])
+        plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color='k', edgecolor='k', s=30,)
+        plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color=color, edgecolor='k', s=20, alpha=0.5)
+        plt.plot(full_trace_X, full_trace[fiber_index] - mean_trace, color=color, lw=1, label=f'Fiber: {fiber_label}')
 
     plt.legend()
 
