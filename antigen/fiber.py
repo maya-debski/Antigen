@@ -1,12 +1,9 @@
 import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
-from astropy.io import fits
 from astropy.stats import sigma_clip, mad_std, biweight_location as biweight
 import logging
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
-
-from antigen import config
 
 logger = logging.getLogger('antigen.fiber')
 
@@ -327,22 +324,8 @@ def _get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
     loc = loc[peaks > limit] + 1
     peaks = y1[loc]
 
-    # Helper function to refine peak positions using quadratic interpolation
-    def get_trace_chunk(flat, XN):
-        YM = np.arange(flat.shape[0])
-        inds = np.zeros((3, len(XN)))
-        inds[0] = XN - 1
-        inds[1] = XN
-        inds[2] = XN + 1
-        inds = inds.astype(int)
-
-        # Quadratic interpolation to refine peak positions
-        Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
-                 (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
-        return Trace
-
     # Refine peak positions using quadratic interpolation
-    loc = get_trace_chunk(y1, loc)
+    loc = _get_peak_positions(y1, loc)
 
     # Match refined peak positions with initial guess locations, if provided
     if init_loc is not None:
@@ -565,88 +548,233 @@ def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
     return spec
 
 
-def get_trace(twilight, trace_rows, exclude_fibers):
+def _get_peak_positions(column_profile, peak_x_positions):
     """
-    Extract fiber traces from a twilight flat field image.
+    Refine the vertical (y) positions of fiber peaks using a 3-point quadratic interpolation.
 
     Args:
-        twilight (np.ndarray): 2D array representing the twilight flat field image used to determine fiber locations.
-        trace_rows (np.ndarray): 1D array of nominal y-positions for each fiber's trace in pixels.
-        exclude_fibers (np.ndarray):  array float specifying fibers to exclude.
+        column_profile (np.ndarray): 1D array representing a collapsed spatial profile (e.g., mean over chunk).
+        peak_x_positions (np.ndarray): Approximate x-positions of detected peaks in the profile.
 
     Returns:
-        trace (np.ndarray): 2D array of the calculated trace positions for each fiber across the image.
-        good_fiber_mask (np.ndarray): 1D boolean array indicating which fibers are valid (not excluded).
-        Trace (np.ndarray): Intermediate 2D array of trace positions before polynomial smoothing.
-        xchunks (np.ndarray): 1D array of x-axis chunk centers used during trace extraction.
+        refined_peaks (np.ndarray): Subpixel-accurate y-positions of fiber peaks.
     """
+    y_range = np.arange(column_profile.shape[0])
+    offsets = np.array([
+        peak_x_positions - 1,
+        peak_x_positions,
+        peak_x_positions + 1
+    ], dtype=int)
 
-    total_fibers = len(trace_rows)
+    # Remove any positions that fall out of bounds
+    valid = (offsets >= 0) & (offsets < column_profile.shape[0])
+    valid = valid.all(axis=0)
+    offsets = offsets[:, valid]
 
-    exclude_mask = np.array(exclude_fibers, dtype=bool)
+    refined_peaks = y_range[offsets[1]] - (
+        (column_profile[offsets[2]] - column_profile[offsets[0]]) /
+        (2. * (column_profile[offsets[2]] - 2. * column_profile[offsets[1]] + column_profile[offsets[0]]))
+    )
+    return refined_peaks
 
-    good = np.where(~exclude_mask)[0]
-    N1 = len(good)
 
-    def get_trace_chunk(flat, XN):
-        YM = np.arange(flat.shape[0])
-        inds = np.zeros((3, len(XN)))
-        inds[0] = XN - 1.
-        inds[1] = XN + 0.
-        inds[2] = XN + 1.
-        inds = np.array(inds, dtype=int)
-        Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
-                 (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
-        return Trace
+def _estimate_offset(nominal, detected, max_sep=3.0, offset_range=(-5, 5)):
+    """
+    Estimate a global vertical offset between nominal and detected peak positions.
 
-    image = twilight
-    N = 80
-    xchunks = np.array([np.mean(x)
-                        for x in np.array_split(np.arange(image.shape[1]), N)])
-    chunks = np.array_split(image, N, axis=1)
+    This function tests a range of integer offsets and selects the one that
+    maximizes the number of nominal positions with a nearby detected peak.
 
-    # Remove first and last chunks (border cleanup)
-    chunks = chunks[1:-1]
-    xchunks = xchunks[1:-1]
-    flats = [np.mean(chunk, axis=1) for chunk in chunks]
+    Args:
+        nominal (np.ndarray): 1D array of expected fiber y-positions.
+        detected (np.ndarray): 1D array of detected peak y-positions.
+        max_sep (float): Maximum allowed distance (in pixels) for a peak to be considered a match.
+        offset_range (tuple): Tuple of (min_offset, max_offset) to search (inclusive of min, exclusive of max).
 
-    Trace = np.zeros((total_fibers, len(chunks)))
-    k = 0
-    P = []
+    Returns:
+        best_offset (float): The offset (in pixels) that gives the best alignment between nominal and detected positions.
+    """
+    best_score = -np.inf
+    best_offset = 0
+    test_range = np.arange(offset_range[0], offset_range[1]+0.5, 0.5)
 
-    for flat, x in zip(flats, xchunks):
-        diff_array = flat[1:] - flat[:-1]
-        loc = np.where((diff_array[:-1] > 0.) & (diff_array[1:] < 0.))[0]
-        loc = loc[loc > 2]
+    for offset in test_range:
+        shifted_nominal = nominal + offset
+        score = 0
+        for y in shifted_nominal:
+            diffs = np.abs(detected - y)
+            close_diffs = diffs[diffs <= max_sep]
+            if len(close_diffs) > 0:
+                score += 1 - (np.min(close_diffs) / max_sep)  # weighted score
+        if score > best_score:
+            best_score = score
+            best_offset = offset
 
-        peaks = flat[loc + 1]
-        loc = loc[peaks > 0.3 * np.median(peaks)] + 1
-        P.append(loc)
+    return best_offset
 
-        trace = get_trace_chunk(flat, loc)
-        T = np.zeros(total_fibers)
+def _match_peaks_to_nominal(nominal, detected, offset, max_sep=3.0):
+    """
+    Match detected peaks to nominal positions using a global offset and nearest-neighbor search.
 
-        if len(trace) > N1:
-            trace = trace[-N1:]
+    Each nominal position is shifted by the given offset, and then the nearest
+    unmatched detected peak within max_sep is assigned to that nominal fiber.
 
-        if len(trace) == N1:
-            T[good] = trace
-            for missing in np.where(exclude_mask)[0]:
-                gind = np.argmin(np.abs(missing - good))
-                T[missing] = T[good[gind]] + trace_rows[missing] - trace_rows[good[gind]]
+    Args:
+        nominal (np.ndarray): 1D array of expected fiber y-positions.
+        detected (np.ndarray): 1D array of detected peak y-positions.
+        offset (float): Global vertical offset to apply to nominal positions before matching.
+        max_sep (float): Maximum allowed distance (in pixels) to consider a peak a valid match.
 
-        if len(trace) == total_fibers:
-            T = trace
+    Returns:
+        matches (np.ndarray): Array of matched peak positions (same shape as nominal), with np.nan for unmatched fibers.
+    """
+    corrected_nominal = nominal + offset
+    matches = np.full_like(nominal, fill_value=np.nan, dtype=np.float64)
+    used = set()
 
-        Trace[:, k] = T
-        k += 1
+    for i, nom_y in enumerate(corrected_nominal):
+        diffs = np.abs(detected - nom_y)
+        candidates = [j for j in np.argsort(diffs) if diffs[j] <= max_sep and j not in used]
+        if candidates:
+            j = candidates[0]
+            matches[i] = detected[j]
+            used.add(j)
+    return matches
 
-    x = np.arange(twilight.shape[1])
-    trace = np.zeros((Trace.shape[0], twilight.shape[1]))
-    for i in range(Trace.shape[0]):
-        sel = Trace[i, :] != 0.
-        if np.any(sel):
-            trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
+def _evaluate_trace_chunk(flat_column, x_center, chunk_index, nominal_positions, good_fiber_indices, exclude_fiber_mask,
+                          total_fibers, max_sep=3.0):
+    """
+    Process a single image chunk: detect peaks, estimate offset, match to nominal,
+    and extrapolate excluded fiber positions.
 
-    good_fiber_mask = ~exclude_mask
-    return trace, good_fiber_mask, Trace, xchunks
+    Args:
+        flat_column (np.ndarray): 1D median profile of the current chunk.
+        x_center (float): X position (center) of this chunk.
+        chunk_index (int): Index of the chunk.
+        nominal_positions (np.ndarray): Expected positions for each fiber.
+        good_fiber_indices (np.ndarray): Indices of fibers not excluded.
+        exclude_fiber_mask (np.ndarray): Boolean mask for excluded fibers.
+        total_fibers (int): Total number of fibers.
+        max_sep (float): Maximum matching distance.
+
+    Returns:
+        fiber_trace: 1D array of matched/refined fiber positions (length = total_fibers).
+    """
+    logger.debug(f"Processing chunk {chunk_index+1} at x={x_center:.1f}")
+
+    diff = np.diff(flat_column)
+    peak_indices = np.where((diff[:-1] > 0) & (diff[1:] < 0))[0]
+    peak_indices = peak_indices[peak_indices > 2]
+
+    if len(peak_indices) == 0:
+        logger.warning(f"No initial peaks found at chunk {x_center:.1f}")
+        return np.zeros(total_fibers)
+
+    peak_values = flat_column[peak_indices + 1]
+    strong_peaks = peak_indices[peak_values > 0.3 * np.median(peak_values)] + 1
+
+    if len(strong_peaks) == 0:
+        logger.warning(f"No strong peaks found at chunk {x_center:.1f}")
+        return np.zeros(total_fibers)
+
+    refined_peaks = _get_peak_positions(flat_column, strong_peaks)
+    nominal_good = nominal_positions[good_fiber_indices]
+
+    offset = _estimate_offset(nominal_good, refined_peaks, max_sep=max_sep)
+    matched_peaks = _match_peaks_to_nominal(nominal_good, refined_peaks, offset, max_sep=max_sep)
+
+    fiber_trace = np.zeros(total_fibers)
+    fiber_trace[good_fiber_indices] = np.where(np.isnan(matched_peaks), 0.0, matched_peaks)
+
+    for excluded_idx in np.where(exclude_fiber_mask)[0]:
+        nearest_good = np.argmin(np.abs(excluded_idx - good_fiber_indices))
+        ref_idx = good_fiber_indices[nearest_good]
+        if fiber_trace[ref_idx] != 0.0:
+            fiber_trace[excluded_idx] = (
+                fiber_trace[ref_idx] +
+                nominal_positions[excluded_idx] -
+                nominal_positions[ref_idx]
+            )
+
+    return fiber_trace
+
+
+def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunks=80):
+    """
+    Extract smoothed fiber traces from a twilight flat field image.
+
+    Args:
+        flat_image (np.ndarray): 2D array representing the flat field image.
+        nominal_trace_positions (np.ndarray): 1D array of expected y-positions for each fiber.
+        exclude_fiber_mask (np.ndarray): 1D boolean array marking fibers to exclude from tracing.
+        num_chunks (int): Number of chunks to bin image in dispersion direction
+
+    Returns:
+        trace_array (np.ndarray): 2D array (fibers × x-pixels) of smoothed fiber traces.
+        good_fiber_mask (np.ndarray): 1D boolean array indicating usable fibers.
+        raw_trace_matrix (np.ndarray): 2D array (fibers × chunks) of raw trace positions.
+        x_chunk_centers (np.ndarray): 1D array of x-axis chunk centers used for trace extraction.
+    """
+    total_fibers = len(nominal_trace_positions)
+    good_fiber_indices = np.where(~exclude_fiber_mask)[0]
+    nominal_good = nominal_trace_positions[good_fiber_indices]
+
+    logger.info("Beginning fiber trace extraction")
+    image = flat_image
+
+    chunk_indices = np.array_split(np.arange(image.shape[1]), num_chunks)
+    x_chunk_centers = np.array([np.mean(chunk) for chunk in chunk_indices])
+    chunked_image = np.array_split(image, num_chunks, axis=1)
+
+    # Discard edges to avoid poor flat data
+    chunked_image = chunked_image[1:-1]
+    x_chunk_centers = x_chunk_centers[1:-1]
+
+    flattened_chunks = [np.median(chunk, axis=1) for chunk in chunked_image]
+    raw_trace_matrix = np.zeros((total_fibers, len(flattened_chunks)))
+
+    center_idx = len(flattened_chunks) // 2
+    center_column = flattened_chunks[center_idx]
+    x_center = x_chunk_centers[center_idx]
+
+    # Use nominal positions as-is
+    center_trace = _evaluate_trace_chunk(center_column, x_center, center_idx, nominal_trace_positions,
+                                         good_fiber_indices,  exclude_fiber_mask, total_fibers)
+    raw_trace_matrix[:, center_idx] = center_trace
+
+    # Estimate global offset once using center
+
+    for direction in [+1, -1]:
+        for step in range(1, len(flattened_chunks)):
+            k = center_idx + direction * step
+            if not (0 <= k < len(flattened_chunks)):
+                continue
+
+            flat_column = flattened_chunks[k]
+            x_center = x_chunk_centers[k]
+
+            nominal_estimate = raw_trace_matrix[:, k - direction]
+
+            trace = _evaluate_trace_chunk(flat_column, x_center, k, nominal_estimate, good_fiber_indices,
+                                          exclude_fiber_mask, total_fibers)
+
+            offset = np.nanmedian(trace - nominal_estimate)
+            logger.info(f"Offset for chunk {k+1} is {offset:.2f}")
+            raw_trace_matrix[:, k] = trace
+
+
+    logger.info("Smoothing fiber traces with 7th-order polynomial")
+    trace_array = np.zeros((total_fibers, image.shape[1]))
+    x_full = np.arange(image.shape[1])
+
+    for fiber_index in range(total_fibers):
+        valid = raw_trace_matrix[fiber_index] != 0.0
+        if np.any(valid):
+            poly_coeffs = np.polyfit(x_chunk_centers[valid], raw_trace_matrix[fiber_index, valid], deg=7)
+            trace_array[fiber_index] = np.polyval(poly_coeffs, x_full)
+        else:
+            logger.debug(f"Fiber {fiber_index} has no valid trace values.")
+
+    good_fiber_mask = ~exclude_fiber_mask
+    logger.info("Trace extraction complete")
+    return trace_array, good_fiber_mask, raw_trace_matrix, x_chunk_centers
