@@ -2,11 +2,13 @@ import numpy as np
 from astropy.convolution import Gaussian1DKernel, convolve
 from astropy.io import fits
 from astropy.stats import sigma_clip, mad_std, biweight_location as biweight
+import logging
 from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
 
 from antigen import config
 
+logger = logging.getLogger('antigen.fiber')
 
 def identify_sky_pixels(sky, per=50, size=50):
     """
@@ -120,95 +122,182 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
-def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=130):
+def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, arc_wavelengths,
+                   use_kernel=True, peak_threshold=100, reference_fiber_index=130):
     """
     Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
 
     Args:
-        spectrum (ndarray): 2D array of spectra, each row corresponding to a fiber.
-        trace (ndarray): 2D array with trace positions for each fiber.
-        good (ndarray): Boolean array indicating which fibers have valid data.
-        xref (ndarray): Reference column for each arc line
-        lines (ndarray): arc line wavelengths
-        use_kernel (bool): Whether to apply kernel smoothing when identifying arc lines. Default is True.
-        limit (float): Limit on how far to search for matching arc lines. Default is 100.
-        fiberref (int): default = 130
+        spectra (ndarray): 2D array of flux values; each row is a fiber spectrum.
+        trace_positions (ndarray): 2D array with trace column positions for each fiber.
+        valid_fibers (ndarray): Boolean array indicating which fibers have valid data.
+        arc_pixel_guesses (ndarray): Initial pixel location guesses for each arc line.
+        arc_wavelengths (ndarray): Known wavelengths of arc lines.
+        use_kernel (bool): Whether to apply kernel smoothing when detecting peaks. Default is True.
+        peak_threshold (float): Minimum peak height to be considered a valid arc line. Default is 100.
+        reference_fiber_index (int): Index of the fiber used as the starting point. Default is 130.
 
     Returns:
-        wavelength (ndarray): Wavelength solution for each fiber.
-        res (ndarray): Residuals from the biweight mean calculation.
-        X (ndarray): Adjusted positions in trace space for arc lines.
-        W (ndarray): Arc line positions for each fiber.
+        wavelength_solution (ndarray): Wavelength array for each fiber.
+        residuals (ndarray): Residuals from trace fitting per line.
+        fitted_trace_positions (ndarray): Smoothed trace-space positions of arc lines.
+        arc_pixel_locations (ndarray): Raw arc line pixel positions per fiber.
     """
+    logger.info("Starting wavelength solution fit for %d out of %d fibers",
+                valid_fibers.sum(), spectra.shape[0])
 
-    # Initialize wavelength array and starting fiber position
-    init_fiber = fiberref
-    wavelength = np.zeros_like(spectrum)
-    loc = xref.copy()
+    dispersion_axis = np.arange(trace_positions.shape[1])
 
-    # W will store arc line positions for each fiber
-    W = np.zeros((trace.shape[0], len(lines)))
-    mask, cont = identify_sky_pixels(spectrum[init_fiber], per=5)  # Identify sky lines
-    y = spectrum[init_fiber] - cont  # Subtract continuum
-    W[init_fiber] = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
+    arc_pixel_locations = _compute_arc_positions(
+        spectra, trace_positions, valid_fibers, reference_fiber_index,
+        arc_pixel_guesses, arc_wavelengths, use_kernel, peak_threshold
+    )
 
-    # Process fibers before the reference fiber in reverse order
-    for i in np.arange(init_fiber)[::-1]:
-        mask, cont = identify_sky_pixels(spectrum[i], per=5)  # Identify sky lines
-        y = spectrum[i] - cont  # Subtract continuum
-        if good[i]:  # Only process if the fiber is marked as good
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                     use_kernel=use_kernel)
-            W[i] = loc
+    fitted_arc_line_positions, residuals = _fit_arc_line_positions(
+        arc_pixel_locations, trace_positions, valid_fibers
+    )
 
-    # Reset location and process fibers after the reference fiber
-    loc = xref.copy()
-    for i in np.arange(init_fiber + 1, spectrum.shape[0]):
-        mask, cont = identify_sky_pixels(spectrum[i])
-        y = spectrum[i] - cont
-        if good[i]:
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                     use_kernel=use_kernel)
-            W[i] = loc
+    wavelength_solution = _fit_wavelength_polynomials(
+        fitted_arc_line_positions, arc_pixel_locations, arc_wavelengths,
+        valid_fibers, dispersion_axis
+    )
 
-    # Initialize X (adjusted trace positions) and residuals array
-    X = np.zeros_like(W)
-    xall = np.arange(trace.shape[1])
-    res = np.zeros(W.shape[1])
+    num_good_lines = np.sum(residuals < 0.2)
+    logger.info("Wavelength calibration complete using %d out of %d arc lines",
+                num_good_lines, len(residuals))
 
-    # Interpolate missing values and fit polynomial to each arc line
-    for i in range(W.shape[1]):
-        x = np.zeros(W.shape[0])
-        bad = np.where(~good)[0]
-        gind = np.where(good)[0]
-
-        # Fill in missing arc line positions for bad fibers
-        for b in bad:
-            W[b, i] = W[gind[np.argmin(np.abs(b - gind))], i]
-
-        # Interpolate positions in trace space
-        for j in range(W.shape[0]):
-            x[j] = np.interp(W[j, i], xall, trace[j])
-
-        # Fit a 4th-order polynomial to arc line positions
-        sel = (W[:, i] > 0) * np.isfinite(x)
-
-        X[:, i] = np.polyval(np.polyfit(x[sel], W[sel, i], 4), x)
-
-        # Compute residuals using biweight mean
-        res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
-
-    goodlines = res < 0.2
-    # Compute final wavelength solution for each fiber
-    for j in range(W.shape[0]):
-        if good[j]:
-            wavelength[j] = np.polyval(np.polyfit(X[j][goodlines],
-                                                  lines[goodlines], 5), xall)
-
-    return wavelength, res, X, W
+    return wavelength_solution, residuals, fitted_arc_line_positions, arc_pixel_locations
 
 
-def get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
+def _compute_arc_positions(spectra, trace_positions, valid_fibers, reference_index,
+                            arc_pixel_guesses, arc_wavelengths, use_kernel, peak_threshold):
+    """
+    Detects arc line pixel positions for each fiber, starting from a reference and spreading out.
+
+    Args:
+        spectra (ndarray): 2D array of flux values; each row is a fiber spectrum.
+        trace_positions (ndarray): 2D array with trace column positions for each fiber.
+        valid_fibers (ndarray): Boolean array indicating which fibers have valid data.
+        reference_index (int): Index of the fiber used as the starting point. Default is 130.
+        arc_pixel_guesses (ndarray): Initial pixel location guesses for each arc line.
+        arc_wavelengths (ndarray): Known wavelengths of arc lines.
+        use_kernel (bool): Whether to apply kernel smoothing when detecting peaks. Default is True.
+        peak_threshold (float): Minimum peak height to be considered a valid arc line. Default is 100.
+
+    Returns:
+        arc_pixels (ndarray): Pixel locations of arc lines for each fiber.
+    """
+    num_fibers = spectra.shape[0]
+    num_lines = len(arc_wavelengths)
+    arc_pixels = np.zeros((num_fibers, num_lines))
+
+    logger.debug("Starting arc line detection from reference fiber %d", reference_index)
+    ref_flux = spectra[reference_index]
+    _, continuum = identify_sky_pixels(ref_flux, per=5)
+    ref_flux_corrected = ref_flux - continuum
+    arc_pixels[reference_index] = _get_arclines_fiber(ref_flux_corrected, arc_pixel_guesses,
+                                                     limit=peak_threshold, use_kernel=use_kernel)
+
+    # Backward pass
+    last_fit = arc_pixel_guesses.copy()
+    for i in range(reference_index - 1, -1, -1):
+        if not valid_fibers[i]:
+            continue
+        _, cont = identify_sky_pixels(spectra[i], per=5)
+        flux_corrected = spectra[i] - cont
+        last_fit = _get_arclines_fiber(flux_corrected, last_fit,
+                                      limit=peak_threshold, use_kernel=use_kernel)
+        arc_pixels[i] = last_fit
+        logger.debug("Backward fiber %d fitted", i)
+
+    # Forward pass
+    last_fit = arc_pixel_guesses.copy()
+    for i in range(reference_index + 1, num_fibers):
+        if not valid_fibers[i]:
+            continue
+        _, cont = identify_sky_pixels(spectra[i])
+        flux_corrected = spectra[i] - cont
+        last_fit = _get_arclines_fiber(flux_corrected, last_fit,
+                                      limit=peak_threshold, use_kernel=use_kernel)
+        arc_pixels[i] = last_fit
+        logger.debug("Forward fiber %d fitted", i)
+
+    return arc_pixels
+
+
+def _fit_arc_line_positions(arc_pixels, trace_positions, valid_fibers):
+    """
+    Fits 4th-order polynomials across fibers to model trace-space location of each arc line.
+
+    Returns:
+        fitted_arc_positions (ndarray): Fitted pixel locations per fiber and arc line.
+        residuals (ndarray): MAD standard deviation of fit errors for each arc line.
+    """
+    num_fibers, num_lines = arc_pixels.shape
+    dispersion_axis = np.arange(trace_positions.shape[1])
+    fitted_arc_positions = np.zeros_like(arc_pixels)
+    residuals = np.zeros(num_lines)
+
+    logger.debug("Fitting arc lines across trace positions")
+
+    for line_idx in range(num_lines):
+        interpolated_x = np.zeros(num_fibers)
+
+        # Fill bad fiber positions using nearest good fiber
+        bad_indices = np.where(~valid_fibers)[0]
+        good_indices = np.where(valid_fibers)[0]
+        for b in bad_indices:
+            arc_pixels[b, line_idx] = arc_pixels[
+                good_indices[np.argmin(np.abs(b - good_indices))], line_idx
+            ]
+
+        # Interpolate each fiber’s trace-space position
+        for fiber_idx in range(num_fibers):
+            interpolated_x[fiber_idx] = np.interp(
+                arc_pixels[fiber_idx, line_idx], dispersion_axis, trace_positions[fiber_idx]
+            )
+
+        valid = (arc_pixels[:, line_idx] > 0) & np.isfinite(interpolated_x)
+        if np.sum(valid) < 5:
+            logger.warning("Too few valid points to fit arc line %d", line_idx)
+            continue
+
+        poly_coeff = np.polyfit(interpolated_x[valid], arc_pixels[valid, line_idx], 4)
+        fitted_arc_positions[:, line_idx] = np.polyval(poly_coeff, interpolated_x)
+        residuals[line_idx] = mad_std(fitted_arc_positions[:, line_idx] - arc_pixels[:, line_idx],
+                                      ignore_nan=True)
+
+    return fitted_arc_positions, residuals
+
+
+def _fit_wavelength_polynomials(fitted_trace_positions, arc_pixels, arc_wavelengths,
+                                valid_fibers, dispersion_axis):
+    """
+    Computes final wavelength solution by fitting 5th-order polynomials per fiber.
+
+    Returns:
+        wavelength_solution (ndarray): 2D wavelength array per fiber.
+    """
+    num_fibers = fitted_trace_positions.shape[0]
+    residuals = mad_std(fitted_trace_positions - arc_pixels, axis=0, ignore_nan=True)
+    good_arc_lines = residuals < 0.2
+
+    if np.sum(good_arc_lines) < 3:
+        logger.warning("Fewer than 3 good arc lines detected — wavelength fit may be unstable.")
+
+    wavelength_solution = np.zeros((num_fibers, len(dispersion_axis)))
+
+    for fiber_idx in range(num_fibers):
+        if not valid_fibers[fiber_idx]:
+            continue
+        coeffs = np.polyfit(fitted_trace_positions[fiber_idx][good_arc_lines],
+                            arc_wavelengths[good_arc_lines], 5)
+        wavelength_solution[fiber_idx] = np.polyval(coeffs, dispersion_axis)
+
+    return wavelength_solution
+
+
+def _get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
     """
     Identifies arc line positions in a given spectrum by detecting peaks.
 
@@ -263,7 +352,6 @@ def get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
         loc = final_loc
 
     return loc
-
 
 def get_spectra(array_flt, array_trace, npix=5):
     """
