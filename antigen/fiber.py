@@ -145,19 +145,13 @@ def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, ar
 
     dispersion_axis = np.arange(trace_positions.shape[1])
 
-    arc_pixel_locations = _compute_arc_positions(
-        spectra, trace_positions, valid_fibers, reference_fiber_index,
-        arc_pixel_guesses, arc_wavelengths, use_kernel, peak_threshold
-    )
+    arc_pixel_locations = _compute_arc_positions(spectra, valid_fibers, reference_fiber_index, arc_pixel_guesses,
+                                                 arc_wavelengths, use_kernel, peak_threshold)
 
-    fitted_arc_line_positions, residuals = _fit_arc_line_positions(
-        arc_pixel_locations, trace_positions, valid_fibers
-    )
+    fitted_arc_line_positions, residuals = _fit_arc_line_positions(arc_pixel_locations, trace_positions, valid_fibers)
 
-    wavelength_solution = _fit_wavelength_polynomials(
-        fitted_arc_line_positions, arc_pixel_locations, arc_wavelengths,
-        valid_fibers, dispersion_axis
-    )
+    wavelength_solution = _fit_wavelength_polynomials(fitted_arc_line_positions, arc_pixel_locations, arc_wavelengths,
+                                                      valid_fibers, dispersion_axis)
 
     num_good_lines = np.sum(residuals < 0.2)
     logger.info("Wavelength calibration complete using %d out of %d arc lines",
@@ -166,14 +160,13 @@ def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, ar
     return wavelength_solution, residuals, fitted_arc_line_positions, arc_pixel_locations
 
 
-def _compute_arc_positions(spectra, trace_positions, valid_fibers, reference_index,
+def _compute_arc_positions(spectra, valid_fibers, reference_index,
                             arc_pixel_guesses, arc_wavelengths, use_kernel, peak_threshold):
     """
     Detects arc line pixel positions for each fiber, starting from a reference and spreading out.
 
     Args:
         spectra (ndarray): 2D array of flux values; each row is a fiber spectrum.
-        trace_positions (ndarray): 2D array with trace column positions for each fiber.
         valid_fibers (ndarray): Boolean array indicating which fibers have valid data.
         reference_index (int): Index of the fiber used as the starting point. Default is 130.
         arc_pixel_guesses (ndarray): Initial pixel location guesses for each arc line.
@@ -195,29 +188,19 @@ def _compute_arc_positions(spectra, trace_positions, valid_fibers, reference_ind
     arc_pixels[reference_index] = _get_arclines_fiber(ref_flux_corrected, arc_pixel_guesses,
                                                      limit=peak_threshold, use_kernel=use_kernel)
 
-    # Backward pass
-    last_fit = arc_pixel_guesses.copy()
-    for i in range(reference_index - 1, -1, -1):
-        if not valid_fibers[i]:
-            continue
-        _, cont = identify_sky_pixels(spectra[i], per=5)
-        flux_corrected = spectra[i] - cont
-        last_fit = _get_arclines_fiber(flux_corrected, last_fit,
-                                      limit=peak_threshold, use_kernel=use_kernel)
-        arc_pixels[i] = last_fit
-        logger.debug("Backward fiber %d fitted", i)
-
-    # Forward pass
-    last_fit = arc_pixel_guesses.copy()
-    for i in range(reference_index + 1, num_fibers):
-        if not valid_fibers[i]:
-            continue
-        _, cont = identify_sky_pixels(spectra[i])
-        flux_corrected = spectra[i] - cont
-        last_fit = _get_arclines_fiber(flux_corrected, last_fit,
-                                      limit=peak_threshold, use_kernel=use_kernel)
-        arc_pixels[i] = last_fit
-        logger.debug("Forward fiber %d fitted", i)
+    for direction in [+1, -1]:
+        for step in range(1, num_fibers):
+            i = reference_index + direction * step
+            if not (0 <= i <num_fibers):
+                continue
+            if not valid_fibers[i]:
+                continue
+            _, cont = identify_sky_pixels(spectra[i], per=5)
+            flux_corrected = spectra[i] - cont
+            last_fit = arc_pixels[i - direction]
+            fitted_result = _get_arclines_fiber(flux_corrected, last_fit,
+                                           limit=peak_threshold, use_kernel=use_kernel)
+            arc_pixels[i] = fitted_result
 
     return arc_pixels
 
@@ -322,7 +305,6 @@ def _get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
     # Filter peaks based on the limit threshold
     peaks = y1[loc + 1]
     loc = loc[peaks > limit] + 1
-    peaks = y1[loc]
 
     # Refine peak positions using quadratic interpolation
     loc = _get_peak_positions(y1, loc)
@@ -578,12 +560,12 @@ def _get_peak_positions(column_profile, peak_x_positions):
     return refined_peaks
 
 
-def _estimate_offset(nominal, detected, max_sep=3.0, offset_range=(-5, 5)):
+def _estimate_offset(nominal, detected, max_sep=3.0, offset_range=(-10, 10)):
     """
     Estimate a global vertical offset between nominal and detected peak positions.
 
-    This function tests a range of integer offsets and selects the one that
-    maximizes the number of nominal positions with a nearby detected peak.
+    This function tests a range of offsets and selects the one that
+    maximizes the cross-correlation between the first derivatives of the nominal and detected positions
 
     Args:
         nominal (np.ndarray): 1D array of expected fiber y-positions.
@@ -594,23 +576,37 @@ def _estimate_offset(nominal, detected, max_sep=3.0, offset_range=(-5, 5)):
     Returns:
         best_offset (float): The offset (in pixels) that gives the best alignment between nominal and detected positions.
     """
-    best_score = -np.inf
-    best_offset = 0
-    test_range = np.arange(offset_range[0], offset_range[1]+0.5, 0.5)
+    nominal = np.asarray(nominal)
+    detected = np.asarray(detected)
 
+    # Interpolate spacing (first differences) onto a common grid
+    nominal_diff = np.diff(nominal)
+    detected_diff = np.diff(detected)
+
+    # Use y-positions of centers between fibers as the x-axis for diffs
+    nominal_x = 0.5 * (nominal[1:] + nominal[:-1])
+    detected_x = 0.5 * (detected[1:] + detected[:-1])
+
+    # Define a common y-grid for interpolation
+    x_min = int(min(nominal_x[0], detected_x[0])) - 10
+    x_max = int(max(nominal_x[-1], detected_x[-1])) + 10
+    x_grid = np.arange(x_min, x_max + 1)
+
+    # Interpolate the diffs onto the common grid
+    nominal_interp = np.interp(x_grid, nominal_x, nominal_diff, left=0, right=0)
+    detected_interp = np.interp(x_grid, detected_x, detected_diff, left=0, right=0)
+
+    # Cross-correlate over range of integer offsets
+    scores = []
+    test_range = np.linspace(offset_range[0], offset_range[1], 100)
     for offset in test_range:
-        shifted_nominal = nominal + offset
-        score = 0
-        for y in shifted_nominal:
-            diffs = np.abs(detected - y)
-            close_diffs = diffs[diffs <= max_sep]
-            if len(close_diffs) > 0:
-                score += 1 - (np.min(close_diffs) / max_sep)  # weighted score
-        if score > best_score:
-            best_score = score
-            best_offset = offset
+        shifted_detected = np.interp(x_grid + offset, x_grid, detected_interp)
+        score = np.sum(nominal_interp * shifted_detected)
+        scores.append(score)
 
+    best_offset = test_range[np.argmax(scores)]
     return best_offset
+
 
 def _match_peaks_to_nominal(nominal, detected, offset, max_sep=3.0):
     """
@@ -642,7 +638,7 @@ def _match_peaks_to_nominal(nominal, detected, offset, max_sep=3.0):
     return matches
 
 def _evaluate_trace_chunk(flat_column, x_center, chunk_index, nominal_positions, good_fiber_indices, exclude_fiber_mask,
-                          total_fibers, max_sep=3.0):
+                          total_fibers, max_sep=4.0):
     """
     Process a single image chunk: detect peaks, estimate offset, match to nominal,
     and extrapolate excluded fiber positions.
@@ -717,7 +713,6 @@ def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunk
     """
     total_fibers = len(nominal_trace_positions)
     good_fiber_indices = np.where(~exclude_fiber_mask)[0]
-    nominal_good = nominal_trace_positions[good_fiber_indices]
 
     logger.info("Beginning fiber trace extraction")
     image = flat_image
@@ -741,6 +736,8 @@ def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunk
     center_trace = _evaluate_trace_chunk(center_column, x_center, center_idx, nominal_trace_positions,
                                          good_fiber_indices,  exclude_fiber_mask, total_fibers)
     raw_trace_matrix[:, center_idx] = center_trace
+    initial_offset = np.nanmedian(center_trace - nominal_trace_positions)
+    logger.info(f"Best fiber position offset for central chunk: {initial_offset:.2f}")
 
     # Estimate global offset once using center
 
@@ -757,11 +754,7 @@ def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunk
 
             trace = _evaluate_trace_chunk(flat_column, x_center, k, nominal_estimate, good_fiber_indices,
                                           exclude_fiber_mask, total_fibers)
-
-            offset = np.nanmedian(trace - nominal_estimate)
-            logger.info(f"Offset for chunk {k+1} is {offset:.2f}")
             raw_trace_matrix[:, k] = trace
-
 
     logger.info("Smoothing fiber traces with 7th-order polynomial")
     trace_array = np.zeros((total_fibers, image.shape[1]))
@@ -774,7 +767,9 @@ def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunk
             trace_array[fiber_index] = np.polyval(poly_coeffs, x_full)
         else:
             logger.debug(f"Fiber {fiber_index} has no valid trace values.")
-
     good_fiber_mask = ~exclude_fiber_mask
     logger.info("Trace extraction complete")
+
+    from astropy.io import fits
+    fits.PrimaryHDU(raw_trace_matrix).writeto('test.fits', overwrite=True)
     return trace_array, good_fiber_mask, raw_trace_matrix, x_chunk_centers
