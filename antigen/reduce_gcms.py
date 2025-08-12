@@ -14,13 +14,16 @@ from antigen import fiber
 from antigen import io
 from antigen import plot
 from antigen import sky
+from antigen import spectra
+from antigen import trace
+from antigen import wavelength
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
 logger = logging.getLogger('antigen.reduce.gcms')
 
 
-def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_mask,
+def reduce_science(data_filename, master_bias, master_flat, trace_array, good_fiber_mask,
                    wavelength_cal, ftf_correction,
                    config_dict, pca=None, pca_only=False, outfolder=None):
     """
@@ -32,7 +35,7 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
         data_filename (str): The filename of the FITS file containing the data to be reduced.
         master_bias (): master bias frames for bias correction.
         master_flat (): master flat frame
-        trace (): fiber trace data for current observation
+        trace_array (): fiber trace data for current observation
         good_fiber_mask (array(bool)): boolean selecttion mask of good (isfinite) fibers for current observation
         wavelength_cal (): wavelength calibration data for the current observation
         ftf_correction (list): flat-field (fiber_to_fiber) correction array.
@@ -55,17 +58,17 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
     image, E = ccd.base_reduction(obs_data, master_bias, config_dict)
 
     # Scattered light correction
-    scattered_light = ccd.get_scattered_light(image, trace)
+    scattered_light = ccd.get_scattered_light(image, trace_array)
     image -= scattered_light
 
     # Extract spectra from the image using the trace data
-    spec = fiber.get_spectra(image, trace)
+    spec = spectra.get_spectra(image, trace)
 
     # Calculate the spectrum error using the flat-field and error image
-    specerr = fiber.get_spectra_error(E, trace)
+    specerr = spectra.get_spectra_error(E, trace)
 
     # Compute the chi-square of the spectrum to identify bad pixels
-    chi2 = fiber.get_spectra_chi2(master_flat - master_bias, image, E, trace)
+    chi2 = spectra.get_spectra_chi2(master_flat - master_bias, image, E, trace)
     badpix = chi2 > 20.  # Pixels with chi2 > 20 are considered bad
     specerr[badpix] = np.nan
     spec[badpix] = np.nan
@@ -74,7 +77,7 @@ def reduce_science(data_filename, master_bias, master_flat, trace, good_fiber_ma
     def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
                            config_dict['detector_dimensions']['X'])
 
-    specrect, errrect = fiber.rectify(spec, specerr, wavelength_cal, def_wave)
+    specrect, errrect = spectra.rectify(spec, specerr, wavelength_cal, def_wave)
 
     # Apply flat-field correction
     obs_exp_time = obs_header['EXPTIME']
@@ -130,7 +133,7 @@ def process_calibration(manifest_record, output_path, config_dict):
         master_bias (arraylike): master bias frames for bias correction.
         master_flat (arraylike): master flat frame
         master_arc (arraylike): master arc frame
-        trace (arraylike): fiber trace data for current observation
+        trace_array (arraylike): fiber trace data for current observation
         good_fiber_mask (array(bool)): boolean selection mask of good (isfinite) fibers for current observation
         wavelength (arraylike): wavelength calibration data for the current observation
         ftf (list): flat-field (fiber_to_fiber) correction array.
@@ -176,13 +179,13 @@ def process_calibration(manifest_record, output_path, config_dict):
     # Get trace from the dome flat
     # =============================================================================
     logger.info('Getting trace for each master flat')
-    trace, good_fiber_mask, raw_trace_matrix, x_chunk_centers = fiber.get_trace(master_flat_data - master_bias_data,
+    trace_array, good_fiber_mask, raw_trace_matrix, x_chunk_centers = trace.get_trace(master_flat_data - master_bias_data,
                                                                                 trace_rows, exclude_fiber)
-    _, _ = plot.plot_trace(trace, raw_trace_matrix, x_chunk_centers,
+    _, _ = plot.plot_trace(trace_array, raw_trace_matrix, x_chunk_centers,
                            fiber_indices=config_dict['sample_fiber_indices'],
                            outfolder=output_path)
 
-    domeflat_spec = fiber.get_spectra(master_flat_data - master_bias_data, trace)
+    domeflat_spec = spectra.get_spectra(master_flat_data - master_bias_data, trace)
     domeflat_error = 0. * domeflat_spec
 
     # =============================================================================
@@ -190,7 +193,7 @@ def process_calibration(manifest_record, output_path, config_dict):
     # =============================================================================
     logger.info('Getting wavelength for each master arc')
 
-    lamp_spec = fiber.get_spectra(master_arc_data - master_bias_data, trace)
+    lamp_spec = spectra.get_spectra(master_arc_data - master_bias_data, trace)
 
     # save lamp spec data to FITS and PNG
     lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.fits'))
@@ -203,13 +206,13 @@ def process_calibration(manifest_record, output_path, config_dict):
         xref = xref / 2
 
     # TODO: peak_threshold is now a function of the noise in the arc spectrum
-    wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
+    wavelength_array, res, X, W = wavelength.get_wavelength(lamp_spec, trace_array, good_fiber_mask,
                                                  xref, lines, peak_threshold=None,
                                                  reference_fiber_index=fiber_ref,
                                                  use_kernel=use_kernel)
 
     # Plot wavelength solution for inspection
-    plot.plot_wavelength(lines, W, wavelength, output_path)
+    plot.plot_wavelength(lines, W, wavelength_array, output_path)
     #except:
     #    error_message = 'Could not get wavelength solution for arc_filenames from manifest'
     #    raise RuntimeError(error_message)
@@ -219,11 +222,11 @@ def process_calibration(manifest_record, output_path, config_dict):
     # =============================================================================
     logger.info('Getting fiber to fiber for each master domeFlat')
 
-    domeflat_rect, domeflat_error_rect = fiber.rectify(domeflat_spec, domeflat_error,
-                                                       wavelength, def_wave)
+    domeflat_rect, domeflat_error_rect = spectra.rectify(domeflat_spec, domeflat_error,
+                                                       wavelength_array, def_wave)
     ftf, ftf_smooth = fiber.get_fiber_to_fiber(domeflat_rect)
 
-    return master_bias_data, master_flat_data, master_arc_data, trace, good_fiber_mask, wavelength, ftf
+    return master_bias_data, master_flat_data, master_arc_data, trace_array, good_fiber_mask, wavelength, ftf
 
 
 def reduction_pipeline(dataset_manifest, output_path):
