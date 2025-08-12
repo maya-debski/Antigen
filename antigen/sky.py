@@ -8,6 +8,26 @@ from antigen import fiber
 from antigen import config
 
 
+def identify_sky_pixels(sky, per=50, size=50):
+    """
+    Identifies sky pixels by applying a percentile filter and sigma-clipping.
+
+    Parameters:
+        sky (array-like): Input sky intensity values.
+        per (int, optional): Percentile value for the filter. Default is 50 (median).
+        size (int, optional): Size of the filter window. Default is 50.
+
+    Returns:
+        tuple: A boolean mask array indicating sky pixels and the filtered continuum array.
+    """
+    # Apply a percentile filter to smooth the sky data and estimate the continuum
+    cont = percentile_filter(sky, per, size=size)
+
+    mask = sigma_clip(sky - cont, masked=True, maxiters=None, stdfunc=mad_std, sigma=5)
+
+    # Return the mask (True for sky pixels) and the filtered continuum
+    return mask.mask, cont
+
 def get_skymask(sky, per=50, size=50, niter=3):
     """
     Iteratively identifies and masks sky pixels in an input array by applying
