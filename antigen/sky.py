@@ -4,7 +4,6 @@ from scipy.interpolate import interp1d
 from scipy.ndimage import percentile_filter
 from sklearn.decomposition import PCA
 
-from antigen import fiber
 from antigen import config
 
 
@@ -103,7 +102,7 @@ def subtract_sky(spectra, good):
     y = biweight(spectra[:, n1:n2], axis=1, ignore_nan=True)
 
     # Identify sky pixels based on the biweighted data and apply a mask
-    mask, cont = fiber.identify_sky_pixels(y[good], size=15)
+    mask, cont = identify_sky_pixels(y[good], size=15)
 
     # Create a mask for fibers that are not good and are sky fibers
     m1 = ~good
