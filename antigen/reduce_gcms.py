@@ -62,13 +62,13 @@ def reduce_science(data_filename, master_bias, master_flat, trace_array, good_fi
     image -= scattered_light
 
     # Extract spectra from the image using the trace data
-    spec = spectra.get_spectra(image, trace)
+    spec = spectra.get_spectra(image, trace_array)
 
     # Calculate the spectrum error using the flat-field and error image
-    specerr = spectra.get_spectra_error(E, trace)
+    specerr = spectra.get_spectra_error(E, trace_array)
 
     # Compute the chi-square of the spectrum to identify bad pixels
-    chi2 = spectra.get_spectra_chi2(master_flat - master_bias, image, E, trace)
+    chi2 = spectra.get_spectra_chi2(master_flat - master_bias, image, E, trace_array)
     badpix = chi2 > 20.  # Pixels with chi2 > 20 are considered bad
     specerr[badpix] = np.nan
     spec[badpix] = np.nan
@@ -185,7 +185,7 @@ def process_calibration(manifest_record, output_path, config_dict):
                            fiber_indices=config_dict['sample_fiber_indices'],
                            outfolder=output_path)
 
-    domeflat_spec = spectra.get_spectra(master_flat_data - master_bias_data, trace)
+    domeflat_spec = spectra.get_spectra(master_flat_data - master_bias_data, trace_array)
     domeflat_error = 0. * domeflat_spec
 
     # =============================================================================
@@ -193,7 +193,7 @@ def process_calibration(manifest_record, output_path, config_dict):
     # =============================================================================
     logger.info('Getting wavelength for each master arc')
 
-    lamp_spec = spectra.get_spectra(master_arc_data - master_bias_data, trace)
+    lamp_spec = spectra.get_spectra(master_arc_data - master_bias_data, trace_array)
 
     # save lamp spec data to FITS and PNG
     lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.fits'))
@@ -226,7 +226,7 @@ def process_calibration(manifest_record, output_path, config_dict):
                                                        wavelength_array, def_wave)
     ftf, ftf_smooth = fiber.get_fiber_to_fiber(domeflat_rect)
 
-    return master_bias_data, master_flat_data, master_arc_data, trace_array, good_fiber_mask, wavelength, ftf
+    return master_bias_data, master_flat_data, master_arc_data, trace_array, good_fiber_mask, wavelength_array, ftf
 
 
 def reduction_pipeline(dataset_manifest, output_path):
@@ -250,21 +250,21 @@ def reduction_pipeline(dataset_manifest, output_path):
     (master_bias_data,
      master_flat_data,
      master_arc_data,
-     trace, good_fiber_mask,
-     wavelength, ftf) = calibration_tuple
+     trace_array, good_fiber_mask,
+     wavelength_array, ftf) = calibration_tuple
 
 
     arc_file = dataset_manifest['calibration_files']['arc'][0]
     logger.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
     pca, _, _, _ = reduce_science(arc_file, master_bias_data, master_flat_data,
-                                  trace, good_fiber_mask, wavelength, ftf, config_dict,
+                                  trace_array, good_fiber_mask, wavelength_array, ftf, config_dict,
                                   pca=None, pca_only=True, outfolder=output_path)
 
     for science_file in dataset_manifest['observation_files']:
         logger.info(f'Reducing Science Frame: science_file={science_file}')
 
         _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
-                                                          trace, good_fiber_mask, wavelength, ftf, config_dict,
+                                                          trace_array, good_fiber_mask, wavelength_array, ftf, config_dict,
                                                           pca=pca, outfolder=output_path)
         logger.info(f'Wrote reduction to FITS file {reduction_filename}')
 
