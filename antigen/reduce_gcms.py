@@ -1,10 +1,10 @@
 import os
+from pathlib import Path
 import logging
 import warnings
 
 from astropy.io import fits
 from astropy.stats import biweight_location as biweight
-from astropy.table import Table
 
 import numpy as np
 
@@ -162,21 +162,24 @@ def process_calibration(manifest_record, output_path, config_dict):
 
     logger.info('Making master bias frames')
     master_bias_data, master_bias_time = ccd.make_master_cal(bias_filenames, config_dict)
+    fits.PrimaryHDU(master_bias_data).writeto(Path(output_path) / 'master_bias.fits', overwrite=True)
 
     logger.info('Making master flat frames')
     master_flat_data, master_flat_time = ccd.make_master_cal(flat_filenames, config_dict)
+    fits.PrimaryHDU(master_flat_data).writeto(Path(output_path) / 'master_flat.fits', overwrite=True)
 
     logger.info('Making master arc frames')
     master_arc_data, master_arc_time = ccd.make_master_cal(arc_filenames, config_dict)
+    fits.PrimaryHDU(master_arc_data).writeto(Path(output_path) / 'master_arc.fits', overwrite=True)
 
     # =============================================================================
     # Get trace from the dome flat
     # =============================================================================
     logger.info('Getting trace for each master flat')
-
-    trace, good_fiber_mask, Tchunk, xchunk = fiber.get_trace(master_flat_data - master_bias_data,
-                                                             trace_rows, exclude_fiber)
-    _, _ = plot.plot_trace(trace, Tchunk, xchunk, fiber_indices=config_dict['sample_fiber_indices'],
+    trace, good_fiber_mask, raw_trace_matrix, x_chunk_centers = fiber.get_trace(master_flat_data - master_bias_data,
+                                                                                trace_rows, exclude_fiber)
+    _, _ = plot.plot_trace(trace, raw_trace_matrix, x_chunk_centers,
+                           fiber_indices=config_dict['sample_fiber_indices'],
                            outfolder=output_path)
 
     domeflat_spec = fiber.get_spectra(master_flat_data - master_bias_data, trace)
@@ -196,9 +199,13 @@ def process_calibration(manifest_record, output_path, config_dict):
     plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
 
     #try:
+    if config_dict['detector_dimensions']['X'] < config_dict['detector_dimensions']['Y']:
+        xref = xref / 2
+
+    # TODO: peak_threshold is now a function of the noise in the arc spectrum
     wavelength, res, X, W = fiber.get_wavelength(lamp_spec, trace, good_fiber_mask,
-                                                 xref, lines, limit=limit,
-                                                 fiberref=fiber_ref,
+                                                 xref, lines, peak_threshold=None,
+                                                 reference_fiber_index=fiber_ref,
                                                  use_kernel=use_kernel)
 
     # Plot wavelength solution for inspection
@@ -245,7 +252,6 @@ def reduction_pipeline(dataset_manifest, output_path):
 
 
     arc_file = dataset_manifest['calibration_files']['arc'][0]
-    channel = dataset_manifest['unit_id'][-1].lower()
     logger.info(f'Reducing Arc Frame to generate PCA model: arc_file={arc_file}')
     pca, _, _, _ = reduce_science(arc_file, master_bias_data, master_flat_data,
                                   trace, good_fiber_mask, wavelength, ftf, config_dict,
