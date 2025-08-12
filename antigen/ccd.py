@@ -19,8 +19,6 @@ def prep_image(image, config_dict):
     Returns:
         image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
     """
-    # TODO: update docstring to match input args, function signature
-    # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
     # Should be read by config rather than hardcoded
     overscan_length = config_dict['overscan_length']
     flip_x = config_dict['flip_x']
