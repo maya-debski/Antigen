@@ -152,7 +152,6 @@ def process_calibration(manifest_record, output_path, config_dict):
     #TODO: Decide how to do the VIRUS2 ifucen file
     trace_rows = config_dict['trace_row']
     exclude_fiber = config_dict['exclude_fiber']
-    #ref.reverse()
 
     # =============================================================================
     # Make a master bias, master dome flat, and master arc for the first set of OBS
