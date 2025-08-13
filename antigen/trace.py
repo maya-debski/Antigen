@@ -49,7 +49,7 @@ def _estimate_offset(nominal, detected, offset_range=(-20, 20)):
     Returns:
         best_offset (float): The offset (in pixels) that gives the best alignment between nominal and detected positions.
     """
-    nominal = np.asarray(nominal)
+    nominal = np.sort(np.asarray(nominal))
     detected = np.asarray(detected)
 
     # Interpolate spacing (first differences) onto a common grid
@@ -68,6 +68,7 @@ def _estimate_offset(nominal, detected, offset_range=(-20, 20)):
     # Interpolate the diffs onto the common grid
     nominal_interp = np.interp(x_grid, nominal_x, nominal_diff, left=0, right=0)
     detected_interp = np.interp(x_grid, detected_x, detected_diff, left=0, right=0)
+
     # Cross-correlate over range of integer offsets
     scores = []
     test_range = np.linspace(offset_range[0], offset_range[1], 100)
