@@ -262,7 +262,6 @@ def reduction_pipeline(dataset_manifest, output_path):
 
     for science_file in dataset_manifest['observation_files']:
         logger.info(f'Reducing Science Frame: science_file={science_file}')
-
         _, sky, cont, reduction_filename = reduce_science(science_file, master_bias_data, master_flat_data,
                                                           trace_array, good_fiber_mask, wavelength_array, ftf, config_dict,
                                                           pca=pca, outfolder=output_path)
