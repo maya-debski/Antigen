@@ -146,7 +146,7 @@ def process_calibration(manifest_record, output_path, config_dict):
 
     lines = config_dict['wavelength']
     xref = config_dict['column']
-    limit = config_dict['arc_flux_limit']
+    peak_threshold = config_dict['arc_flux_limit']
     fiber_ref = config_dict['reference_fiber_index']
     use_kernel = True
     #TODO: Decide how to do the VIRUS2 ifucen file
@@ -200,13 +200,13 @@ def process_calibration(manifest_record, output_path, config_dict):
     lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.png'))
     plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
 
-    #try:
+    #TODO: Need to test if binned in a better way.
     if config_dict['detector_dimensions']['X'] < config_dict['detector_dimensions']['Y']:
         xref = xref / 2
 
     # TODO: peak_threshold is now a function of the noise in the arc spectrum
     wavelength_array, res, X, W = wavelength.get_wavelength(lamp_spec, trace_array, good_fiber_mask,
-                                                 xref, lines, peak_threshold=None,
+                                                 xref, lines, peak_threshold=peak_threshold,
                                                  reference_fiber_index=fiber_ref,
                                                  use_kernel=use_kernel)
 
