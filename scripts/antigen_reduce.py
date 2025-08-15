@@ -7,12 +7,12 @@ import sys
 from antigen.cli import add_calibration_args, add_common_args
 from antigen.datasets import find_datasets
 from antigen.manifest import save_manifest
-from antigen.reduce_gcms import reduction_pipeline
+from antigen.reduce import reduction_pipeline
 from antigen.utils import setup_logging
 
 DESCRIPTION = r"""
 Purpose:
-    This script runs the full reduction pipeline for VIRUS2 instrument datasets
+    This script runs the full reduction pipeline for VIRUS2/GCMS instrument datasets
     for a given night of observations. It uses manifest files to locate input
     science and calibration data, applies the standard reduction steps, and
     writes reduced science-ready FITS files to the specified output directory.
@@ -23,14 +23,14 @@ What it does:
     - Groups raw files into logical datasets for reduction.
     - Runs the VIRUS2 reduction pipeline on each dataset, which includes:
         * Bias correction
-        * Dark subtraction
+        * Trace calibration
         * Flat fielding
         * Wavelength calibration
         * Science frame spectral extraction
     - Writes the reduced, calibrated science frames to the output folder.
 
 Inputs:
-    - Input folder: Directory containing raw VIRUS2 FITS files.
+    - Input folder: Directory containing raw spectrograph FITS files
     - Output folder: Destination for reduced FITS files.
     - Observation date: Date of the observation run (YYYYMMDD format).
     - Optional: Observation name, time radius, and custom labels for calibration frames.
