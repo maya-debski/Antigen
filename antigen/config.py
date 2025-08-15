@@ -345,7 +345,7 @@ def build_config_for_element(instrument, instrument_element,validate = False):
                    'trace_row': np.array(config_ifucen['trace_row']),
                    'exclude_fiber': np.array(config_ifucen['exclude_fiber'], dtype=bool),
                    'wavelength': np.array(config_lines['wavelength']),
-                   'column': np.array(config_lines['column']),
+                   'column': np.array(config_lines['column'], dtype=float),
                    'throughput': np.array(config_throughput['throughput'])}
 
     return config_dict
