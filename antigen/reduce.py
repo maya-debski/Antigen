@@ -5,7 +5,6 @@ import warnings
 
 from astropy.io import fits
 from astropy.stats import biweight_location as biweight
-
 import numpy as np
 
 from antigen import ccd
