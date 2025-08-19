@@ -19,7 +19,7 @@ from antigen import wavelength
 
 # Turn off annoying warnings (even though some deserve attention)
 warnings.filterwarnings("ignore")
-logger = logging.getLogger('antigen.reduce.gcms')
+logger = logging.getLogger('antigen.reduce')
 
 
 def reduce_science(data_filename, master_bias, master_flat, trace_array, good_fiber_mask,
