@@ -248,3 +248,43 @@ def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
 
     # Return the final chi-squared spectrum array
     return spec
+
+
+def get_optimal_spectrum(data, error, weights):
+    """
+    Extract a weighted 1D spectrum from a fiber data
+
+    Args:
+        data (ndarray): 2D array of fiber spectra within aperture
+        error (ndarray): 2D array of fiber spectral errors
+        weights (ndarray): 2D array of fiber weights
+
+    Returns:
+        spectrum (ndarray): Weighted 1D spectrum.
+        spectrum_error (ndarray): Weighted 1D error spectrum.
+    """
+
+    var = error ** 2
+    spectrum = (np.nansum(data / var * weights, axis=0) /
+                np.nansum(weights ** 2 / var, axis=0))
+    spectrum_error = np.sqrt(np.nansum(weights, axis=0) /
+                             np.nansum(weights ** 2 / var, axis=0))
+
+    return spectrum, spectrum_error
+
+
+def convert_spectral_units(spectrum, wave, area=5.81e4):
+    '''
+    Incoming units are e- / A
+
+    Outgoing units are ergs / S / A/ cm^2
+
+    Args:
+        spectrum (ndarray): 2D array of fiber spectra (units: e- / A)
+        wave (ndarray): 1D array of fiber wavelengths
+
+    Returns:
+        spectrum (array): 2D array of fiber in (units: ergs / S / A/ cm^2)
+    '''
+    flux_factor = (6.626e-27 * 2.99792e18 / wave)
+    return spectrum / area * flux_factor
