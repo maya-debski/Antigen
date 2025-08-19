@@ -1,9 +1,4 @@
-import os.path as op
-import glob
-
 import numpy as np
-
-from astropy.io import fits
 from astropy.stats import biweight_location as biweight
 from astropy.modeling.functional_models import Moffat2D
 from scipy.interpolate import LinearNDInterpolator
