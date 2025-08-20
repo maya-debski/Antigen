@@ -10,6 +10,39 @@ from antigen.io import get_fits_file_time
 logger = logging.getLogger('antigen.datasets')
 
 
+def parse_reduce_file_name(fits_filename):
+    """
+    Parse a FITS file name into components.
+
+    Example file names:
+        reduction_HD128_dither_2_20240606T051235_gcms_VP1B_multi.fits
+        reduction_HD141_20240606T051235_virus2_D3G_multi.fits
+    Args:
+        fits_filename (pathlike): full-path filename of reduced fits file (pathlib.Path object)
+    Returns:
+        info (dict): keys = ['target', 'dither_num', 'obs_date', 'instrument', 'element', file_name']
+    """
+
+    pattern = (
+        r"reduction_(?P<target>HD\d+)"
+        r"(?:_dither_(?P<dither>\d+))?"
+        r"_(?P<date>\d{8}T\d{6})"
+        r"_(?P<instrument>[a-zA-Z0-9]+)"
+        r"_(?P<element>[a-zA-Z0-9]+)_multi"
+    )
+
+    path = Path(fits_filename).expanduser()
+    file_name_stem = path.stem
+
+    match = re.match(pattern, file_name_stem)
+    if not match:
+        raise ValueError(f"Filename {file_name_stem} does not match expected pattern")
+
+    info = match.groupdict()
+    info["dither_num"] = int(info.pop("dither")) if info.get("dither") else 1
+    info["file_name"] = fits_filename.name
+    return info
+
 def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extension='.fits'):
     """
     Purpose: Parse FITS filenames written by VIRUS2 exposure code
@@ -393,6 +426,48 @@ def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
         records.append(record)
 
     return records
+
+
+def build_dataset_from_reduced_files(file_list):
+    """
+    Build a dataset record grouped by target
+    Args:
+        file_list (list of pathlike): list of full-path filename of reduced fits file (pathlib.Path objects)
+
+    Returns:
+        list of dict: Dataset records.
+    """
+    records = []
+    targets = []
+
+    now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    for file_name in file_list:
+        info = parse_fits_file_name(file_name)
+        if info['target'] not in targets:
+            record = {
+                'reduction_name': f'antigen_advanced_manifest_{now_string}',
+                'target': info['target'],
+                'unit_instrument': info['instrument'],
+                'unit_id': info['element'],
+                'obs_date': info['date'],
+                'in_folder': './',
+                'ndithers': 1,
+                'reduced_files': [info['file_name']],
+                'dither_number': [info['dither_number']]
+            }
+            records.append(record)
+        else:
+            matched_index = targets.index(info['target'])
+            record = records[matched_index]
+            record['reduced_files'].append(info['file_name'])
+            record['dither_number'].append(info['dither_number'])
+            record['ndithers'] = max(record['dither_number'])
+
+        targets = [record['target'] for record in records]
+
+    return records
+
 
 def find_datasets(in_folder, obs_date, obs_name, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
