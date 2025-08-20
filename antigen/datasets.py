@@ -24,7 +24,7 @@ def parse_reduce_file_name(fits_filename):
     """
 
     pattern = (
-        r"reduction_(?P<target>HD\d+)"
+        r"reduction_(?P<target>[A-Za-z0-9]+)"
         r"(?:_dither_(?P<dither>\d+))?"
         r"_(?P<date>\d{8}T\d{6})"
         r"_(?P<instrument>[a-zA-Z0-9]+)"
@@ -36,10 +36,10 @@ def parse_reduce_file_name(fits_filename):
 
     match = re.match(pattern, file_name_stem)
     if not match:
-        raise ValueError(f"Filename {file_name_stem} does not match expected pattern")
+        return None
 
     info = match.groupdict()
-    info["dither_num"] = int(info.pop("dither")) if info.get("dither") else 1
+    info["dither_number"] = int(info.pop("dither")) if info.get("dither") else 1
     info["file_name"] = fits_filename.name
     return info
 
@@ -442,19 +442,20 @@ def build_dataset_from_reduced_files(file_directory):
     reduction_name = f"antigen_advanced_manifest_{now_string}"
 
     records_by_target = {}
-
     for file_name in file_list:
-        info = parse_fits_file_name(file_name)
-        target = info["target"]
+        info = parse_reduce_file_name(file_name)
 
+        if info is None:
+            continue
+
+        target = info["target"]
         if target not in records_by_target:
             records_by_target[target] = {
                 "reduction_name": reduction_name,
                 "target": target,
                 "unit_instrument": info["instrument"],
                 "unit_id": info["element"],
-                "obs_date": info["date"],
-                "in_folder": "./",
+                "in_folder": file_directory,
                 "ndithers": 0,  # will update later
                 "reduced_files": [],
                 "dither_number": []
