@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from antigen.io import get_fits_file_time
+from antigen.io import get_fits_file_time, get_fits_files_in_path
 
 logger = logging.getLogger('antigen.datasets')
 
@@ -428,15 +428,16 @@ def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
     return records
 
 
-def build_dataset_from_reduced_files(file_list):
+def build_dataset_from_reduced_files(file_directory):
     """
     Build a dataset record grouped by target
     Args:
-        file_list (list of pathlike): list of full-path filename of reduced fits file (pathlib.Path objects)
+        file_directory: Directory path of the reduced fits files.
 
     Returns:
         list of dict: Dataset records.
     """
+    file_list = get_fits_files_in_path(file_directory)
     records = []
     targets = []
 
