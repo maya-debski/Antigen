@@ -437,37 +437,37 @@ def build_dataset_from_reduced_files(file_directory):
     Returns:
         list of dict: Dataset records.
     """
-    file_list = get_fits_files_in_path(file_directory)
-    records = []
-    targets = []
-
+    file_list = get_fits_files_in_path(file_directory)  # List of path objects
     now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+    reduction_name = f"antigen_advanced_manifest_{now_string}"
+
+    records_by_target = {}
 
     for file_name in file_list:
         info = parse_fits_file_name(file_name)
-        if info['target'] not in targets:
-            record = {
-                'reduction_name': f'antigen_advanced_manifest_{now_string}',
-                'target': info['target'],
-                'unit_instrument': info['instrument'],
-                'unit_id': info['element'],
-                'obs_date': info['date'],
-                'in_folder': './',
-                'ndithers': 1,
-                'reduced_files': [info['file_name']],
-                'dither_number': [info['dither_number']]
+        target = info["target"]
+
+        if target not in records_by_target:
+            records_by_target[target] = {
+                "reduction_name": reduction_name,
+                "target": target,
+                "unit_instrument": info["instrument"],
+                "unit_id": info["element"],
+                "obs_date": info["date"],
+                "in_folder": "./",
+                "ndithers": 0,  # will update later
+                "reduced_files": [],
+                "dither_number": []
             }
-            records.append(record)
-        else:
-            matched_index = targets.index(info['target'])
-            record = records[matched_index]
-            record['reduced_files'].append(info['file_name'])
-            record['dither_number'].append(info['dither_number'])
-            record['ndithers'] = max(record['dither_number'])
 
-        targets = [record['target'] for record in records]
+        record = records_by_target[target]
+        record["reduced_files"].append(info["file_name"])
+        record["dither_number"].append(info["dither_number"])
+        # Ensure ndithers reflects unique dithers
+        record["ndithers"] = len(set(record["dither_number"]))
 
-    return records
+    logger.info(f"Built dataset with {len(records_by_target)} targets and {len(file_list)} files.")
+    return list(records_by_target.values())
 
 
 def find_datasets(in_folder, obs_date, obs_name, time_radius,
