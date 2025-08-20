@@ -322,6 +322,7 @@ def build_config_for_element(instrument, instrument_element,validate = False):
     config_lines, config_ifucen, config_throughput = read_config_files(instrument, instrument_element, validate)
 
     config_dict = {'instrument_element': config_yaml['instrument_element'],
+                   'instrument': instrument,
                    'gain': config_yaml['gain'],
                    'read_noise': config_yaml['read_noise'],
                    'fiber_radius': config_yaml['fiber_radius'],
