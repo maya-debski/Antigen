@@ -89,6 +89,8 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         cube (ndarray):
             3D datacube with shape (N_lambda, Ny, Nx), where `Ny` and `Nx`
             are determined by the spatial extent of the fibers and `pixel_size`.
+        x_grid (ndarray): 2D array of x-locations.
+        y_grid (ndarray): 2D array of y-locations.
     """
     # Precompute output grid extent based on fiber positions
     x_min, x_max = np.min(fiber_x), np.max(fiber_x)
@@ -111,11 +113,11 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         else:
             x_shift, y_shift = fiber_x, fiber_y
 
-        image, X, Y = fibers_to_image(
+        image, x_grid, y_grid = fibers_to_image(
             x_shift, y_shift, flux, fiber_area, bounds=bounds,
             pixel_size=pixel_size, method=method,
             rbf_func=rbf_func, k=k
         )
         cube[i] = image
 
-    return cube
+    return cube, x_grid, y_grid
