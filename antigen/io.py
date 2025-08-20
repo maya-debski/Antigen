@@ -4,6 +4,7 @@ import psutil
 
 import numpy as np
 from astropy.io import fits
+from astropy.table import Table
 from astropy.time import Time
 
 from antigen import config
@@ -317,6 +318,44 @@ def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     else:
         obs_time_mjd = None
     return obs_time_mjd
+
+def read_extinction_table(file_path=None):
+    """Read the McDonald Observatory extinction curve.
+
+    This function reads the extinction curve from a fixed-width, two-column ASCII file.
+    The file contains wavelength and extinction (magnitudes per airmass).
+
+    Args:
+        file_path (str or Path, optional): Path to the extinction data file.
+            Defaults to ``antigen/config_files/mcdonald_extinction.dat``.
+
+    Returns:
+        astropy.table.Table: A table with two columns:
+            - wavelength (float): Wavelength in Angstroms.
+            - mags_per_airmass (float): Extinction in magnitudes per airmass.
+
+    Raises:
+        FileNotFoundError: If the extinction file does not exist.
+        OSError: If the file cannot be parsed into two numeric columns.
+    """
+    base_path = config.get_base_config_path()
+    default_path = base_path /  "mcdonald_extinction.dat"
+
+    file_path = Path(file_path) if file_path else default_path
+
+    if not file_path.exists():
+        raise FileNotFoundError(f"Extinction file not found: {file_path}")
+
+    try:
+        table = Table.read(
+            file_path,
+            format="ascii.fixed_width_two_line",
+            names=("wavelength", "mags_per_airmass")
+        )
+    except Exception as e:
+        raise OSError(f"Could not parse extinction file: {e}")
+
+    return table
 
 def get_fits_files_in_path(input_path, pattern='*.fits'):
     """
