@@ -328,3 +328,72 @@ def get_fits_files_in_path(input_path, pattern='*.fits'):
         list (Path): A sorted list of Path objects matching the pattern.
     """
     return sorted(Path(input_path).glob(pattern))
+
+
+def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, overwrite=True):
+    """Write a spectral cube to a FITS file with relevant metadata.
+
+    The function saves a datacube (lambda, y, x) to a FITS file, carrying
+    over telescope/instrument metadata from the input header and adding
+    WCS-like keywords for the cube dimensions.
+
+    Args:
+        filename (str): Path to the output FITS file.
+        cube (ndarray): 3D datacube with shape (N_lambda, Ny, Nx).
+        wavelength (ndarray): 1D Array of wavelength values corresponding to the first axis of the cube.
+        header (fits.Header): Header from a fiber frame containing telescope/instrument information to be propagated.
+        x_grid (ndarray): 2D array of x positions.
+        y_grid (ndarray): 2D array of y positions.
+        pixel_size (float): Size of pixel in arcsec.
+        overwrite (bool, optional): If True, overwrite an existing file. Default is True.
+
+    Returns:
+        None
+
+    Notes:
+        - The output FITS file has the datacube stored in the primary HDU.
+        - The header is updated to include:
+            * `CRPIX1/2/3` : reference pixels
+            * `CRVAL1/2/3` : reference values (x, y, wavelength)
+            * `CDELT1/2/3` : increments (pixel size, wavelength step)
+            * `CTYPE1/2/3` : axis type labels
+        - `CDELT3` is computed from the median step in the wavelength array.
+
+    """
+    # Copy header to avoid modifying input
+    hdr = header.copy()
+
+    # Get cube shape
+    n_lambda, ny, nx = cube.shape
+
+    # Spectral step
+    if len(wavelength) > 1:
+        delta_lambda = np.median(np.diff(wavelength))
+    else:
+        delta_lambda = 1.0  # fallback if only one wavelength
+
+    # Update WCS-like metadata
+    hdr["NAXIS"]  = 3
+    hdr["NAXIS1"] = nx
+    hdr["NAXIS2"] = ny
+    hdr["NAXIS3"] = n_lambda
+
+    hdr["CTYPE1"] = "X"
+    hdr["CTYPE2"] = "Y"
+    hdr["CTYPE3"] = "WAVE"
+
+    hdr["CDELT1"] = pixel_size
+    hdr["CDELT2"] = pixel_size
+    hdr["CDELT3"] = delta_lambda
+
+    hdr["CRPIX1"] = 1
+    hdr["CRPIX2"] = 1
+    hdr["CRPIX3"] = 1
+
+    hdr["CRVAL1"] = x_grid[0]
+    hdr["CRVAL2"] = y_grid[0]
+    hdr["CRVAL3"] = wavelength[0]
+
+    # Save FITS
+    hdu = fits.PrimaryHDU(data=cube.astype("float32"), header=hdr)
+    hdu.writeto(filename, overwrite=overwrite)
