@@ -38,7 +38,9 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_d
         obj_name_string = '_'.join(header['OBJECT'].split())
     else:
         obj_name_string = 'ObjectedCardEmpty'
-    image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_multi'
+    instrument = config_dict['instrument']
+    instrument_element = config_dict['instrument_element']
+    image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_{instrument}_{instrument_element}_multi'
 
     # Loop through the data arrays and create HDUs for each
     for image, ftp in zip([skysubrect_adv, skysubrect, specrect, errorrect],
