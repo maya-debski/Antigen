@@ -73,8 +73,7 @@ def reduce_science(data_filename, master_bias, master_flat, trace_array, good_fi
     spec[badpix] = np.nan
 
     # Rectify the spectrum and error based on the wavelength
-    def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
-                           config_dict['detector_dimensions']['X'])
+    def_wave = wavelength.get_rectified_wavelength(config_dict)
 
     specrect, errrect = spectra.rectify(spec, specerr, wavelength_cal, def_wave)
 
