@@ -118,6 +118,37 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_d
     return output_filename
 
 
+def load_reduced_data(base_folder, filenames, extname='SKYSUB_PCA'):
+    """
+    Load fiber bundle data and error arrays from target reduced products
+    made by Antigen at an earlier step
+
+    Args:
+        base_folder (str): base folder path
+        filenames (list): list of file paths to reduced frames for target
+        extname (str, optional): Extension name to use. Defaults to 'SKYSUB_PCA'.
+
+    Returns:
+        data (array): sky subtracted frames
+        error (array): error frames
+        header (fits header): header of first file.
+    """
+    data_list, err_list = [], []
+    for filename in filenames:
+        with fits.open(Path(base_folder) / filename, memmap=False) as hdul:
+            try:
+                data_list.append(hdul[extname].data)
+                err_list.append(hdul["ERROR"].data)
+            except KeyError as e:
+                raise KeyError(f"Missing extension in {filename}: {e}")
+
+    data = np.vstack(data_list)
+    error = np.vstack(err_list)
+    header = fits.getheader(filenames[0], 0)
+
+    return data, error, header
+
+
 def load_fits(fits_filename):
     """
     Purpose: Open the FITS file and extract header cards needed to construct observation MJD time
