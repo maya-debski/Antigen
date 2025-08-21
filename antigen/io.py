@@ -529,8 +529,8 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
     hdr["CRPIX2"] = 1
     hdr["CRPIX3"] = 1
 
-    hdr["CRVAL1"] = x_grid[0]
-    hdr["CRVAL2"] = y_grid[0]
+    hdr["CRVAL1"] = x_grid[0][0]
+    hdr["CRVAL2"] = y_grid[0][0]
     hdr["CRVAL3"] = wavelength[0]
 
     # Save FITS
