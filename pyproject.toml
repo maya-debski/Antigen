@@ -17,6 +17,7 @@ maintainers = [
 ]
 dependencies = [
     'astropy',
+    'getCalspec',
     'numpy',
     'matplotlib',
     'pandas',
@@ -37,6 +38,7 @@ include = ['antigen', 'antigen.*']
 include-package-data = true
 script-files = [
     'scripts/antigen_build_manifest.py',
+    'scripts/antigen_measure_response.py',
     'scripts/antigen_read_manifest.py',
     'scripts/antigen_reduce_virus2.py',
     'scripts/antigen_reduce.py',
