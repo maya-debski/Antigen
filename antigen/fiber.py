@@ -1,7 +1,11 @@
-import numpy as np
-from astropy.stats import biweight_location as biweight
 import logging
+
+from astropy.stats import biweight_location as biweight
+from astropy.table import Table
+import numpy as np
 from scipy.interpolate import interp1d
+
+from antigen import config
 
 logger = logging.getLogger('antigen.fiber')
 
@@ -51,3 +55,60 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
 
     # Return both the initial and smoothed fiber-to-fiber correction factors
     return initial_ftf, ftf
+
+
+def load_fiber_positions(instrument, ndithers, config_dict):
+    """
+    Load fiber base positions and apply dither offsets.
+
+    Args:
+        instrument (str): Instrument name.
+        ndithers (int): Number of dithers.
+        config_dict (dict): Config dict containing 'ifu_x' and 'ifu_y'.
+
+    Returns:
+        fiber_x (array): X-positions of fibers including dither pattern
+        fiber_y (array): Y-positions of fibers including dither pattern
+    """
+    # --- Input validation ---
+    if "ifu_x" not in config_dict or "ifu_y" not in config_dict:
+        raise ValueError("config_dict must contain 'ifu_x' and 'ifu_y' arrays.")
+
+    fiber_x_base, fiber_y_base = config_dict["ifu_x"], config_dict["ifu_y"]
+
+    base_path = config.get_base_config_path()
+
+    dither_file = base_path / instrument / f"{instrument}_dither_{ndithers}pt.lis"
+
+    # --- Handle single-dither (no offset) case ---
+    if ndithers == 1:
+        logger.info(f"No dither pattern needed for {instrument}, ndithers=1")
+        return fiber_x_base.copy(), fiber_y_base.copy()
+
+    # --- Load dither offsets ---
+    if not dither_file.exists():
+        raise FileNotFoundError(f"Dither file not found: {dither_file}")
+
+    try:
+        dither_table = Table.read(dither_file, format="ascii")
+        dither_offsets = np.array([dither_table[col].data for col in dither_table.colnames]).T
+    except Exception as e:
+        raise RuntimeError(f"Failed to read dither file {dither_file}: {e}")
+
+    # Expect 2 columns: dx, dy
+    if dither_offsets.shape[1] != 2:
+        raise ValueError(f"Dither file {dither_file} must have 2 columns (dx, dy).")
+
+    if dither_offsets.shape[0] != ndithers:
+        logger.warning(
+            f"Dither file has {dither_offsets.shape[0]} dithers but ndithers={ndithers}. "
+            "Proceeding with file contents."
+        )
+
+    # --- Apply dithers ---
+    fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dither_offsets])
+    fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dither_offsets])
+
+    logger.info(f"Loaded fiber positions for {instrument} with {len(dither_offsets)} dithers.")
+
+    return fiber_x, fiber_y
