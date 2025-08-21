@@ -15,6 +15,20 @@ from antigen import config
 logger = logging.getLogger('antigen.io')
 
 
+def get_fits_extension_map():
+    """
+    Return a consistent mapping of extension names for reduction FITS files.
+
+    Returns:
+        dict: Mapping of human-readable keys to FITS EXTNAME values.
+    """
+    return {
+        "skysubrect_adv": "SKYSUB_PCA",
+        "skysubrect": "SKYSUB",
+        "specrect": "NOSKYSUB",
+        "errorrect": "ERROR",
+    }
+
 def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_dict, outfolder):
     """
     Purpose: Writes the sky-subtracted, rectified spectra and error data to a FITS file,
@@ -48,12 +62,16 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_d
     instrument_element = config_dict['instrument_element']
     image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_{instrument}_{instrument_element}_multi'
 
+    extmap = get_fits_extension_map()
+
     # Loop through the data arrays and create HDUs for each
-    for image, ftp in zip([skysubrect_adv, skysubrect, specrect, errorrect],
-                          [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU]):
+    for image, ftp, extname in zip([skysubrect_adv, skysubrect, specrect, errorrect],
+                                   [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU],
+                                   extmap.values()):
 
         # Create an HDU object from each image, setting it to 'float32' type
         hdu = ftp(np.array(image, dtype='float32'))
+        hdu.header["EXTNAME"] = extname
 
         # Remove any conflicting CD matrix elements first
         for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2', 'CDELT1', 'CDELT2']:
