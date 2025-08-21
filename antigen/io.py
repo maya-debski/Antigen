@@ -144,7 +144,7 @@ def load_reduced_data(base_folder, filenames, extname='SKYSUB_PCA'):
 
     data = np.vstack(data_list)
     error = np.vstack(err_list)
-    header = fits.getheader(filenames[0], 0)
+    header = fits.getheader(Path(base_folder) /  filenames[0], 0)
 
     return data, error, header
 
