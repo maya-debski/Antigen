@@ -6,6 +6,8 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
+from getCalspec.getCalspec import Calspec, is_calspec
+from getCalspec.rebuild import rebuild_tables, rebuild_cache
 
 from antigen import config
 
@@ -318,6 +320,48 @@ def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     else:
         obs_time_mjd = None
     return obs_time_mjd
+
+
+def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=False):
+    """Load a CALSPEC spectrum as an Astropy Table.
+
+    This function verifies that the requested source is part of the CALSPEC
+    library, optionally updates the local CALSPEC cache, and loads the
+    requested spectrum into an Astropy Table.
+
+    Args:
+        name (str): Name of the CALSPEC source (case-insensitive).
+        spec_type (str, optional): Type of spectrum to load (e.g., "stis").
+            Defaults to "stis".
+        date (str, optional): Date of the version to load. Defaults to "latest".
+        check_cache (bool, optional): If True, update the CALSPEC cache and tables
+            before loading. Defaults to False.
+
+    Returns:
+        astropy.table.Table: Spectrum table containing wavelength and flux columns.
+
+    Raises:
+        ValueError: If the requested source is not in the CALSPEC library.
+        RuntimeError: If the spectrum cannot be retrieved.
+    """
+    # Optional cache update
+    if check_cache:
+        logger.info("Updating CALSPEC cache and tables...")
+        rebuild_tables()
+        rebuild_cache()
+
+    # Verify the name
+    if not is_calspec(name):
+        raise ValueError(f"Source '{name}' not found in CALSPEC library.")
+
+    # Get the spectrum
+    try:
+        calspec_obj = Calspec(name)
+        spectrum = calspec_obj.get_spectrum_table(type=spec_type, date=date)
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve CALSPEC spectrum for {name}") from e
+
+    return spectrum
 
 def read_extinction_table(file_path=None):
     """Read the McDonald Observatory extinction curve.
