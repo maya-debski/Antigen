@@ -1,6 +1,6 @@
 from importlib.resources import files
-from pathlib import Path
 import logging
+
 import yaml
 
 import numpy as np
