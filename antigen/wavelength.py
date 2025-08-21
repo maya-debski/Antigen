@@ -281,3 +281,15 @@ def _get_arclines_fiber(spectrum, init_loc=None, limit=5, use_kernel=True):
         loc = final_loc
 
     return np.array(loc)
+
+def get_rectified_wavelength(config_dict):
+    """
+    Args:
+        config_dict: Dictionary of configuration parameters.
+
+    Returns:
+        def_wavelength (ndarray): 1D rectified wavelength array
+    """
+    def_wavelength = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
+                                 config_dict['detector_dimensions']['X'])
+    return def_wavelength
