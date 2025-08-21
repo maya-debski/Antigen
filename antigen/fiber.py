@@ -57,13 +57,14 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
-def load_fiber_positions(instrument, ndithers, config_dict):
+def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
     """
     Load fiber base positions and apply dither offsets.
 
     Args:
         instrument (str): Instrument name.
         ndithers (int): Number of dithers.
+        dither_numbers (list): List of dither numbers
         config_dict (dict): Config dict containing 'ifu_x' and 'ifu_y'.
 
     Returns:
@@ -106,9 +107,10 @@ def load_fiber_positions(instrument, ndithers, config_dict):
         )
 
     # --- Apply dithers ---
-    fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dither_offsets])
-    fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dither_offsets])
+    dithers_observed = [dither_offsets[int(dither_number - 1)] for dither_number in dither_numbers]
+    fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dithers_observed])
+    fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dithers_observed])
 
-    logger.info(f"Loaded fiber positions for {instrument} with {len(dither_offsets)} dithers.")
+    logger.info(f"Loaded positions for {instrument} with {len(dithers_observed)} dithers and {dither_file} pattern.")
 
     return fiber_x, fiber_y
