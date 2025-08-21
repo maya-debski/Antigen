@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import psutil
@@ -10,6 +11,8 @@ from getCalspec.getCalspec import Calspec, is_calspec
 from getCalspec.rebuild import rebuild_tables, rebuild_cache
 
 from antigen import config
+
+logger = logging.getLogger('antigen.io')
 
 
 def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_dict, outfolder):
@@ -363,6 +366,7 @@ def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=Fal
 
     return spectrum
 
+
 def read_extinction_table(file_path=None):
     """Read the McDonald Observatory extinction curve.
 
@@ -400,6 +404,7 @@ def read_extinction_table(file_path=None):
         raise OSError(f"Could not parse extinction file: {e}")
 
     return table
+
 
 def get_fits_files_in_path(input_path, pattern='*.fits'):
     """
