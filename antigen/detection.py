@@ -3,14 +3,14 @@ from photutils.detection import DAOStarFinder
 from photutils.background import MMMBackground
 from astropy.table import Table
 
-def detect_sources(image, fwhm=2.0, threshold_sigma=5.0, brightest_only=False, nbright=1):
+def detect_sources(original_image, fwhm=2.0, threshold_sigma=5.0, brightest_only=False, nbright=1):
     """
     Detect potential sources in an image using DAOStarFinder.
 
     The background is calculated using a mode estimator of the form (3 * median) - (2 * mean)
 
     Args:
-        image (ndarray): The synthetic image reconstructed from fiber spectra.
+        original_image (ndarray): The synthetic image reconstructed from fiber spectra.
         fwhm (float): Approximate FWHM of the PSF in pixels.
         threshold_sigma (float): Detection threshold in units of the background RMS.
         brightest_only (bool): If True, return only the brightest source(s).
@@ -19,6 +19,10 @@ def detect_sources(image, fwhm=2.0, threshold_sigma=5.0, brightest_only=False, n
     Returns:
         sources (Table): Astropy Table with detected sources (id, xcentroid, ycentroid, flux, etc.).
     """
+    # Correct NaNs to zero
+    image = original_image.copy()
+    image[np.isnan(image)] = 0.0
+
     # Estimate background and noise
     bkg_estimator = MMMBackground()
     bkg_value = bkg_estimator(image)
