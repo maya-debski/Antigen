@@ -3,16 +3,16 @@ import numpy as np
 from scipy.interpolate import griddata, Rbf
 from scipy.spatial import cKDTree
 
-def fibers_to_image(x, y, flux, fiber_area, bounds=[-10., 10., -10., 10],
+def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10., -10., 10],
                     pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
                     sigma=1.0):
     """
     Create a synthetic image from non-uniform fiber locations and flux values.
 
     Args:
-        x (ndarray): 1D array of fiber x-locations.
-        y (ndarray): 1D array of fiber y-locations.
-        flux (ndarray): 1D array of fiber flux values.
+        fiber_x (ndarray): 1D array of fiber x-locations.
+        fiber_y (ndarray): 1D array of fiber y-locations.
+        fiber_flux (ndarray): 1D array of fiber flux values.
         fiber_area (float): Area of fiber in square arcseconds.
         bounds (list): Boundaries of image.
         pixel_size (float): Pixel size in arcseconds for the output image.
@@ -30,6 +30,10 @@ def fibers_to_image(x, y, flux, fiber_area, bounds=[-10., 10., -10., 10],
         img (ndarray): synthetic image on uniform grid
         X, Y (ndarray): meshgrid coordinates
     """
+    # Clean NaNs
+    finite_values = np.isfinite(fiber_flux)
+    x, y, flux = (fiber_x[finite_values], fiber_y[finite_values], fiber_flux[finite_values])
+
     # Define grid
     grid_size_x = int((bounds[1] - bounds[0]) / pixel_size) + 1
     grid_size_y = int((bounds[3] - bounds[2]) / pixel_size) + 1
