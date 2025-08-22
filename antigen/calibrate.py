@@ -1,8 +1,17 @@
 from typing import Any
+import logging
 
 import numpy as np
 from numpy import ndarray, dtype
 from scipy.signal import savgol_filter
+
+from antigen import config
+from antigen import cube
+from antigen import fiber
+from antigen import io
+from antigen import wavelength
+
+logger = logging.getLogger('antigen.calibrate')
 
 def apply_extinction_correction(wave, flux, flux_err, ext_wave, A_lambda_airmass, airmass):
     """Apply extinction correction to an observed spectrum.
@@ -62,3 +71,40 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
                         left=response[finite_values][0],  right=response[finite_values][-1])
     response = savgol_filter(response, window, 3)
     return response
+
+
+def build_response(dataset_manifest, output_path, standard_name, pixel_size):
+    """Build the instrument response function.
+
+    Args:
+        dataset_manifest (dict): dataset manifest dictionary returned from build_dataset_from_reduced_files()
+        output_path (str): output file path to which this method will write a reduced FITS file
+        pixel_size (float): pixel size in arcsec.
+    """
+    config_dict = config.build_config_for_element(dataset_manifest['unit_instrument'].lower(),
+                                                  dataset_manifest['unit_id'].upper())
+    fiber_x, fiber_y = fiber.load_fiber_positions(dataset_manifest['unit_instrument'],
+                                                  dataset_manifest['ndithers'],
+                                                  dataset_manifest['dither_number'],
+                                                  config_dict)
+
+    def_wave = wavelength.get_rectified_wavelength(config_dict)
+
+    reduced_spectra, reduced_error, header = io.load_reduced_data(dataset_manifest['in_folder'],
+                                                                  dataset_manifest['reduced_files'])
+
+    fiber_area = np.pi * config_dict['fiber_radius'] **2
+    logger.info('Building Cube')
+    data_cube, x_grid, y_grid = cube.make_cube(def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
+                                               pixel_size=pixel_size, method='gdw', k=7)
+    io.write_cube('test.fits', data_cube, def_wave, header, x_grid, y_grid, pixel_size,
+                  overwrite=True)
+    calspectrum_table = io.load_calspec_spectrum(standard_name)
+    # 2) load_data of standard star: Open reduced fiber spectra from a directory.
+    # 3) build_psf_interpolator    : Build a Moffat PSF interpolator over radius.
+    # 4) fit_psf                   : Fit source X/Y and FWHM vs wavelength.
+    # 5) build_psf_weights         : Turn PSF model into fiber weights.
+    # 6) get_spectrum              : Extract an optimal 1D spectrum.
+    # 7) correction extinction     : Correct with an extinction curve + airmass.
+    # 8) grab standard star spectrum: Load reference standard star SED.
+    # 9) measure_response          : Compute the instrument response function.
