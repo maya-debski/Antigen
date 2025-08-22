@@ -1,9 +1,12 @@
+import logging
+
 import numpy as np
 from astropy.stats import biweight_location as biweight
 from astropy.modeling.functional_models import Moffat2D
 from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import least_squares
 
+logger = logging.getLogger('antigen.psf')
 
 def build_psf_interpolator(r, seeing, scale=0.2, alpha=3.5, fiber_radius=2.1):
     """
@@ -82,7 +85,7 @@ def _psf_residuals(params, fiber_x, fiber_y, fiber_flux, fiber_error, interp):
     return residuals
 
 
-def fit_psf(data, error, fiber_x, fiber_y, interp,
+def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y,
             extraction_radius=20., Nchunks=20):
     """
     Fit the PSF to fiber data in chunks.
@@ -93,6 +96,8 @@ def fit_psf(data, error, fiber_x, fiber_y, interp,
         fiber_x (ndarray): Fiber X coordinates.
         fiber_y (ndarray): Fiber Y coordinates.
         interp (LinearNDInterpolator): PSF flux interpolator.
+        initial_x (float): initial guess for star x coordinates.
+        initial_y (float): initial guess for star y coordinates.
         extraction_radius (float, optional): Extraction radius (arcsec).
         Nchunks (int, optional): Number of chunks. Default is 20.
 
@@ -116,9 +121,7 @@ def fit_psf(data, error, fiber_x, fiber_y, interp,
 
         # Use brightest fiber as initial guess
         # Add an option for a guess??
-        x_init = fiber_x[np.nanargmax(fiber_flux)]
-        y_init = fiber_y[np.nanargmax(fiber_flux)]
-        fiber_dist = np.sqrt((fiber_x - x_init) ** 2 + (fiber_y - y_init) ** 2)
+        fiber_dist = np.sqrt((fiber_x - initial_x) ** 2 + (fiber_y - initial_y) ** 2)
         sel = np.isfinite(fiber_flux) & (fiber_dist < extraction_radius)
 
         # fiber-weighted initial x,y positions
@@ -131,13 +134,13 @@ def fit_psf(data, error, fiber_x, fiber_y, interp,
         # Fit the PSF restricted to the fibers within extraction radius / 2.
         result = least_squares(
             _psf_residuals, x0=initial,
-            args=(fiber_x[sel] - x_init, fiber_y[sel] - y_init,
+            args=(fiber_x[sel] - initial_x, fiber_y[sel] - initial_y,
                   fiber_flux[sel], fiber_error[sel], interp)
         )
 
         params = result.x
-        params[0] += x_init
-        params[1] += y_init
+        params[0] += initial_x
+        params[1] += initial_y
         source_x[idx] = params[0]
         source_y[idx] = params[1]
         source_fwhm[idx] = params[2]
