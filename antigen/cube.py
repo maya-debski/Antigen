@@ -4,7 +4,8 @@ from scipy.interpolate import griddata, Rbf
 from scipy.spatial import cKDTree
 
 def fibers_to_image(x, y, flux, fiber_area, bounds=[-10., 10., -10., 10],
-                    pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5):
+                    pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
+                    sigma=1.0):
     """
     Create a synthetic image from non-uniform fiber locations and flux values.
 
@@ -20,9 +21,10 @@ def fibers_to_image(x, y, flux, fiber_area, bounds=[-10., 10., -10., 10],
             - "linear"  : linear interpolation (griddata)
             - "cubic"   : cubic interpolation (griddata)
             - "rbf"     : radial basis function interpolation
-            - "idw"     : inverse-distance weighting
+            - "gdw"     : inverse-distance weighting
         rbf_func (str): radial basis function (for method="rbf").
-        k (int): number of neighbors for IDW.
+        k (int): number of neighbors for GDW.
+        sigma (float): standard deviation for GDW.
 
     Returns:
         img (ndarray): synthetic image on uniform grid
@@ -44,14 +46,18 @@ def fibers_to_image(x, y, flux, fiber_area, bounds=[-10., 10., -10., 10],
         rbf = Rbf(x, y, flux, function=rbf_func)
         img = rbf(X, Y)
 
-    elif method == "idw":
+    elif method == "gdw":
         # Inverse Distance Weighting
         tree = cKDTree(np.c_[x, y])
         dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k)
-        # Avoid division by zero
-        dist = np.where(dist == 0, 1e-12, dist)
-        weights = 1.0 / dist
+        # Gaussian weights based on seeing sigma
+        # dist has shape (n_points, k)
+        weights = np.exp(-0.5 * (dist / sigma) ** 2)
+
+        # Normalize
         weights /= weights.sum(axis=1)[:, None]
+
+        # Weighted sum of flux
         img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
 
     else:
@@ -97,8 +103,8 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
     y_min, y_max = np.min(fiber_y), np.max(fiber_y)
 
     # Estimate output dimensions
-    nx = int(np.ceil((x_max - x_min) / pixel_size)) + 1
-    ny = int(np.ceil((y_max - y_min) / pixel_size)) + 1
+    nx = int((x_max - x_min) / pixel_size) + 1
+    ny = int((y_max - y_min) / pixel_size) + 1
 
     # Allocate cube
     cube = np.zeros((len(wavelength), ny, nx), dtype=float)
