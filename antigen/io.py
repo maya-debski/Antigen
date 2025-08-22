@@ -523,6 +523,8 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
 
     hdr["CDELT1"] = pixel_size
     hdr["CDELT2"] = pixel_size
+    hdr["CD1_1"] = pixel_size
+    hdr["CD2_2"] = pixel_size
     hdr["CDELT3"] = delta_lambda
 
     hdr["CRPIX1"] = 1
