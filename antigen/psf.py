@@ -85,7 +85,7 @@ def _psf_residuals(params, fiber_x, fiber_y, fiber_flux, fiber_error, interp):
     return residuals
 
 
-def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y,
+def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelength,
             extraction_radius=20., Nchunks=20):
     """
     Fit the PSF to fiber data in chunks.
@@ -98,6 +98,7 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y,
         interp (LinearNDInterpolator): PSF flux interpolator.
         initial_x (float): initial guess for star x coordinates.
         initial_y (float): initial guess for star y coordinates.
+        wavelength (ndarray): wavelength array.
         extraction_radius (float, optional): Extraction radius (arcsec).
         Nchunks (int, optional): Number of chunks. Default is 20.
 
@@ -113,7 +114,8 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y,
     source_y = np.zeros_like(source_x)
     source_fwhm = np.zeros_like(source_x)
     indices = np.arange(data.shape[1])
-    little_inds = [np.mean(xi) for xi in np.array_split(indices, Nchunks)]
+    little_inds = [int(np.mean(xi)) for xi in np.array_split(indices, Nchunks)]
+    little_waves = wavelength[little_inds]
 
     for idx, (dchunk, echunk) in enumerate(zip(datachunks, errorchunks)):
         fiber_flux = biweight(dchunk, ignore_nan=True, axis=1)
@@ -139,16 +141,14 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y,
         )
 
         params = result.x
-        params[0] += initial_x
-        params[1] += initial_y
         source_x[idx] = params[0]
         source_y[idx] = params[1]
         source_fwhm[idx] = params[2]
-    source_x = np.polyval(np.polyfit(little_inds, source_x, 2), indices)
-    source_y = np.polyval(np.polyfit(little_inds, source_y, 2), indices)
-    source_fwhm = np.polyval(np.polyfit(little_inds, source_fwhm, 2), indices)
+    poly_x = np.polyfit(little_waves, source_x, 2)
+    poly_y = np.polyfit(little_waves, source_y, 2)
+    poly_fwhm = np.polyfit(little_waves, source_fwhm, 2)
 
-    return source_x, source_y, source_fwhm
+    return source_x, source_y, source_fwhm, poly_x, poly_y, poly_fwhm
 
 
 def build_psf_weights(source_x, source_y, source_fwhm, fiber_x, fiber_y,
