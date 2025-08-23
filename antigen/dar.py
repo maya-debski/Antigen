@@ -17,4 +17,4 @@ class DARModel:
         dx = np.polyval(self.coeffs_x, wavelength)
         dy = np.polyval(self.coeffs_y, wavelength)
 
-        return fiber_x + dx, fiber_y + dy
+        return fiber_x - dx, fiber_y - dy
