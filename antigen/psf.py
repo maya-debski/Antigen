@@ -144,8 +144,8 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelen
         source_x[idx] = params[0]
         source_y[idx] = params[1]
         source_fwhm[idx] = params[2]
-    poly_x = np.polyfit(little_waves, source_x, 2)
-    poly_y = np.polyfit(little_waves, source_y, 2)
+    poly_x = np.polyfit(little_waves, source_x - source_x[int(Nchunks/2)], 2)
+    poly_y = np.polyfit(little_waves, source_y - source_y[int(Nchunks/2)], 2)
     poly_fwhm = np.polyfit(little_waves, source_fwhm, 2)
 
     return source_x, source_y, source_fwhm, poly_x, poly_y, poly_fwhm
