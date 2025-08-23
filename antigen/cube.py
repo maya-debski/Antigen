@@ -73,7 +73,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
 
 def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
               dar_model=None, pixel_size=1.0, method="linear",
-              rbf_func="multiquadric", k=5):
+              rbf_func="multiquadric", k=5, sigma=1.0):
     """Construct a 3D datacube from fiber spectra and positions.
 
     This function generates a spectral cube by mapping fiber spectra onto
@@ -94,6 +94,7 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         method (str, optional): interpolation method
         rbf_func (str, optional): Radial basis function type if `method="rbf"`. Default is "multiquadric".
         k (int, optional): Number of nearest neighbors used if `method="idw"`. Default is 5.
+        sigma (float, optional): standard deviation for GDW.
 
     Returns:
         cube (ndarray):
@@ -126,7 +127,7 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         image, x_grid, y_grid = fibers_to_image(
             x_shift, y_shift, flux, fiber_area, bounds=bounds,
             pixel_size=pixel_size, method=method,
-            rbf_func=rbf_func, k=k
+            rbf_func=rbf_func, k=k, sigma=sigma,
         )
         cube[i] = image
 
