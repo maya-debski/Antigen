@@ -273,7 +273,7 @@ def get_optimal_spectrum(data, error, weights):
     return spectrum, spectrum_error
 
 
-def convert_spectral_units(spectrum, wave, area=5.81e4):
+def convert_spectral_units(spectrum, wave, exposure_time, area=5.81e4):
     '''
     Incoming units are e- / A
 
@@ -282,9 +282,11 @@ def convert_spectral_units(spectrum, wave, area=5.81e4):
     Args:
         spectrum (ndarray): 2D array of fiber spectra (units: e- / A)
         wave (ndarray): 1D array of fiber wavelengths
+        exposure_time (ndarray): 1D array of fiber exposure times
+        area (float): Area of telescope mirror in cm^2
 
     Returns:
         spectrum (array): 2D array of fiber in (units: ergs / S / A/ cm^2)
     '''
     flux_factor = (6.626e-27 * 2.99792e18 / wave)
-    return spectrum / area * flux_factor
+    return spectrum / area * flux_factor / exposure_time
