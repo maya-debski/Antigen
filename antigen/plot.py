@@ -56,17 +56,18 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
 
 
 def plot_spectrum_with_standard(spectrum, spectrum_error, wavelength, standard_star_wavelength,
-                                standard_star_flux, outfolder=None, ylims=None, xlims=None):
+                                standard_star_flux, throughput, outfolder=None, ylims=None, xlims=None):
     """
     Purpose:
         Plot a science spectrum with uncertainties, overlaid with a standard star flux.
 
     Args:
-        spectrum (np.ndarray): 1D science spectrum (flux units).
-        spectrum_error (np.ndarray): 1D uncertainties for the science spectrum.
-        wavelength (np.ndarray): 1D wavelength array for the science spectrum.
-        standard_star_wavelength (np.ndarray): 1D wavelength array for the standard star.
-        standard_star_flux (np.ndarray): 1D flux array for the standard star.
+        spectrum (ndarray): 1D science spectrum (flux units).
+        spectrum_error (ndarray): 1D uncertainties for the science spectrum.
+        wavelength (ndarray): 1D wavelength array for the science spectrum.
+        standard_star_wavelength (ndarray): 1D wavelength array for the standard star.
+        standard_star_flux (ndarray): 1D flux array for the standard star.
+        throughput (ndarray): 1D throughput array
         outfolder (str, optional): Directory to save PNG file. If None, plot is not saved.
         ylims (tuple, optional): y-axis limits for the flux plot.
         xlims (tuple, optional): x-axis limits for the flux plot.
@@ -84,10 +85,10 @@ def plot_spectrum_with_standard(spectrum, spectrum_error, wavelength, standard_s
     standard_on_science_grid = interp_flux(wavelength)
 
     # Create figure
-    plt.figure(figsize=(10, 6))
-    fig = plt.gcf()
-    ax = plt.gca()
+    fig, axs = plt.subplots(2, 1, figsize=(10, 10), sharex=True,
+                            gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.1})
 
+    ax = axs[0]
     # Plot science spectrum with error bars
     ax.plot(wavelength, spectrum, color="tab:blue", lw=1.5, label="Science Spectrum")
     ax.fill_between(
@@ -110,18 +111,29 @@ def plot_spectrum_with_standard(spectrum, spectrum_error, wavelength, standard_s
     )
 
     # Axis formatting
-    ax.set_xlabel("Wavelength")
-    ax.set_ylabel("Flux")
+    ax.set_ylabel(r"F$_{\lambda}$ (erg cm$^{-2}$ s$^{-1}$ $\mathrm{\AA}$$^{-1}$)")
     if xlims is not None:
         ax.set_xlim(xlims)
     if ylims is not None:
         ax.set_ylim(ylims)
-    ax.minorticks_on()
-    ax.tick_params(axis='both', which='both', direction='in', top=True, right=True)
-    ax.tick_params(axis='both', which='major', length=8, width=2)
-    ax.tick_params(axis='both', which='minor', length=4, width=1)
-    ax.legend()
 
+    ax = axs[1]
+    ax.plot(
+        wavelength,
+        throughput,
+        color="black",
+        lw=1.2,
+        linestyle="-",
+        label="Throughput"
+    )
+    ax.set_xlabel("Wavelength")
+    ax.set_ylabel("Throughput")
+    for ax in axs:
+        ax.legend()
+        ax.minorticks_on()
+        ax.tick_params(axis='both', which='both', direction='in', top=True, right=True)
+        ax.tick_params(axis='both', which='major', length=8, width=2)
+        ax.tick_params(axis='both', which='minor', length=4, width=1)
     # Save file
     if outfolder is not None:
         Path(outfolder).mkdir(parents=True, exist_ok=True)
