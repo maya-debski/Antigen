@@ -57,6 +57,22 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
+def get_fiber_bounds(fiber_x, fiber_y):
+    """
+    Computes the upper and lower bounds for the fiber x,y positions
+
+    Args:
+        fiber_x (ndarray): Fiber x coordinates.
+        fiber_y (ndarray): Fiber y coordinates.
+
+    Returns:
+        bounds (list): Bounds around input fibers fiber
+    """
+    x_min, x_max = np.min(fiber_x), np.max(fiber_x)
+    y_min, y_max = np.min(fiber_y), np.max(fiber_y)
+    bounds = [x_min, x_max, y_min, y_max]
+    return bounds
+
 def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
     """
     Load fiber base positions and apply dither offsets.
