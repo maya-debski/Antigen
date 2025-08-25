@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
-import matplotlib.cm as mpl_cm
+from scipy.interpolate import interp1d
 
 plt.rcParams["font.family"] = "Times New Roman"
 sns.set_context('talk')
@@ -52,6 +53,82 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     # Save the plot as a PNG file with the given name
     plt.savefig(os.path.join(outfolder, 'wavelength_measures.png'))
     return None
+
+
+def plot_spectrum_with_standard(spectrum, spectrum_error, wavelength, standard_star_wavelength,
+                                standard_star_flux, outfolder=None, ylims=None, xlims=None):
+    """
+    Purpose:
+        Plot a science spectrum with uncertainties, overlaid with a standard star flux.
+
+    Args:
+        spectrum (np.ndarray): 1D science spectrum (flux units).
+        spectrum_error (np.ndarray): 1D uncertainties for the science spectrum.
+        wavelength (np.ndarray): 1D wavelength array for the science spectrum.
+        standard_star_wavelength (np.ndarray): 1D wavelength array for the standard star.
+        standard_star_flux (np.ndarray): 1D flux array for the standard star.
+        outfolder (str, optional): Directory to save PNG file. If None, plot is not saved.
+        ylims (tuple, optional): y-axis limits for the flux plot.
+        xlims (tuple, optional): x-axis limits for the flux plot.
+    Returns:
+        fig (matplotlib.figure.Figure): The matplotlib figure object.
+        ax (matplotlib.axes.Axes): The matplotlib axis object.
+    """
+    # Interpolate standard star flux onto science wavelength grid for visual comparison
+    interp_flux = interp1d(
+        standard_star_wavelength,
+        standard_star_flux,
+        bounds_error=False,
+        fill_value="extrapolate"
+    )
+    standard_on_science_grid = interp_flux(wavelength)
+
+    # Create figure
+    plt.figure(figsize=(10, 6))
+    fig = plt.gcf()
+    ax = plt.gca()
+
+    # Plot science spectrum with error bars
+    ax.plot(wavelength, spectrum, color="tab:blue", lw=1.5, label="Science Spectrum")
+    ax.fill_between(
+        wavelength,
+        spectrum - spectrum_error,
+        spectrum + spectrum_error,
+        color="tab:blue",
+        alpha=0.3,
+        label="Uncertainty"
+    )
+
+    # Plot standard star interpolated onto science grid
+    ax.plot(
+        wavelength,
+        standard_on_science_grid,
+        color="tab:red",
+        lw=1.2,
+        linestyle="--",
+        label="Standard Star (interpolated)"
+    )
+
+    # Axis formatting
+    ax.set_xlabel("Wavelength")
+    ax.set_ylabel("Flux")
+    if xlims is not None:
+        ax.set_xlim(xlims)
+    if ylims is not None:
+        ax.set_ylim(ylims)
+    ax.minorticks_on()
+    ax.tick_params(axis='both', which='both', direction='in', top=True, right=True)
+    ax.tick_params(axis='both', which='major', length=8, width=2)
+    ax.tick_params(axis='both', which='minor', length=4, width=1)
+    ax.legend()
+
+    # Save file
+    if outfolder is not None:
+        Path(outfolder).mkdir(parents=True, exist_ok=True)
+        outfile = os.path.join(outfolder, "spectrum_with_standard.png")
+        plt.savefig(outfile, dpi=200)
+
+    return fig, ax
 
 
 def plot_trace(full_trace, chunk_trace, chunk_column, fiber_indices=[5, 130, 230], outfolder=None, ylims=(-10,10)):
