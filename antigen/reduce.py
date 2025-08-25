@@ -79,8 +79,11 @@ def reduce_science(data_filename, master_bias, master_flat, trace_array, good_fi
 
     # Apply flat-field correction
     obs_exp_time = obs_header['EXPTIME']
-    specrect[:] /= (ftf_correction * obs_exp_time)
-    errrect[:] /= (ftf_correction * obs_exp_time)
+    specrect = spectra.convert_spectral_units(specrect, def_wave, obs_exp_time)
+    errrect = spectra.convert_spectral_units(errrect, def_wave, obs_exp_time)
+
+    specrect[:] /= (ftf_correction)
+    errrect[:] /= (ftf_correction)
 
     # Generate a sky mask and the continuum for sky subtraction
     skymask, continuum = sky.get_skymask(biweight(specrect, axis=0, ignore_nan=True), size=25)
