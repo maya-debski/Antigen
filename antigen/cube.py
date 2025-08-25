@@ -3,6 +3,8 @@ import numpy as np
 from scipy.interpolate import griddata, Rbf
 from scipy.spatial import cKDTree
 
+from antigen import fiber
+
 def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10., -10., 10],
                     pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
                     sigma=1.0):
@@ -113,7 +115,7 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
 
     # Allocate cube
     cube = np.zeros((len(wavelength), ny, nx), dtype=float)
-    bounds = [x_min, x_max, y_min, y_max]
+    bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
 
     # Loop over wavelength bins
     for i, lam in enumerate(wavelength):
