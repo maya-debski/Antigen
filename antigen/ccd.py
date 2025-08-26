@@ -1,49 +1,59 @@
 import numpy as np
-from astropy.io import fits
 from astropy.stats import biweight_location as biweight
 from astropy.time import Time
 
 from scipy.interpolate import LSQUnivariateSpline
-from antigen import config
+
+from antigen.io import load_fits
 
 
-def prep_image(image):
+def prep_image(image, config_dict):
     """
     Measure the bias in the overscan region, trim the overscan and subtract the bias
     Perform any flips that are necessary
 
     Args:
         image (np.ndarray): FITS 2D image data array
+        config_dict (dict): Dictionary of configuration parameters
 
     Returns:
         image (np.ndarray): Oriented fits 2D image data array, corrected for what amplifier it comes from.
     """
-    # TODO: update docstring to match input args, function signature
-    # TODO: the amplifier flip and over-scan should be read from a detector CONFIG
     # Should be read by config rather than hardcoded
-    overscan_length = 32
-    flipx = True
-    flipy = False
+    overscan_length = config_dict['overscan_length']
+    flip_x = config_dict['flip_x']
+    flip_y = config_dict['flip_y']
+    rotate = config_dict['rotate']
+    add_rows = config_dict['add_rows']
 
     bias_value = biweight(image[:, -(overscan_length-2):])
     image = image[:, :-overscan_length] - bias_value
-    if flipx:
+    if flip_x:
         image = np.flip(image, axis=1)
-    if flipy:
+    if flip_y:
         image = np.flip(image, axis=0)
+    if rotate:
+        image = np.rot90(image)
+    if add_rows:
+        # Initialize a new image array with additional rows for padding
+        new_image = np.zeros((len(image) + add_rows, image.shape[1]))
+
+        # Copy the processed image into the new array, leaving the top rows as padding
+        new_image[add_rows:, :] = image
+        image = new_image
 
     return image
 
 
-def base_reduction(data, masterbias, channel):
+def base_reduction(data, master_bias, config_dict):
     """
     Perform basic image reduction by applying bias subtraction,
     gain correction, and calculating the error estimate.
 
     Args:
         data (np.ndarray): 2d numpy array, Raw input image to be reduced.
-        masterbias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
-        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
+        master_bias (np.ndarray): 2d numpy array, Master bias frame to be subtracted from the image.
+        config_dict: Dictionary of configuration parameters
 
     Returns:
         image (np.ndarray): 2d numpy array, Reduced image with bias subtracted and gain applied.
@@ -52,101 +62,48 @@ def base_reduction(data, masterbias, channel):
     # TODO: update docstring to match input args, function signature
 
     # Preprocess the raw image (e.g., background subtraction, padding)
-    image = prep_image(data)
+    image = prep_image(data, config_dict)
 
     # Subtract the master bias from the image
-    image[:] -= masterbias
-
-    CHANNEL_DETECTOR, _ = config.get_channel_config_virus2()
+    image[:] -= master_bias
 
     # Apply gain correction to convert counts to electrons
-    gain = CHANNEL_DETECTOR[channel]['gain']
+    gain = config_dict['gain']
     image[:] *= gain
 
     # Calculate the error estimate (read noise + photon noise)
-    rdnoise = CHANNEL_DETECTOR[channel]['rdnoise']
-    error_estimate = np.sqrt(rdnoise**2 + np.where(image > 0., image, 0.))
+    read_noise = config_dict['read_noise']
+    error_estimate = np.sqrt(read_noise**2 + np.where(image > 0., image, 0.))
 
     # Return the reduced image and the error estimate
     return image, error_estimate
 
 
-def make_master_cal(filenames, channel):
+def make_master_cal(filenames, config_dict):
     """
-    Purpose: Load all files, slice array into 4 channels, select single channel slice, compute aggregate, return result
+    Load a list of calibration FITS files, apply basic CCD preprocessing, and create a master calibration frame.
 
     Args:
-        filenames (list(str)):
-        channel (str): 'g', 'b'
+        filenames (list(str)): list of filenames
+        config_dict: Dictionary of configuration parameters
     Returns:
+        master_cal (np.ndarray): median stacked calibration frame
+        master_cal_time (float): average MJD of the frames that were stacked
     """
     # Extract from the files, re-oriented by prep_image()
-    frames = [prep_image(fits.open(file)[0].data) for file in filenames]
-
     # Extract observation times (MJD) for frames in the current chunk
-    times = [Time(fits.open(file)[0].header['DATE-OBS']).mjd for file in filenames]
+    frames, times = ([], [])
+    for filename in filenames:
+        frame, header = load_fits(filename)
+        prepped_frame = prep_image(frame, config_dict)
+        frames.append(prepped_frame)
+        mjd = Time(header['DATE-OBS']).mjd
+        times.append(mjd)
 
     # Compute median frame and the mean time for the current chunk
     master_cal      = np.nanmedian(frames, axis=0)  # maybe biweight() as an alternate method
     master_cal_time = np.mean(times)
     return master_cal, master_cal_time
-
-
-def make_mastercal_list(filenames, breakind, channel):
-    """
-    Creates a list of master calibration images and corresponding times
-    by splitting the input list of filenames at given indices.
-
-    Args:
-        filenames (list(str)): List of FITS file paths containing calibration data.
-        breakind (list(int)): List of indices to split the filenames into different chunks.
-        channel (str): one of four channel char identifiers, e.g. 'g', 'b', 'r' or 'd'
-
-    Returns
-        masters (list(np.ndarray)): List of median calibration images (2D arrays) for each chunk.
-        times (list(float)): List of mean observation times (MJD floats) corresponding to each chunk.
-    """
-
-    # Define break points for splitting the filenames into chunks
-    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
-    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
-
-    masters = []  # List to store median calibration images
-    times = []    # List to store mean observation times
-
-    # Iterate over the chunks defined by breakind1 and breakind2
-    for bk1, bk2 in zip(breakind1, breakind2):
-        # Collect and preprocess frames within the current chunk
-        frames = [prep_image(fits.open(f)[0].data, channel)
-                  for cnt, f in enumerate(filenames)
-                  if ((cnt > bk1) * (cnt < bk2))]  # Only include frames in the current chunk
-
-        # Extract observation times (MJD) for frames in the current chunk
-        t = [Time(fits.open(f)[0].header['DATE-OBS']).mjd
-             for cnt, f in enumerate(filenames)
-             if ((cnt > bk1) * (cnt < bk2))]
-
-
-        # Append the median frame and the mean time for the current chunk
-        masters.append(np.nanmedian(frames, axis=0))
-        times.append(np.mean(t))
-
-    return masters, times
-
-
-def get_cal_index(mtime, time_list):
-    """
-    Finds the index of the closest calibration time to a given observation time, by
-    finding the minimized absolute time difference between mtime and all time_list elements.
-
-    Args:
-        mtime (float): The observation time (MJD float) to compare against the calibration times.
-        time_list (list(float)): A list of calibration times (MJD floats).
-
-    Returns:
-        index (int): The index of the closest calibration time in `time_list`.
-    """
-    return np.argmin(np.abs(mtime - np.array(time_list)))
 
 
 def make_mask_for_trace(image, trace, fiber_profile_mask_size=7):

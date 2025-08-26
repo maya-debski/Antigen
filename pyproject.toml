@@ -8,18 +8,20 @@ version = "2025.07.24"
 description = "Data reduction software for the VIRUS-family of spectrographs, including GCMS and VIRUS2"
 authors = [
     {name = "Maya Debski", email = "maya.h.debski@gmail.com"},
-    {name = "Greg Zeimann", email = "grzeimann@gmail.com"},
+    {name = "Greg Zeimann", email = "gregz@astro.as.utexas.edu"},
     {name = "Jason Vestuto", email = "jason.vestuto@austin.utexas.edu"},
 ]
 maintainers = [
     {name = "Maya Debski", email = "maya.h.debski@gmail.com"},
-    {name = "Greg Zeimann", email = "grzeimann@gmail.com"},
+    {name = "Greg Zeimann", email = "gregz@astro.as.utexas.edu"},
 ]
 dependencies = [
     'astropy',
+    'getCalspec',
     'numpy',
     'matplotlib',
     'pandas',
+    'photutils',
     'pyyaml',
     'psutil',
     'scikit-learn',
@@ -35,9 +37,10 @@ include = ['antigen', 'antigen.*']
 [tool.setuptools]
 include-package-data = true
 script-files = [
-    'scripts/antigen_build_manifest_virus2.py',
+    'scripts/antigen_build_manifest.py',
+    'scripts/antigen_measure_response.py',
     'scripts/antigen_read_manifest.py',
-    'scripts/antigen_reduce_virus2.py',
+    'scripts/antigen_reduce.py',
     'scripts/antigen_reduce_virus2_manifest.py',
     'scripts/antigen_view_fits.py',
     'scripts/antigen_prepare_gcms_dataset.py',

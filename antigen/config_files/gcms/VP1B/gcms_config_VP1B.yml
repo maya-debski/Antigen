@@ -10,12 +10,13 @@ sample_fiber_indices:
   - 230
 start_wavelength: 3570
 end_wavelength: 5810
-detector_dimensions: 2048 # 2048x2048, if binned, 1024x2048
-arc_flux_limit: 100
+detector_dimensions:
+  X: 1024 # X
+  Y: 2048 # Y
+arc_flux_limit: 5
 telescope_diameter: 2.72
-overscan_length:
-  binned: 32 # need to subtract 2 for bias value
-  unbinned: 32 # need to subtract 4 for bias value
+overscan_length: 32
 flip_x: false
 flip_y: false
 rotate: false
+add_rows: 20

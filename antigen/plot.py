@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
-import matplotlib.cm as mpl_cm
+from scipy.interpolate import interp1d
 
 plt.rcParams["font.family"] = "Times New Roman"
 sns.set_context('talk')
@@ -54,7 +55,95 @@ def plot_wavelength(lines, W, wavelength, outfolder=None):
     return None
 
 
-def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outfolder=None, ylims=(-10,10)):
+def plot_spectrum_with_standard(spectrum, spectrum_error, wavelength, standard_star_wavelength,
+                                standard_star_flux, throughput, outfolder=None, ylims=None, xlims=None):
+    """
+    Purpose:
+        Plot a science spectrum with uncertainties, overlaid with a standard star flux.
+
+    Args:
+        spectrum (ndarray): 1D science spectrum (flux units).
+        spectrum_error (ndarray): 1D uncertainties for the science spectrum.
+        wavelength (ndarray): 1D wavelength array for the science spectrum.
+        standard_star_wavelength (ndarray): 1D wavelength array for the standard star.
+        standard_star_flux (ndarray): 1D flux array for the standard star.
+        throughput (ndarray): 1D throughput array
+        outfolder (str, optional): Directory to save PNG file. If None, plot is not saved.
+        ylims (tuple, optional): y-axis limits for the flux plot.
+        xlims (tuple, optional): x-axis limits for the flux plot.
+    Returns:
+        fig (matplotlib.figure.Figure): The matplotlib figure object.
+        ax (matplotlib.axes.Axes): The matplotlib axis object.
+    """
+    # Interpolate standard star flux onto science wavelength grid for visual comparison
+    interp_flux = interp1d(
+        standard_star_wavelength,
+        standard_star_flux,
+        bounds_error=False,
+        fill_value="extrapolate"
+    )
+    standard_on_science_grid = interp_flux(wavelength)
+
+    # Create figure
+    fig, axs = plt.subplots(2, 1, figsize=(10, 10), sharex=True,
+                            gridspec_kw={'height_ratios': [1, 1], 'hspace': 0.1})
+
+    ax = axs[0]
+    # Plot science spectrum with error bars
+    ax.plot(wavelength, spectrum, color="tab:blue", lw=1.5, label="Science Spectrum")
+    ax.fill_between(
+        wavelength,
+        spectrum - spectrum_error,
+        spectrum + spectrum_error,
+        color="tab:blue",
+        alpha=0.3,
+        label="Uncertainty"
+    )
+
+    # Plot standard star interpolated onto science grid
+    ax.plot(
+        wavelength,
+        standard_on_science_grid,
+        color="tab:red",
+        lw=1.2,
+        linestyle="--",
+        label="Standard Star (interpolated)"
+    )
+
+    # Axis formatting
+    ax.set_ylabel(r"F$_{\lambda}$ (erg cm$^{-2}$ s$^{-1}$ $\mathrm{\AA}$$^{-1}$)")
+    if xlims is not None:
+        ax.set_xlim(xlims)
+    if ylims is not None:
+        ax.set_ylim(ylims)
+
+    ax = axs[1]
+    ax.plot(
+        wavelength,
+        throughput,
+        color="black",
+        lw=1.2,
+        linestyle="-",
+        label="Throughput"
+    )
+    ax.set_xlabel("Wavelength")
+    ax.set_ylabel("Throughput")
+    for ax in axs:
+        ax.legend()
+        ax.minorticks_on()
+        ax.tick_params(axis='both', which='both', direction='in', top=True, right=True)
+        ax.tick_params(axis='both', which='major', length=8, width=2)
+        ax.tick_params(axis='both', which='minor', length=4, width=1)
+    # Save file
+    if outfolder is not None:
+        Path(outfolder).mkdir(parents=True, exist_ok=True)
+        outfile = os.path.join(outfolder, "spectrum_with_standard.png")
+        plt.savefig(outfile, dpi=200)
+
+    return fig, ax
+
+
+def plot_trace(full_trace, chunk_trace, chunk_column, fiber_indices=[5, 130, 230], outfolder=None, ylims=(-10,10)):
     """
     Purpose: Plots the residuals of the trace correction and saves the figure.
 
@@ -62,7 +151,7 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
         full_trace (np.ndarray): 2D ndarray, The array of trace correction residuals to be plotted.
         chunk_trace (np.ndarray?): undocumented
         chunk_column (np.ndarray?) undocumented
-        orders (list): 'orders' of what? fibers? undocumented
+        fiber_indices (list): fiber indices to investigate the trace
         outfolder (str): directory to save PNG file
 
     Returns:
@@ -76,13 +165,13 @@ def plot_trace(full_trace, chunk_trace, chunk_column, orders=[5, 130, 230], outf
     plt.figure(figsize=(8, 7))
     fig = plt.gcf()  # Get Current Figure
 
-    colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(orders)))
-    for order, color in zip(orders, colors):
-        fiber_label = order+1
-        mean_trace = np.mean(full_trace[order])
-        plt.scatter(chunk_column, chunk_trace[order] - mean_trace, color='k', edgecolor='k', s=30,)
-        plt.scatter(chunk_column, chunk_trace[order] - mean_trace, color=color, edgecolor='k', s=20, alpha=0.5)
-        plt.plot(full_trace_X, full_trace[order] - mean_trace, color=color, lw=1, label=f'Fiber: {fiber_label}')
+    colors = plt.get_cmap('Set2')(np.linspace(0, 1, len(fiber_indices)))
+    for fiber_index, color in zip(fiber_indices, colors):
+        fiber_label = fiber_index+1
+        mean_trace = np.mean(full_trace[fiber_index])
+        plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color='k', edgecolor='k', s=30,)
+        plt.scatter(chunk_column, chunk_trace[fiber_index] - mean_trace, color=color, edgecolor='k', s=20, alpha=0.5)
+        plt.plot(full_trace_X, full_trace[fiber_index] - mean_trace, color=color, lw=1, label=f'Fiber: {fiber_label}')
 
     plt.legend()
 

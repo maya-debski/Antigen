@@ -1,6 +1,6 @@
 from importlib.resources import files
-from pathlib import Path
 import logging
+
 import yaml
 
 import numpy as np
@@ -322,6 +322,7 @@ def build_config_for_element(instrument, instrument_element,validate = False):
     config_lines, config_ifucen, config_throughput = read_config_files(instrument, instrument_element, validate)
 
     config_dict = {'instrument_element': config_yaml['instrument_element'],
+                   'instrument': instrument,
                    'gain': config_yaml['gain'],
                    'read_noise': config_yaml['read_noise'],
                    'fiber_radius': config_yaml['fiber_radius'],
@@ -330,6 +331,7 @@ def build_config_for_element(instrument, instrument_element,validate = False):
                    'start_wavelength': config_yaml['start_wavelength'],
                    'end_wavelength': config_yaml['end_wavelength'],
                    'detector_dimensions': config_yaml['detector_dimensions'],
+                   'add_rows': config_yaml['add_rows'],
                    'arc_flux_limit': config_yaml['arc_flux_limit'],
                    'telescope_diameter': config_yaml['telescope_diameter'],
                    'overscan_length': config_yaml['overscan_length'],
@@ -342,9 +344,9 @@ def build_config_for_element(instrument, instrument_element,validate = False):
                    'ifu_x': np.array(config_ifucen['ifu_x']),
                    'ifu_y': np.array(config_ifucen['ifu_y']),
                    'trace_row': np.array(config_ifucen['trace_row']),
-                   'exclude_fiber': np.array(config_ifucen['exclude_fiber']),
+                   'exclude_fiber': np.array(config_ifucen['exclude_fiber'], dtype=bool),
                    'wavelength': np.array(config_lines['wavelength']),
-                   'column': np.array(config_lines['column']),
+                   'column': np.array(config_lines['column'], dtype=float),
                    'throughput': np.array(config_throughput['throughput'])}
 
     return config_dict

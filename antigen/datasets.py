@@ -5,11 +5,43 @@ from pathlib import Path
 
 import numpy as np
 
-from antigen import io
-from antigen.io import get_fits_file_time
+from antigen.io import get_fits_file_time, get_fits_files_in_path
 
 logger = logging.getLogger('antigen.datasets')
 
+
+def parse_reduce_file_name(fits_filename):
+    """
+    Parse a FITS file name into components.
+
+    Example file names:
+        reduction_HD128_dither_2_20240606T051235_gcms_VP1B_multi.fits
+        reduction_HD141_20240606T051235_virus2_D3G_multi.fits
+    Args:
+        fits_filename (pathlike): full-path filename of reduced fits file (pathlib.Path object)
+    Returns:
+        info (dict): keys = ['target', 'dither_num', 'obs_date', 'instrument', 'element', file_name']
+    """
+
+    pattern = (
+        r"reduction_(?P<target>[A-Za-z0-9]+)"
+        r"(?:_dither_(?P<dither>\d+))?"
+        r"_(?P<date>\d{8}T\d{6})"
+        r"_(?P<instrument>[a-zA-Z0-9]+)"
+        r"_(?P<element>[a-zA-Z0-9]+)_multi"
+    )
+
+    path = Path(fits_filename).expanduser()
+    file_name_stem = path.stem
+
+    match = re.match(pattern, file_name_stem)
+    if not match:
+        return None
+
+    info = match.groupdict()
+    info["dither_number"] = int(info.pop("dither")) if info.get("dither") else 1
+    info["file_name"] = fits_filename.name
+    return info
 
 def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extension='.fits'):
     """
@@ -20,7 +52,7 @@ def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extens
 
     Note: Example expected filename pattern is
           ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-          VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
+          <instrument>_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
 
     Args:
         fits_filename (str, pathlike): full-path filename of FITS file containing VIRUS2 obs data, string or pathlib.Path object
@@ -90,7 +122,7 @@ def get_fits_filenames(root_path, instrument='VIRUS2', date=None, verbose=False)
         verbose (bool, optional): if True, print more info to console, defaults to False
 
     Returns:
-        file_names (list(dict)): List of files
+        file_names (list(str)): List of file name strings
     """
 
     logger.info(f'Searching for FITS files under in root_path={root_path} for date={date} ...')
@@ -102,6 +134,8 @@ def get_fits_filenames(root_path, instrument='VIRUS2', date=None, verbose=False)
     # find all files matching this file-tree glob pattern
     fits_filenames = sorted(date_dir.glob('*/*/*.fits'))
 
+    # Converting list of Paths to list of strings
+    fits_filenames = [str(filename) for filename in fits_filenames]
     if verbose:
         num_files = len(fits_filenames)
         logger.info(f'VERBOSE: Found {num_files} files under.')
@@ -139,99 +173,6 @@ def parse_fits_file_tree(root_path, instrument='VIRUS2', date=None, verbose=Fals
     return metadata_records
 
 
-def parse_file_dir_obs_id(file_name):
-    """
-    Purpose: Extract the obs ID string e.g. 0000001 from expected FITS obs filename pattern like the following:
-        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-
-    Args:
-        file_name (str): VIRUS2 obs FITS filename
-
-    Returns:
-        dir_obs_id (int): e.g. 1 for directory name string '0000001'
-    """
-    dir_name = Path(file_name).parent.parent.name
-    try:
-        dir_obs_id = int(dir_name)
-    except ValueError:
-        dir_obs_id = None
-    return dir_obs_id
-
-
-def get_fits_file_obs_ids(fits_file_names):
-    """
-    Purpose: Extract the obs ID string e.g. 0000001 from ALL fits_file_names passed in, assumed to be found in a VIRUS2 obs FITS file-tree
-    Note: Expected filename pattern is for each filename in the input list:
-        ROOT_PATH/VIRUS2/20250618/0000001/D3G/VIRUS2_20250618_0000005_test_D3G_exp01_20250619T003023.0_test.fits
-        VIRUS2_<obsdate>_<obsid>_<frametype>_<specid>_exp<exposureindex>_<utctime>_<userlabel>.fits
-
-    Args:
-        fits_file_names (list(str)): list of VIRUS2 obs FITS filenames
-
-    Returns:
-        obs_id_list (list(str)): list of string IDs for directory name string '0000001'
-
-    Note: replaces lines like [int(os.path.basename(os.path.dirname(os.path.dirname(fn)))) for fn in bias_filenames]
-    """
-    obs_id_list = list()
-    for filename in fits_file_names:
-        filename_metadata = parse_fits_file_name(filename)
-        if filename_metadata:
-            obs_id_list.append(filename_metadata['obs_id'])
-    return obs_id_list
-
-
-def get_file_block_break_indices(fits_file_names):
-    """
-    Purpose: for a given list of VIRUS2 FITS files, which have integer obs-id in their full path names,
-    find all the obs-ids, and find the location of the last ID before a "jump" or "break" larger than 1, e.g.
-        In [1]: obs_id_list = [1,2,3,10]
-        In [2]: np.where(np.diff(obs_id_list) > 1)[0]
-        Out[3]: array([2])
-
-    Args:
-        fits_file_names (list(str)): list of FITS filepaths, assumed to contain a substring like "/00001/"
-
-    Returns:
-        obs_id_break_inds (np.ndarray): a numpy array of the indices of the right-edge/last-element in each contiguous block for filenames
-            e.g. if obs_ids for the files are [1,2,3,11,12,13,21,22,23] then obs_id_break_inds = [2,5]
-    """
-    obs_id_list = get_fits_file_obs_ids(fits_file_names)
-    obs_id_ints = [int(thing) for thing in obs_id_list]
-    if len(obs_id_ints) > 1:
-        breaks = np.where(np.diff(obs_id_ints) > 1)
-        if len(breaks) > 0:
-            obs_id_break_inds = breaks[0]
-        else:
-            obs_id_break_inds = None
-    elif len(obs_id_ints) == 1:
-        obs_id_break_inds = None
-    else:
-        raise ValueError(f'Failed to compute gaps in obs_id_list={obs_id_list}')
-    return obs_id_break_inds
-
-
-def get_element_with_closest_time(element_list, time_list, target_time):
-    """
-    Purpose: Given a list of elements and a list of MJD times for those elements,
-    find the element that has a time closest to the target_time
-
-    Args:
-        element_list (list): list of elements corresponding to the times in time_list
-        time_list (list(numeric)): list of MJD times corresponding to the times for the elements in element_list
-        target_time (numeric): MJD time
-
-    Returns:
-        closest_element: element for closest_time from time_list compared to target_time
-    """
-    # Find index of time closest to target_time
-    index = np.argmin(np.abs(np.array(time_list) - target_time))
-
-    # Use the index directly in the original file list
-    closest_element = element_list[index]
-    return closest_element
-
-
 def get_elements_within_time_radius(element_list, time_list, time_center, time_radius):
     """
     Purpose: Given a list of elements and a list of MJD times for those elements,
@@ -246,47 +187,11 @@ def get_elements_within_time_radius(element_list, time_list, time_center, time_r
     Returns:
         elements_inside: elements within the time_radius of the time_center
     """
-    time_distances = np.abs(np.array(time_list) - time_center)
-    mask_inside = (time_distances <= time_radius)
-    elements_inside = np.array(element_list)[mask_inside].tolist()
+    elements_inside = [
+        element for element, time in zip(element_list, time_list)
+        if abs(time - time_center) <= time_radius
+    ]
     return elements_inside
-
-
-def get_file_breakind_times(filenames, breakind):
-    """
-    Creates a list of master calibration images and corresponding times
-    by splitting the input list of filenames at given indices.
-
-    Args:
-        filenames (list(list(str))): List of FITS file paths containing calibration data.
-        breakind (list(int)): List of indices to split the filenames into different chunks.
-
-    Returns
-        chunked_file_names (list(str)): list of files, for each chunk.
-        chunked_file_times (list(float)): mean observation time (MJD float) for each file chunk.
-    """
-
-    # Define break points for splitting the filenames into chunks
-    breakind1 = np.hstack([0, breakind])  # Start indices for chunks
-    breakind2 = np.hstack([breakind, len(filenames)+1])  # End indices for chunks
-
-    chunked_file_names = []
-    chunked_file_times = []
-
-    # Iterate over the file-list chunks defined by breakind1 and breakind2
-    for bk1, bk2 in zip(breakind1, breakind2):
-        # Collect and preprocess frames within the current chunk
-        chunk_files = [f for cnt, f in enumerate(filenames)
-                       if ((cnt > bk1) * (cnt < bk2))]  # Only include files in the current file-list-chunk
-
-        # Extract observation times (MJD) for frames in the current chunk
-        chunk_times = [io.get_fits_file_time(filename) for filename in chunk_files]
-
-        # Append the median frame and the mean time for the current chunk
-        chunked_file_names.append(chunk_files)
-        chunked_file_times.append(np.mean(chunk_times))
-
-    return chunked_file_names, chunked_file_times
 
 
 def get_matching_filenames(file_name_list, type_list, match_keywords):
@@ -310,165 +215,310 @@ def get_matching_filenames(file_name_list, type_list, match_keywords):
     return matched_filenames
 
 
-def find_datasets(in_folder, obs_date, obs_name, reduce_all, time_radius,
+def check_file_count(label, filenames, minimum_count, root_data_path, unit):
+    """
+    Check whether a list of files meets the minimum required count, and log a warning if not.
+
+    Args:
+        label (str): Descriptive label for the file type (e.g., 'bias_label=BIAS').
+        filenames (list): List of filenames to check.
+        minimum_count (int): Minimum number of files required.
+        root_data_path (Path or str): Path where the files were searched.
+        unit (str): Identifier for the current instrument or observation unit.
+
+    Returns:
+        bool: True if the number of files is below the required minimum (i.e., check failed), False otherwise.
+    """
+    num_files = len(filenames)
+    if num_files < minimum_count:
+        logger.warning(
+            f"Searched {root_data_path}, unit={unit}, {label} "
+            f"found {num_files}, needed >= {minimum_count}"
+        )
+        return True
+    return False
+
+
+def build_calibration_groups(calibrations, time_radius):
+    """
+    Groups calibration frames (bias, arc, flat) that are within `time_radius` MJD of each other.
+
+    Args:
+        calibrations (list of dict): Each dict has 'name', 'mjd', and 'type'
+        time_radius (float): time window (in MJD days) for grouping
+
+    Returns:
+        list of dict: calibration groups with lists of biases, arcs, and flats
+    """
+    remaining = calibrations.copy()
+    groups = []
+
+    while remaining:
+        # Start with the first remaining time
+        first = remaining[0]
+        first_time = first['mjd']
+        grouped = get_elements_within_time_radius(remaining, [cal['mjd'] for cal in remaining],
+                                                  first_time, time_radius)
+
+        # Iterate with the new average time (once should be enough, but you could iterate until no change occurs)
+        new_average_time = np.mean([cal['mjd'] for cal in grouped])
+        grouped = get_elements_within_time_radius(remaining, [cal['mjd'] for cal in remaining],
+                                                  new_average_time, time_radius)
+
+        final_average_time = np.mean([cal['mjd'] for cal in grouped])
+        # Organize by type
+        group = {'bias': [], 'arc': [], 'flat': []}
+        for cal in grouped:
+            group[cal['type']].append(cal['name'])
+
+        # Keep the final average time of the cal group
+        group['mjd'] = final_average_time
+
+        # Remove used calibrations
+        used_names = {cal['name'] for cal in grouped}
+        remaining = [cal for cal in remaining if cal['name'] not in used_names]
+        groups.append(group)
+
+    return groups
+
+
+def assign_science_to_groups(science_frames, cal_groups):
+    """
+    Assign science frames to the closest matching calibration group.
+
+    Args:
+        science_frames (list of dict): Each has 'name' and 'mjd'
+        cal_groups (list of dict): Each group has 'bias', 'arc', 'flat' lists and 'mjd' of the central time
+
+    Returns:
+        cal_groups (list of dict): Each dict contains a calibration group and a list of matched science frames.
+    """
+    for group in cal_groups:
+        group['sci'] = []
+
+    for sci in science_frames:
+        sci_time = sci['mjd']
+
+        # Find group center times
+        group_times = [group['mjd'] for group in cal_groups]
+
+        closest_idx = np.argmin(np.abs(np.array(group_times) - sci_time))
+        cal_groups[closest_idx]['sci'].append(sci['name'])
+
+    return cal_groups
+
+def get_calibration_and_science_files(unit_records, obs_name,
+                                      bias_label, flat_label, twilight_flat_label,
+                                      arc_label, dark_label):
+    """
+    Categorize files into calibration and science types.
+
+    Args:
+        unit_records (list): Records for a unit.
+        obs_name (str): Science target name.
+        bias_label, flat_label, twilight_flat_label, arc_label, dark_label (str): Frame type labels.
+
+    Returns:
+        cal_files_dict (dict): calibration files dictionary
+        sci_files (list): science filenames
+    """
+    filenames = [rec['filename'] for rec in unit_records]
+    types = [rec['frame_type'] for rec in unit_records]
+
+    bias = get_matching_filenames(filenames, types, [bias_label])
+    twi = get_matching_filenames(filenames, types, [twilight_flat_label])
+    dome = get_matching_filenames(filenames, types, [flat_label])
+    arc = get_matching_filenames(filenames, types, [arc_label])
+    dark = get_matching_filenames(filenames, types, [dark_label])
+
+    flats = twi if twi else dome
+
+    if obs_name:
+        sci_files = get_matching_filenames(filenames, types, [obs_name])
+    else:
+        all_cal = set(bias + flats + arc + dark)
+        sci_files = [filename for filename in filenames if filename not in all_cal]
+
+    cal_files_dict = {'bias': bias, 'flat': flats, 'arc': arc}
+    return cal_files_dict, sci_files
+
+
+def validate_calibration_counts(cal_files, unit, root_data_path, minimum=1):
+    """
+    Ensure each calibration type has at least the minimum required files.
+
+    Args:
+        cal_files (dict): Dictionary of calibration file lists.
+        unit (str): Unit name.
+        root_data_path (Path): Root directory.
+        minimum (int): Minimum required files per type.
+
+    Returns:
+        bool: True if all checks pass.
+    """
+    fail = False
+    for key, files in cal_files.items():
+        if len(files) < minimum:
+            logger.warning(f'Searched {root_data_path}, unit={unit}, found {len(files)} < {minimum} {key} files')
+            fail = True
+    return not fail
+
+
+def prepare_group_input_dicts(cal_files, sci_filenames):
+    """
+    Build calibration and science input lists for grouping.
+
+    Args:
+        cal_files (dict): Calibration file dict.
+        sci_filenames (list): Science file names.
+
+    Returns:
+        cal_dict_list (list of dicts): Calibration list of dictionaries with type, filename, and mjd.
+        sci_dict_list (list of dicts): Science file list of dictionaries.
+    """
+    cal_dict_list = []
+    for typ in ['bias', 'flat', 'arc']:
+        times = [get_fits_file_time(f) for f in cal_files[typ]]
+        cal_dict_list += [{'type': typ, 'mjd': t, 'name': f} for t, f in zip(times, cal_files[typ])]
+
+    sci_times = [get_fits_file_time(f) for f in sci_filenames]
+    sci_dict_list = [{'type': 'sci', 'mjd': t, 'name': f} for t, f in zip(sci_times, sci_filenames)]
+
+    return cal_dict_list, sci_dict_list
+
+
+def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
+    """
+    Build manifest-style dataset records.
+
+    Args:
+        cal_groups (list): Groups of calibration + science files.
+        instrument (str): Instrument name.
+        unit (str): Unit identifier.
+        obs_date (str): Observation date.
+        obs_name (str): Science target name.
+
+    Returns:
+        list of dict: Dataset records.
+    """
+    records = []
+    now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    for group in cal_groups:
+        if not group['bias'] or not group['flat'] or not group['arc']:
+            continue
+
+        record = {
+            'reduction_name': f'antigen_manifest_{now_string}',
+            'unit_date': 'unknown',
+            'unit_instrument': instrument,
+            'unit_id': unit,
+            'obs_date': obs_date,
+            'obs_name': obs_name,
+            'in_folder': './',
+            'observation_files': group['sci'],
+            'calibration_files': {
+                'bias': group['bias'],
+                'flat': group['flat'],
+                'arc': group['arc']
+            }
+        }
+        records.append(record)
+
+    return records
+
+
+def build_dataset_from_reduced_files(file_directory):
+    """
+    Build a dataset record grouped by target
+    Args:
+        file_directory: Directory path of the reduced fits files.
+
+    Returns:
+        list of dict: Dataset records.
+    """
+    file_list = get_fits_files_in_path(file_directory)  # List of path objects
+    now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+    reduction_name = f"antigen_advanced_manifest_{now_string}"
+
+    records_by_target = {}
+    for file_name in file_list:
+        info = parse_reduce_file_name(file_name)
+
+        if info is None:
+            continue
+
+        target = info["target"]
+        if target not in records_by_target:
+            records_by_target[target] = {
+                "reduction_name": reduction_name,
+                "target": target,
+                "unit_instrument": info["instrument"],
+                "unit_id": info["element"],
+                "in_folder": file_directory,
+                "ndithers": 0,  # will update later
+                "reduced_files": [],
+                "dither_number": []
+            }
+
+        record = records_by_target[target]
+        record["reduced_files"].append(info["file_name"])
+        record["dither_number"].append(info["dither_number"])
+        # Ensure ndithers reflects unique dithers
+        record["ndithers"] = len(set(record["dither_number"]))
+
+    logger.info(f"Built dataset with {len(records_by_target)} targets and {len(file_list)} files.")
+    return list(records_by_target.values())
+
+
+def find_datasets(in_folder, obs_date, obs_name, time_radius,
                   bias_label, arc_label, dark_label, flat_label, twilight_flat_label,
                   instrument='VIRUS2'):
     """
-    Purpose: Search FITS file tree and generate groupings of calibration and science files by FITS header times,
-    organized into dataset records to then later help build a dataset file manifest
+    Search FITS file tree and generate groupings of calibration and science files by FITS header times.
 
     Args:
-        in_folder (str): Root path where reduction input file tree is located
-        obs_date (str): Observation calendar date string formatted as YYYYMMDD
-        obs_name (str): Observation object/target name, e.g. from FITS header card
-        reduce_all (bool): Reduce all files found under infolder file tree
-        time_radius (float) will group calibration files with times that fall within this distance from a given science file time
-        bias_label (str): string label from FITS file header for bias frames
-        arc_label (str): string label from FITS file header for arc frames
-        dark_label (str): string label from FITS file header for dark frames
-        flat_label (str): string label from FITS file header for flat frames
-        twilight_flat_label (str): string label from FITS file header for twilight frames
-        instrument (str, optional): instrument to use, e.g. VIRUS2, defaults to VIRUS2
+        in_folder (str): Root path to search.
+        obs_date (str): Observation date in YYYYMMDD.
+        obs_name (str): Object name to search for in science frames.
+        time_radius (float): MJD time radius for grouping science with calibration.
+        bias_label (str): Label for bias frames.
+        arc_label (str): Label for arc frames.
+        dark_label (str): Label for dark frames.
+        flat_label (str): Label for dome flat frames.
+        twilight_flat_label (str): Label for twilight flat frames.
+        instrument (str): Instrument name (default 'VIRUS2').
 
     Returns:
-        dataset_records (list(dict)): list of dicts/records, where each dict has the following keys:
-            record['obs_time']: Obs time as MJD float
-            record[observation_files']: filename of obs file to be reduced
-            record['calibration_files']['bias']: list of bias FITS file names to use for calibration
-            record['calibration_files']['flat']: list of flat FITS file names to use for calibration
-            record['calibration_files']['arc']: list of arc FITS file names to use for calibration
+        dataset_records (list of dict): Dataset records for manifest file
     """
-
     root_data_path = Path(in_folder).expanduser().resolve()
     if not root_data_path.is_dir():
-        raise NotADirectoryError(f'ERROR: user-specified input path does not exist: {root_data_path}')
+        raise NotADirectoryError(f'Input path does not exist: {root_data_path}')
 
-    # time filtering: Get FITS files in file-tree that match the obs_date
     metadata_records = parse_fits_file_tree(root_data_path, instrument=instrument, date=obs_date, verbose=True)
-    units_found = [record['spec_id'] for record in metadata_records]
-    unique_units_found = list(set(units_found))
-
+    unique_units_found = list(set([record['spec_id'] for record in metadata_records]))
     dataset_records = []
+
     for unit in unique_units_found:
-        logger.info(f'Search for subset of file records with matching unit={unit} ...')
         unit_records = [record for record in metadata_records if record['spec_id'] == unit]
+        cal_files, sci_filenames = get_calibration_and_science_files(
+            unit_records, obs_name,
+            bias_label, flat_label, twilight_flat_label, arc_label, dark_label)
 
-        # Group subsets of filenames into lists based on the frame types
-        unit_frame_types = [record['frame_type'] for record in unit_records]
-        unit_filenames = [record['filename'] for record in unit_records]
-
-        bias_filenames    = get_matching_filenames(unit_filenames, unit_frame_types, [bias_label])
-        twiflt_filenames  = get_matching_filenames(unit_filenames, unit_frame_types, [twilight_flat_label])
-        domeflt_filenames = get_matching_filenames(unit_filenames, unit_frame_types, [flat_label])
-        arc_filenames     = get_matching_filenames(unit_filenames, unit_frame_types, [arc_label])
-        dark_filenames    = get_matching_filenames(unit_filenames, unit_frame_types, [dark_label])
-
-        if obs_name is not None:
-            sci_filenames = get_matching_filenames(unit_filenames, unit_frame_types, [obs_name])
-        else:
-            sci_filenames = []
-
-        if len(sci_filenames) == 0 and not reduce_all:
-            logger.warning(f'unit={unit}, found ZERO matching files for obs_name={obs_name}. Continuing to next unit...')
+        if not sci_filenames:
+            logger.warning(f'unit={unit}, no matching science files')
             continue
-        else:
-            logger.info(f'unit={unit}, Found len(sci_filenames)={len(sci_filenames)} matching files for obs_name={obs_name}')
 
-        if reduce_all:
-            calibration_files = set(bias_filenames) | set(twiflt_filenames) | set(domeflt_filenames) | set(arc_filenames) | set(dark_filenames)
-            sci_filenames = [name for name in unit_filenames if name not in calibration_files]
-            logger.info(f'reduce_all==True, expanding dataset to reduce all non_calibration_files')
-
-        if len(twiflt_filenames) > 0:
-            flt_filenames = twiflt_filenames
-        else:
-            flt_filenames = domeflt_filenames
-
-        # =============================================================================
-        # Validate number of files found before attempting to use diffs on file obs_ids
-        # Use exceptions to exit process if needed frame-types file counts were not found
-        # =============================================================================
-        fail_bias = False
-        fail_flat = False
-        fail_arc = False
-        minimum_file_count_for_break = 1
-
-        bias_minimum_count = minimum_file_count_for_break
-        num_bias_files = len(bias_filenames)
-        if num_bias_files < bias_minimum_count:
-            fail_bias = True
-            logger.warning(f'Searched {root_data_path}, unit={unit}, found bias_label={bias_label}, '
-                           f'found {num_bias_files}, needed >= {bias_minimum_count}')
-
-        flat_minimum_count = minimum_file_count_for_break
-        num_flt_files = len(flt_filenames)
-        if num_flt_files < flat_minimum_count:
-            fail_flat = True
-            logger.warning(f'Searched {root_data_path}, unit={unit}, flat_label={flat_label}, '
-                           f'found {num_flt_files}, needed >= {flat_minimum_count}')
-
-        arc_minimum_count = minimum_file_count_for_break
-        num_arc_files = len(arc_filenames)
-        if num_arc_files < arc_minimum_count:
-            fail_arc = False
-            logger.warning(f'Searched {root_data_path}, unit={unit}, arc_label={arc_label}, '
-                           f'found {num_arc_files}, needed >= {arc_minimum_count}')
-
-        if fail_bias or fail_flat or fail_arc:
-            logger.warning(f'Did not find enough calibration files to process unit={unit}. Continuing to next unit...')
+        if not validate_calibration_counts(cal_files, unit, root_data_path):
+            logger.warning(f'unit={unit}, calibration files insufficient. Skipping.')
             continue
-        # =============================================================================
-        # Use the filename obs_id numbers for grouping/splitting contiguous blocks of observations files
-        # =============================================================================
-        bias_times = [get_fits_file_time(name) for name in bias_filenames]
-        flt_times  = [get_fits_file_time(name) for name in flt_filenames]
-        arc_times  = [get_fits_file_time(name) for name in arc_filenames]
 
-        # Generate manifest file for each science file
-        logger.info(f'Found {len(sci_filenames)} science files. '
-                    f'Attempting to find calibrations files withing time_radius of each ...')
-        for sci_file in sci_filenames:
-            fail_bias = False
-            fail_flt = False
-            fail_arc = False
-            # For each science file, find the calibration files within a time radius
-            obs_time_mjd = get_fits_file_time(sci_file)
-            time_center = obs_time_mjd
-            bias_files = get_elements_within_time_radius(bias_filenames, bias_times, time_center, time_radius)
-            flt_files = get_elements_within_time_radius(flt_filenames, flt_times, time_center, time_radius)
-            arc_files = get_elements_within_time_radius(arc_filenames, arc_times, time_center, time_radius)
+        cal_dict_list, sci_dict_list = prepare_group_input_dicts(cal_files, sci_filenames)
 
-            if len(bias_files) == 0:
-                fail_bias = True
-            if len(flt_files) == 0:
-                fail_flt = True
-            if len(arc_files) == 0:
-                fail_arc = True
+        cal_groups = build_calibration_groups(cal_dict_list, time_radius)
+        cal_groups = assign_science_to_groups(sci_dict_list, cal_groups)
 
-            if fail_bias or fail_arc or fail_flt:
-                logger.warning(f'FAIL: found ZERO calibration files for sci_file={sci_file}: '
-                               f'time_center={time_center}, time_radius={time_radius}')
-                continue
-
-            num_cals = len(bias_files) + len(flt_files) + len(arc_files)
-            logger.info(f'PASS: found {num_cals} calibration files for sci_file={sci_file}: '
-                        f'time_center={time_center}, time_radius={time_radius}')
-
-            record = dict()
-            now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-            record['reduction_name'] = f'antigen_manifest_{now_string}'
-            record['unit_date'] = 'unknown'
-            record['unit_instrument'] = 'VIRUS2'
-            record['unit_id'] = unit
-            record['obs_date'] = obs_date
-            record['obs_name'] = obs_name
-            record['in_folder'] = './'
-            record['observation_files'] = sci_filenames
-            record['calibration_files'] = dict()
-            record['calibration_files']['bias'] = bias_filenames
-            record['calibration_files']['flat'] = flt_filenames
-            record['calibration_files']['arc'] = arc_filenames
-
-            dataset_records.append(record)
+        dataset_records += build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name)
 
     return dataset_records

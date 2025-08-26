@@ -1,76 +1,13 @@
+import logging
+
+from astropy.stats import biweight_location as biweight
+from astropy.table import Table
 import numpy as np
-from astropy.convolution import Gaussian1DKernel, convolve
-from astropy.io import fits
-from astropy.stats import sigma_clip, mad_std, biweight_location as biweight
 from scipy.interpolate import interp1d
-from scipy.ndimage import percentile_filter
 
 from antigen import config
 
-
-def identify_sky_pixels(sky, per=50, size=50):
-    """
-    Identifies sky pixels by applying a percentile filter and sigma-clipping.
-
-    Parameters:
-        sky (array-like): Input sky intensity values.
-        per (int, optional): Percentile value for the filter. Default is 50 (median).
-        size (int, optional): Size of the filter window. Default is 50.
-
-    Returns:
-        tuple: A boolean mask array indicating sky pixels and the filtered continuum array.
-    """
-    # Apply a percentile filter to smooth the sky data and estimate the continuum
-    cont = percentile_filter(sky, per, size=size)
-
-    try:
-        # Apply sigma-clipping to identify outliers (sky pixels)
-        # Use MAD-based standard deviation for robust statistics
-        mask = sigma_clip(sky - cont, masked=True, maxiters=None,
-                          stdfunc=mad_std, sigma=5)
-    except:
-        # Fallback for older versions of sigma_clip where maxiters was iters
-        mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std, sigma=5)
-
-    # Return the mask (True for sky pixels) and the filtered continuum
-    return mask.mask, cont
-
-
-def rectify(science_spectra, error_spectra, wave_all, def_wave):
-    """
-    Rectifies scientific and error spectra by interpolating them onto a common wavelength grid.
-
-    Parameters:
-        science_spectra (2D array): Array of scientific spectra to be rectified.
-        error_spectra (2D array): Corresponding error spectra for each scientific spectrum.
-        wave_all (2D array): Wavelength grids corresponding to each input spectrum.
-        def_wave (1D array): Target wavelength grid for interpolation.
-
-    Returns:
-        tuple:
-            - science_rect (2D array): Rectified scientific spectra on the target wavelength grid.
-            - error_rect (2D array): Rectified error spectra on the target wavelength grid.
-    """
-    # Initialize arrays to store rectified scientific spectra and errors
-    science_rect = np.zeros((science_spectra.shape[0], len(def_wave)))
-    error_rect = np.zeros((science_spectra.shape[0], len(def_wave)))
-
-    # Loop through each spectrum to interpolate onto the target wavelength grid
-    for i in np.arange(science_spectra.shape[0]):
-        # Compute wavelength bin sizes for flux normalization
-        diff_wave = np.diff(wave_all[i])
-        diff_wave = np.hstack([diff_wave[0], diff_wave])  # Ensure length matches the wavelength array
-
-        # Interpolate the scientific spectrum, normalizing by wavelength bin size
-        science_rect[i] = np.interp(def_wave, wave_all[i], science_spectra[i] / diff_wave,
-                               left=np.nan, right=np.nan)
-
-        # Interpolate the error spectrum, normalizing by wavelength bin size
-        error_rect[i] = np.interp(def_wave, wave_all[i], error_spectra[i] / diff_wave,
-                                 left=np.nan, right=np.nan)
-
-    return science_rect, error_rect
-
+logger = logging.getLogger('antigen.fiber')
 
 def get_fiber_to_fiber(spectrum, n_chunks=100):
     """
@@ -120,476 +57,87 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     return initial_ftf, ftf
 
 
-def get_wavelength(spectrum, trace, good, xref, lines, use_kernel=True, limit=100, fiberref=config.VIRUS2_FIBER_REF):
+def get_fiber_bounds(fiber_x, fiber_y):
     """
-    Computes the wavelength solution for each fiber in a spectrograph based on trace and spectral data.
+    Computes the upper and lower bounds for the fiber x,y positions
 
     Args:
-        spectrum (ndarray): 2D array of spectra, each row corresponding to a fiber.
-        trace (ndarray): 2D array with trace positions for each fiber.
-        good (ndarray): Boolean array indicating which fibers have valid data.
-        use_kernel (bool): Whether to apply kernel smoothing when identifying arc lines. Default is True.
-        limit (float): Limit on how far to search for matching arc lines. Default is 100.
-        fiberref (int): default = config.VIRUS2_FIBER_REF=130
+        fiber_x (ndarray): Fiber x coordinates.
+        fiber_y (ndarray): Fiber y coordinates.
 
     Returns:
-        tuple: (wavelength, res, X, W)
-            - wavelength (ndarray): Wavelength solution for each fiber.
-            - res (ndarray): Residuals from the biweight mean calculation.
-            - X (ndarray): Adjusted positions in trace space for arc lines.
-            - W (ndarray): Arc line positions for each fiber.
+        bounds (list): Bounds around input fibers fiber
     """
+    x_min, x_max = np.min(fiber_x), np.max(fiber_x)
+    y_min, y_max = np.min(fiber_y), np.max(fiber_y)
+    bounds = [x_min, x_max, y_min, y_max]
+    return bounds
 
-    # Initialize wavelength array and starting fiber position
-    init_fiber = fiberref
-    wavelength = np.zeros_like(spectrum)
-    loc = xref.copy()
-
-    # W will store arc line positions for each fiber
-    W = np.zeros((trace.shape[0], len(lines)))
-    mask, cont = identify_sky_pixels(spectrum[init_fiber], per=5)  # Identify sky lines
-    y = spectrum[init_fiber] - cont  # Subtract continuum
-    W[init_fiber] = get_arclines_fiber(y, loc, limit=limit, use_kernel=use_kernel)
-
-    # Process fibers before the reference fiber in reverse order
-    for i in np.arange(init_fiber)[::-1]:
-        mask, cont = identify_sky_pixels(spectrum[i], per=5)  # Identify sky lines
-        y = spectrum[i] - cont  # Subtract continuum
-        if good[i]:  # Only process if the fiber is marked as good
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                     use_kernel=use_kernel)
-            W[i] = loc
-
-    # Reset location and process fibers after the reference fiber
-    loc = xref.copy()
-    for i in np.arange(init_fiber + 1, spectrum.shape[0]):
-        mask, cont = identify_sky_pixels(spectrum[i])
-        y = spectrum[i] - cont
-        if good[i]:
-            loc = get_arclines_fiber(y, loc, limit=limit,
-                                     use_kernel=use_kernel)
-            W[i] = loc
-
-    # Initialize X (adjusted trace positions) and residuals array
-    X = np.zeros_like(W)
-    xall = np.arange(trace.shape[1])
-    res = np.zeros(W.shape[1])
-
-    # Interpolate missing values and fit polynomial to each arc line
-    for i in range(W.shape[1]):
-        x = np.zeros(W.shape[0])
-        bad = np.where(~good)[0]
-        gind = np.where(good)[0]
-
-        # Fill in missing arc line positions for bad fibers
-        for b in bad:
-            W[b, i] = W[gind[np.argmin(np.abs(b - gind))], i]
-
-        # Interpolate positions in trace space
-        for j in range(W.shape[0]):
-            x[j] = np.interp(W[j, i], xall, trace[j])
-
-        # Fit a 4th-order polynomial to arc line positions
-        sel = (W[:, i] > 0) * np.isfinite(x)
-
-        X[:, i] = np.polyval(np.polyfit(x[sel], W[sel, i], 4), x)
-
-        # Compute residuals using biweight mean
-        res[i] = mad_std(X[:, i] - W[:, i], ignore_nan=True)
-    fits.HDUList([fits.PrimaryHDU(X), fits.ImageHDU(lines)]).writeto('test.fits', overwrite=True)
-    goodlines = res < 0.2
-    # Compute final wavelength solution for each fiber
-    for j in range(W.shape[0]):
-        if good[j]:
-            wavelength[j] = np.polyval(np.polyfit(X[j][goodlines],
-                                                  lines[goodlines], 5), xall)
-
-    return wavelength, res, X, W
-
-
-def get_arclines_fiber(spectrum, init_loc=None, limit=100, use_kernel=True):
+def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
     """
-    Identifies arc line positions in a given spectrum by detecting peaks.
+    Load the fiber positions for a given instrument and apply the appropriate dither offsets.
+
+    This function retrieves the base fiber coordinates from the instrument configuration
+    (typically the focal-plane positions of each fiber) and then applies telescope dither
+    offsets to produce the full set of fiber positions for the requested dither pattern.
+    The dither offsets are read from an instrument-specific dither file, which encodes
+    the step sizes (dx, dy) for each dither position. If no dithering is used
+    (ndithers == 1), the base positions are returned unchanged.
+
+    This is typically used at the start of a reduction to construct the fiber footprint
+    on the sky (or detector) for all exposures in a dataset.
 
     Args:
-        spectrum (ndarray): 1D array representing the spectrum of a fiber.
-        init_loc (ndarray, optional): Initial guess locations for arc lines. Default is None.
-        limit (float): Minimum peak value to consider a valid arc line. Default is 1000.
-        use_kernel (bool): Whether to apply a box kernel convolution to smooth the spectrum. Default is True.
+        instrument (str): Instrument name (used to locate the correct dither file).
+        ndithers (int): Number of dithers in the observing sequence.
+        dither_numbers (list of int): Indices of the dithers to apply (1-based).
+        config_dict (dict): Instrument configuration containing 'ifu_x' and 'ifu_y' arrays
+            for the base fiber positions.
 
     Returns:
-        ndarray: Array of arc line positions (pixel indices) in the spectrum.
+        fiber_x (ndarray): X positions of fibers with dither offsets applied.
+        fiber_y (ndarray): Y positions of fibers with dither offsets applied.
     """
+    # --- Input validation ---
+    if "ifu_x" not in config_dict or "ifu_y" not in config_dict:
+        raise ValueError("config_dict must contain 'ifu_x' and 'ifu_y' arrays.")
 
-    # Apply box kernel convolution to smooth the spectrum if use_kernel is True
-    if use_kernel:
-        B = Gaussian1DKernel(1.0)
-        y1 = convolve(spectrum, B)
-    else:
-        y1 = spectrum.copy()
+    fiber_x_base, fiber_y_base = config_dict["ifu_x"], config_dict["ifu_y"]
 
-    # Identify peaks in the spectrum by finding zero-crossings in the first derivative
-    diff_array = y1[1:] - y1[:-1]
-    loc = np.where((diff_array[:-1] > 0) & (diff_array[1:] < 0))[0]
+    base_path = config.get_base_config_path()
 
-    # Filter peaks based on the limit threshold
-    peaks = y1[loc + 1]
-    loc = loc[peaks > limit] + 1
-    peaks = y1[loc]
+    dither_file = base_path / instrument / f"{instrument}_dither_{ndithers}pt.lis"
 
-    # Helper function to refine peak positions using quadratic interpolation
-    def get_trace_chunk(flat, XN):
-        YM = np.arange(flat.shape[0])
-        inds = np.zeros((3, len(XN)))
-        inds[0] = XN - 1
-        inds[1] = XN
-        inds[2] = XN + 1
-        inds = inds.astype(int)
+    # --- Handle single-dither (no offset) case ---
+    if ndithers == 1:
+        logger.info(f"No dither pattern needed for {instrument}, ndithers=1")
+        return fiber_x_base.copy(), fiber_y_base.copy()
 
-        # Quadratic interpolation to refine peak positions
-        Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
-                 (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
-        return Trace
+    # --- Load dither offsets ---
+    if not dither_file.exists():
+        raise FileNotFoundError(f"Dither file not found: {dither_file}")
 
-    # Refine peak positions using quadratic interpolation
-    loc = get_trace_chunk(y1, loc)
+    try:
+        dither_table = Table.read(dither_file, format="ascii")
+        dither_offsets = np.array([dither_table[col].data for col in dither_table.colnames]).T
+    except Exception as e:
+        raise RuntimeError(f"Failed to read dither file {dither_file}: {e}")
 
-    # Match refined peak positions with initial guess locations, if provided
-    if init_loc is not None:
-        final_loc = []
-        for i in init_loc:
-            final_loc.append(loc[np.argmin(np.abs(np.array(loc) - i))])
-        loc = final_loc
+    # Expect 2 columns: dx, dy
+    if dither_offsets.shape[1] != 2:
+        raise ValueError(f"Dither file {dither_file} must have 2 columns (dx, dy).")
 
-    return loc
+    if dither_offsets.shape[0] != ndithers:
+        logger.warning(
+            f"Dither file has {dither_offsets.shape[0]} dithers but ndithers={ndithers}. "
+            "Proceeding with file contents."
+        )
 
+    # --- Apply dithers ---
+    dithers_observed = [dither_offsets[int(dither_number - 1)] for dither_number in dither_numbers]
+    fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dithers_observed])
+    fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dithers_observed])
 
-def get_spectra(array_flt, array_trace, npix=5):
-    """
-    Extract spectra by dividing the flat field and averaging the central pixels.
+    logger.info(f"Loaded positions for {instrument} with {len(dithers_observed)} dithers and {dither_file} pattern.")
 
-    Parameters
-    ----------
-    array_flt : 2D numpy array
-        Twilight image.
-    array_trace : 2D numpy array
-        Trace for each fiber.
-    npix : int, optional
-        Number of pixels to extract around the trace center. Default is 5.
-
-    Returns
-    -------
-    spec : 2D numpy array
-        Extracted and rectified spectrum for each fiber.
-    """
-
-    # Initialize the output spectrum array
-    spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
-
-    # Get the number of rows in the flat field image
-    N = array_flt.shape[0]
-
-    # Create an array of x-axis pixel indices
-    x = np.arange(array_flt.shape[1])
-
-    # Calculate the lower and upper bounds for pixel extraction
-    LB = int((npix + 1) / 2)  # Lower bound
-    HB = -LB + npix + 1       # Upper bound
-
-    # Iterate through each fiber
-    for fiber in np.arange(array_trace.shape[0]):
-
-        # Skip fibers with trace positions too close to the image edges
-        if np.round(array_trace[fiber]).min() < LB:
-            continue
-        if np.round(array_trace[fiber]).max() >= (N - LB):
-            continue
-
-        # Convert trace positions to integer indices
-        indv = np.round(array_trace[fiber]).astype(int)
-
-        # Iterate through pixels around the trace center
-        for j in np.arange(-LB, HB):
-
-            # Calculate weight for the lower boundary pixel
-            if j == -LB:
-                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
-
-            # Calculate weight for the upper boundary pixel
-            elif j == HB - 1:
-                w = (npix / 2. + array_trace[fiber]) - (indv + j)
-
-            # Assign weight 1 for central pixels
-            else:
-                w = 1.
-
-            # Add the weighted pixel values to the spectrum
-            spec[fiber] += array_flt[indv + j, x] * w
-
-    # Normalize the spectrum by the number of extracted pixels
-    return spec
-
-
-def get_spectra_error(array_flt, array_trace, npix=5):
-    """
-    Extract spectra by dividing the flat field and averaging the central
-    two pixels
-
-    Parameters
-    ----------
-    array_flt : 2d numpy array
-        Twilight image
-    array_trace : 2d numpy array
-        Trace for each fiber
-    npix : int, optional
-        Number of pixels for averaging (default is 5)
-
-    Returns
-    -------
-    twi_spectrum : 2d numpy array
-        Rectified twilight spectrum for each fiber
-    """
-
-    # Initialize spectrum array to store extracted spectra
-    spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
-
-    # Get number of rows in the flat field image
-    N = array_flt.shape[0]
-
-    # Create an array of x-coordinates for the flat field image
-    x = np.arange(array_flt.shape[1])
-
-    # Calculate bounds for pixel averaging
-    LB = int((npix + 1) / 2)
-    HB = -LB + npix + 1
-
-    # Iterate over each fiber to extract its spectrum
-    for fiber in np.arange(array_trace.shape[0]):
-        # Skip fibers with traces too close to image edges
-        if np.round(array_trace[fiber]).min() < LB:
-            continue
-        if np.round(array_trace[fiber]).max() >= (N - LB):
-            continue
-
-        # Convert trace positions to integer indices
-        indv = np.round(array_trace[fiber]).astype(int)
-
-        # Loop over neighboring pixels for averaging
-        for j in np.arange(-LB, HB):
-            if j == -LB:
-                # Calculate weight for lower boundary pixels
-                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
-            elif j == HB - 1:
-                # Calculate weight for upper boundary pixels
-                w = (npix / 2. + array_trace[fiber]) - (indv + j)
-            else:
-                # Set weight to 1 for central pixels
-                w = 1.
-
-            # Accumulate weighted sum of squared values from the flat field
-            spec[fiber] += array_flt[indv + j, x] ** 2 * w
-
-    # Return the root mean square error normalized by npix
-    return np.sqrt(spec)
-
-
-def get_spectra_chi2(array_flt, array_sci, array_err, array_trace, npix=5):
-    """
-    Extract spectra by dividing the flat field and averaging the central
-    two pixels
-
-    Parameters
-    ----------
-    array_flt : 2d numpy array
-        Twilight image
-    array_sci : 2d numpy array
-        Science image
-    array_err : 2d numpy array
-        Error estimate for each pixel
-    array_trace : 2d numpy array
-        Trace for each fiber
-    npix : int, optional
-        Number of pixels for averaging (default is 5)
-
-    Returns
-    -------
-    spec : 2d numpy array
-        Chi-squared spectra for each fiber
-    """
-
-    # Initialize spectrum array to hold chi-squared values
-    spec = np.zeros((array_trace.shape[0], array_trace.shape[1]))
-
-    # Get the number of rows in the flat field image
-    N = array_flt.shape[0]
-
-    # Create an array of x-coordinates for the images
-    x = np.arange(array_flt.shape[1])
-
-    # Calculate bounds for pixel averaging
-    LB = int((npix + 1) / 2)
-    HB = -LB + npix + 1
-
-    # Iterate over each fiber to extract its chi-squared spectrum
-    for fiber in np.arange(array_trace.shape[0]):
-        # Initialize a chi-squared array with shape (npix+1, 3, len(x))
-        chi2 = np.zeros((npix + 1, 3, len(x)))
-
-        # Skip fibers with traces too close to the image edges
-        if np.round(array_trace[fiber]).min() < LB:
-            continue
-        if np.round(array_trace[fiber]).max() >= (N - LB):
-            continue
-
-        # Convert trace positions to integer indices
-        indv = np.round(array_trace[fiber]).astype(int)
-
-        # Loop over neighboring pixels for averaging
-        for j in np.arange(-LB, HB):
-            # Calculate weights for boundary pixels
-            if j == -LB:
-                w = indv + j + 1 - (array_trace[fiber] - npix / 2.)
-            elif j == HB - 1:
-                w = (npix / 2. + array_trace[fiber]) - (indv + j)
-            else:
-                # Use a weight of 1 for central pixels
-                w = 1.
-
-            # Apply weights to science, flat field, and error images
-            chi2[j + LB, 0] = array_sci[indv + j, x] * w
-            chi2[j + LB, 1] = array_flt[indv + j, x] * w
-            chi2[j + LB, 2] = array_err[indv + j, x] * w
-
-        # Compute the normalization factor for the flux
-        norm = chi2[:, 0].sum(axis=0) / chi2[:, 1].sum(axis=0)
-
-        # Calculate the chi-squared numerator: (data - model)^2
-        num = (chi2[:, 0] - chi2[:, 1] * norm[np.newaxis, :]) ** 2
-
-        # Calculate the denominator: (error + regularization term)^2
-        denom = (chi2[:, 2] + 0.01 * chi2[:, 0].sum(axis=0)[np.newaxis, :]) ** 2
-
-        # Compute the chi-squared value for each fiber
-        spec[fiber] = 1. / (1. + npix) * np.sum(num / denom, axis=0)
-
-    # Return the final chi-squared spectrum array
-    return spec
-
-
-def get_trace(twilight, ref):
-    """
-    Extract fiber traces from a twilight flat field image.
-
-    Parameters
-    ----------
-    twilight : 2d numpy array
-        Twilight flat field image used to determine fiber locations.
-
-    Returns
-    -------
-    trace : 2d numpy array
-        The calculated trace positions for each fiber across the image.
-    good : 1d numpy array (boolean)
-        Boolean mask indicating which fibers are valid (non-missing).
-    """
-
-    # Determine the number of valid (good) fibers
-    N1 = np.isfinite(ref['px']).sum()
-    good = np.where(np.isfinite(ref['px']))[0]  # Indices of good fibers
-
-    # Helper function to calculate trace positions for a chunk of the image
-    def get_trace_chunk(flat, XN):
-        # YM represents the y-axis pixel coordinates
-        YM = np.arange(flat.shape[0])
-
-        # Create a 3-row array for XN-1, XN, and XN+1 indices
-        inds = np.zeros((3, len(XN)))
-        inds[0] = XN - 1.
-        inds[1] = XN + 0.
-        inds[2] = XN + 1.
-        inds = np.array(inds, dtype=int)
-
-        # Calculate the trace using a second-order derivative method
-        Trace = (YM[inds[1]] - (flat[inds[2]] - flat[inds[0]]) /
-                 (2. * (flat[inds[2]] - 2. * flat[inds[1]] + flat[inds[0]])))
-        return Trace
-
-    # Assign the input image to a variable
-    image = twilight
-
-    # Determine the number of chunks based on whether the image is binned
-    N = 80
-
-    # Split the x-axis into chunks and calculate the mean x-position for each chunk
-    xchunks = np.array([np.mean(x)
-                        for x in np.array_split(np.arange(image.shape[1]), N)])
-
-    # Split the image into vertical chunks
-    chunks = np.array_split(image, N, axis=1)
-
-    # TODO: strip off outside fibers, but improve this implementation to be more explicit
-    chunks = chunks[1:-1]
-    xchunks = xchunks[1:-1]
-
-    # Calculate the mean flat field for each chunk
-    flats = [np.mean(chunk, axis=1) for chunk in chunks]
-
-    # Initialize an array to hold the trace positions for each fiber
-    Trace = np.zeros((len(ref), len(chunks)))
-
-    # Initialize a counter and a list to store peak positions
-    k = 0
-    P = []
-
-    # Iterate over each chunk to calculate the fiber traces
-    for flat, x in zip(flats, xchunks):
-        # Calculate the difference between adjacent pixels
-        diff_array = flat[1:] - flat[:-1]
-
-        # Identify peaks by finding zero-crossings in the difference array
-        loc = np.where((diff_array[:-1] > 0.) & (diff_array[1:] < 0.))[0]
-        loc = loc[loc > 2]  # Ignore peaks near the image edges
-
-        # Filter out weak peaks
-        peaks = flat[loc + 1]
-        loc = loc[peaks > 0.3 * np.median(peaks)] + 1
-
-        # Store the detected peak positions
-        P.append(loc)
-
-        # Get the trace positions for the detected peaks
-        trace = get_trace_chunk(flat, loc)
-
-        # Initialize an array to hold the trace for this chunk
-        T = np.zeros((len(ref)))
-
-        # If the number of detected peaks exceeds the number of good fibers, trim the excess
-        if len(trace) > N1:
-            trace = trace[-N1:]
-
-        # If the number of detected peaks matches the number of good fibers
-        if len(trace) == N1:
-            T[good] = trace
-            # Interpolate missing fibers based on nearby good fibers
-            for missing in np.where(np.isnan(ref['px']))[0]:
-                gind = np.argmin(np.abs(missing - good))
-                T[missing] = T[good[gind]] + ref['px'][missing] - ref['px'][good[gind]]
-
-        # If the number of detected peaks matches the total number of fibers
-        if len(trace) == len(ref):
-            T = trace
-
-        # Store the calculated trace for this chunk
-        Trace[:, k] = T
-        k += 1
-
-    # Fit a 7th-order polynomial to smooth the traces across the x-axis
-    x = np.arange(twilight.shape[1])
-    trace = np.zeros((Trace.shape[0], twilight.shape[1]))
-    for i in np.arange(Trace.shape[0]):
-        sel = Trace[i, :] != 0.
-        trace[i] = np.polyval(np.polyfit(xchunks[sel], Trace[i, sel], 7), x)
-
-    # Return the final trace array and the good fiber mask
-    good_fiber_mask = np.isfinite(ref['px'])
-    return trace, good_fiber_mask, Trace, xchunks
+    return fiber_x, fiber_y
