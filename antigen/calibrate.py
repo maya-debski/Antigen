@@ -332,12 +332,6 @@ def build_response(dataset_manifest, args):
         extraction_radius=extraction_radius, nchunks=20
     )
 
-    # Build and save cube
-    data_cube, x_grid, y_grid = build_and_write_cube(
-        def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
-        header, dar_model, args.pixel_size, output_file="test.fits"
-    )
-
     # Load calibration data
     cal_spectrum_table, extinction_table = load_calibration_data(args.standard_name)
 
