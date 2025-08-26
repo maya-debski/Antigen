@@ -43,7 +43,7 @@ Outputs:
 Example:
     Reduce all VIRUS2 data for the night of 20250801:
 
-    $ antigen_reduce.py -i ~/data -o ~/data/VIRUS/reduced -c 20250801
+    $ antigen_reduce.py -i ~/data -o ~/data/VIRUS/reduced -c 20250801 -m VIRUS2
 
 Notes:
     - The script logs all processing steps and reports any datasets that failed to reduce.
