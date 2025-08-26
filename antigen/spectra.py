@@ -274,7 +274,7 @@ def get_optimal_spectrum(data, error, weights):
 
 
 def convert_spectral_units(spectrum, wave, exposure_time, area=5.81e4):
-    '''
+    """
     Incoming units are e- / A
 
     Outgoing units are ergs / S / A/ cm^2
@@ -287,6 +287,6 @@ def convert_spectral_units(spectrum, wave, exposure_time, area=5.81e4):
 
     Returns:
         spectrum (array): 2D array of fiber in (units: ergs / S / A/ cm^2)
-    '''
+    """
     flux_factor = (6.626e-27 * 2.99792e18 / wave)
     return spectrum / area * flux_factor / exposure_time
