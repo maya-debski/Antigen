@@ -302,7 +302,7 @@ def build_response(dataset_manifest, args):
                                                   dataset_manifest['ndithers'],
                                                   dataset_manifest['dither_number'],
                                                   config_dict)
-    
+
     # Grab the rectified wavelength from parameters in config_dict
     def_wave = wavelength.get_rectified_wavelength(config_dict)
 
