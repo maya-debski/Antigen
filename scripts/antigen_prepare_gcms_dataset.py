@@ -95,6 +95,8 @@ def main():
     previous_object = ''
     for filename in filenames:
         header, is_header_valid = load_fits_header(filename)
+        if header is None:
+            continue
 
         object_name = header['OBJECT']
         date = ''.join(header['DATE-OBS'].split('-'))
