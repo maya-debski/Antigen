@@ -201,8 +201,17 @@ def load_fits_header(fits_filename, validate=True, strict=False):
     if not os.path.isfile(fits_filename):
         raise FileNotFoundError(f"File not found: {fits_filename}")
 
-    with fits.open(fits_filename) as fob:
-        header = fob[0].header
+    try:
+        with fits.open(fits_filename) as fob:
+            if len(fob) == 0:  # Empty FITS file
+                raise OSError(f"Empty FITS file: {fits_filename}")
+            header = fob[0].header
+    except OSError as e:
+        if strict:
+            raise OSError(f"Failed to read FITS file '{fits_filename}': {e}")
+        else:
+            logger.warning(f"Failed to read FITS file '{fits_filename}': {e}")
+            return None, None
 
     header_is_valid = None
     if validate:
