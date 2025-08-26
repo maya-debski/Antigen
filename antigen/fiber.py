@@ -75,17 +75,28 @@ def get_fiber_bounds(fiber_x, fiber_y):
 
 def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
     """
-    Load fiber base positions and apply dither offsets.
+    Load the fiber positions for a given instrument and apply the appropriate dither offsets.
+
+    This function retrieves the base fiber coordinates from the instrument configuration
+    (typically the focal-plane positions of each fiber) and then applies telescope dither
+    offsets to produce the full set of fiber positions for the requested dither pattern.
+    The dither offsets are read from an instrument-specific dither file, which encodes
+    the step sizes (dx, dy) for each dither position. If no dithering is used
+    (ndithers == 1), the base positions are returned unchanged.
+
+    This is typically used at the start of a reduction to construct the fiber footprint
+    on the sky (or detector) for all exposures in a dataset.
 
     Args:
-        instrument (str): Instrument name.
-        ndithers (int): Number of dithers.
-        dither_numbers (list): List of dither numbers
-        config_dict (dict): Config dict containing 'ifu_x' and 'ifu_y'.
+        instrument (str): Instrument name (used to locate the correct dither file).
+        ndithers (int): Number of dithers in the observing sequence.
+        dither_numbers (list of int): Indices of the dithers to apply (1-based).
+        config_dict (dict): Instrument configuration containing 'ifu_x' and 'ifu_y' arrays
+            for the base fiber positions.
 
     Returns:
-        fiber_x (array): X-positions of fibers including dither pattern
-        fiber_y (array): Y-positions of fibers including dither pattern
+        fiber_x (ndarray): X positions of fibers with dither offsets applied.
+        fiber_y (ndarray): Y positions of fibers with dither offsets applied.
     """
     # --- Input validation ---
     if "ifu_x" not in config_dict or "ifu_y" not in config_dict:
