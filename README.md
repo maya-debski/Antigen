@@ -122,9 +122,7 @@ aAn example call might be:
         -w 2  \
         --verbose
     
-    $ antigen_read_manifest_virus2.py \
-        -f ./config_files/virus2/virus2_manifest_template.yml \
-        --validate
+    $ antigen_read_manifest_virus2.py -f antigen/config_files/virus2/virus2_manifest_template.yml --validate
     ```
 
 
@@ -132,10 +130,7 @@ aAn example call might be:
 
     ```bash
     $ conda activate env_antigen
-    $ antigen_reduce_virus2_manifest.py \ 
-             --manifest_file ./config_files/virus2/virus2_manifest_template.yml \
-             --verbose \
-             --debug
+    $ antigen_reduce_manifest.py -m antigen/config_files/virus2/virus2_manifest_template.yml -v
     ```
 
 - Example 3: How to build a manifest and reduce it, without pre-existing manifest
