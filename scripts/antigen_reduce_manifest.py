@@ -6,7 +6,7 @@ import os
 import sys
 
 from antigen import manifest
-from antigen import reduce_virus2
+from antigen import reduce
 from antigen import utils
 
 
@@ -58,12 +58,8 @@ def main():
     manifest_savefile = os.path.join(os.path.abspath(args.out_folder), 'reduction_manifest.yml')
     manifest.save_manifest(manifest_record, manifest_savefile)
 
-    obs_filenames = manifest_record[manifest.MANIFEST_OBSERVATION_LIST_KEY]
-    for file in obs_filenames:
-        logger.info(f'Processing reduction for FITS obs file: {file.name}')
-        output_fits_filename = reduce_virus2.reduction_pipeline(manifest_record, output_path=args.out_folder)
+    output_fits_filename = reduce.reduction_pipeline(manifest_record, args.out_folder)
 
-        logger.info(f'Wrote reduction FITS file to {output_fits_filename}')
 
     return None
 
