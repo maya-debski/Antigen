@@ -41,7 +41,7 @@ script-files = [
     'scripts/antigen_measure_response.py',
     'scripts/antigen_read_manifest.py',
     'scripts/antigen_reduce.py',
-    'scripts/antigen_reduce_virus2_manifest.py',
+    'scripts/antigen_reduce_manifest.py',
     'scripts/antigen_view_fits.py',
     'scripts/antigen_prepare_gcms_dataset.py',
 ]
