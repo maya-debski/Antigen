@@ -40,7 +40,7 @@ Outputs:
 Example:
     Prepare GCMS data for the night of 20240801 taken with the VP1B configuration:
 
-    $ antigen_prepare_gcms_dataset.py -i /data/gcms/raw/ -o /data/gcms/prepared/ -c 20240801 -m GCMS -l VP1B
+    $ antigen_prepare_gcms_dataset.py -i /Night1 -o ~/data -c 20240801 -m GCMS -l VP1B
 
 Notes:
     - Frame types are inferred by matching keywords in the OBJECT header card.
