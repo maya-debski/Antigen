@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 import sys
 
-from antigen.cli import add_calibration_args, add_common_args
 from antigen.datasets import build_dataset_from_reduced_files
 from antigen.manifest import save_manifest
 from antigen.utils import setup_logging
@@ -12,44 +11,41 @@ from antigen.calibrate import build_response
 
 DESCRIPTION = r"""
 Purpose:
-    This script runs the full reduction pipeline for VIRUS2/GCMS instrument datasets
-    for a given night of observations. It uses manifest files to locate input
-    science and calibration data, applies the standard reduction steps, and
-    writes reduced science-ready FITS files to the specified output directory.
+    This script builds an instrument response function from reduced
+    standard star observations for the VIRUS2/GCMS instrument.
 
 What it does:
-    - Searches the input folder for datasets matching the given observation date,
-      observation name, and calibration frame labels.
-    - Groups raw files into logical datasets for reduction.
-    - Runs the VIRUS2 reduction pipeline on each dataset, which includes:
-        * Bias correction
-        * Trace calibration
-        * Flat fielding
-        * Wavelength calibration
-        * Science frame spectral extraction
-    - Writes the reduced, calibrated science frames to the output folder.
+    - Scans a directory of reduced datasets for standard star frames.
+    - Generates a dataset manifest for each candidate standard star.
+    - Selects the datasets matching the requested standard star name.
+    - For each match:
+        * Builds an instrument response function by comparing the observed
+          spectrum with a reference CALSPEC spectrum.
+        * Saves the response manifest and response products to the output folder.
 
 Inputs:
-    - Input folder: Directory containing raw spectrograph FITS files
-    - Output folder: Destination for reduced FITS files.
-    - Observation date: Date of the observation run (YYYYMMDD format).
-    - Optional: Observation name, time radius, and custom labels for calibration frames.
-    - Other common flags: e.g., --reduce-all to include all matching datasets.
+    - Reduced directory: Path containing reduced standard star datasets
+      (already processed with bias, flats, arcs, etc.).
+    - Output folder: Destination for response files (defaults to reduced directory).
+    - Standard star name: Substring to identify the target (e.g., "Feige").
+    - PSF and cube-building settings such as extraction radius and pixel size.
 
 Outputs:
-    - One reduced, science-ready FITS file per dataset found.
-    - Files are saved in the output folder with names indicating unit ID and processing details.
+    - A YAML manifest file for each standard star response dataset.
+    - Instrument response function FITS and diagnostic plots, written to the output folder.
 
 Example:
-    Reduce all VIRUS2 data for the night of 20250801:
+    Build a response function from reduced Feige standard star frames:
 
-    $ antigen_reduce_gcms.py -i /data/virus2/raw/ -o /data/virus2/reduced/ -c 20250801
+    $ antigen_build_response.py -r /data/VIRUS2/reduced/ -o /data/VIRUS2/response/ -s Feige
 
 Notes:
-    - The script logs all processing steps and reports any datasets that failed to reduce.
-    - Reduction uses calibration frames as specified by bias, dark, arc, flat, and twilight labels.
-    - This script assumes a valid configuration of the VIRUS2 reduction pipeline.
+    - This script assumes that the input data have already been reduced
+      (use the main reduction pipeline first).
+    - Logs will report any datasets that do not match the requested standard.
+    - Response functions are required for flux calibration of science targets.
 """
+
 
 
 
@@ -97,8 +93,7 @@ def main():
             save_filepath = save_path / manifest_filename
             save_manifest(manifest, str(save_filepath))
             logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
-            output_response_filename = build_response(manifest, args.output_folder, args.standard_name,
-                                                      args.pixel_size)
+            output_response_filename = build_response(manifest, args)
             logger.info(f'Saved response to {output_response_filename}')
 
     return None
