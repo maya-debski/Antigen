@@ -15,6 +15,7 @@ from antigen import io
 from antigen import plot
 from antigen import psf
 from antigen import spectra
+from antigen import utils
 from antigen import wavelength
 
 
@@ -293,9 +294,13 @@ def build_response(dataset_manifest, args):
         output_path (str): output file path to which this method will write a reduced FITS file
         args (argparse.Namespace): command line arguments
     """
+
     # Loading the config dictionary
     config_dict = config.build_config_for_element(dataset_manifest['unit_instrument'].lower(),
                                                   dataset_manifest['unit_id'].upper())
+
+    # Check that all required keywords are present and pass the sanity checks
+    utils.validate_inputs(dataset_manifest, args, config_dict)
 
     # Adjust the fiber positions for the dithering of the observation
     fiber_x, fiber_y = fiber.load_fiber_positions(dataset_manifest['unit_instrument'],
@@ -331,6 +336,10 @@ def build_response(dataset_manifest, args):
         psf_interp, x_coord, y_coord, def_wave,
         extraction_radius=extraction_radius, nchunks=20
     )
+
+    # Build cube
+    data_cube, X, Y = build_and_write_cube(def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
+                                            header, dar_model, args.pixel_size, output_file="test.fits")
 
     # Load calibration data
     cal_spectrum_table, extinction_table = load_calibration_data(args.standard_name)
