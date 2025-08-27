@@ -130,39 +130,6 @@ def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y
     return dar_model, measured_fwhm
 
 
-def build_and_write_cube(def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
-                         header, dar_model, pixel_size, output_file="test.fits"):
-    """
-    Build a data cube from fiber spectra and write it to disk.
-
-    Args:
-        def_wave (ndarray): Wavelength grid.
-        reduced_spectra (ndarray): Flux array of shape (Nfibers, Nlambda).
-        fiber_x (ndarray): Fiber X positions.
-        fiber_y (ndarray): Fiber Y positions.
-        fiber_area (float): Effective area of fibers.
-        header (fits.Header): Header metadata for FITS file.
-        dar_model (DARModel): DAR model for correcting positions.
-        pixel_size (float): Cube pixel size in arcsec.
-        output_file (str, optional): Path for output FITS file. Defaults to "test.fits".
-
-    Returns:
-        tuple:
-            data_cube (ndarray): Constructed 3D data cube.
-            x_grid (ndarray): Cube X coordinate grid.
-            y_grid (ndarray): Cube Y coordinate grid.
-    """
-    logger.info("Building Cube")
-    data_cube, x_grid, y_grid = cube.make_cube(
-        def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
-        pixel_size=pixel_size, method="gdw", k=15,
-        dar_model=dar_model, sigma=2.0
-    )
-    io.write_cube(output_file, data_cube, def_wave, header,
-                  x_grid, y_grid, pixel_size, overwrite=True)
-    return data_cube, x_grid, y_grid
-
-
 def load_calibration_data(standard_name):
     """
     Load standard star spectrum and extinction curve for calibration.
@@ -284,7 +251,195 @@ def measure_and_apply_response(def_wave, spectrum, spectrum_error,
 
     return spectrum, spectrum_error, response
 
+def prepare_response_inputs(dataset_manifest, args):
+    """Prepare all inputs needed for building the instrument response.
 
+    This function:
+      1) Builds the instrument configuration dictionary.
+      2) Validates the dataset manifest, CLI args, and configuration.
+      3) Loads fiber positions (accounting for dithers).
+      4) Retrieves the rectified wavelength grid.
+      5) Loads reduced spectra, errors, and header.
+      6) Computes convenience values used downstream.
+
+    Args:
+        dataset_manifest (dict): Dataset manifest returned from
+            ``build_dataset_from_reduced_files()``. Must include:
+            - 'unit_instrument' (str)
+            - 'unit_id' (str)
+            - 'ndithers' (int)
+            - 'dither_number' (int)
+            - 'in_folder' (str)
+            - 'reduced_files' (list[str])
+        args (argparse.Namespace): Command line arguments. Must include:
+            - extraction_radius (float)
+
+    Returns:
+        dict: A dictionary with prepared inputs:
+            - 'config_dict' (dict): Instrument configuration.
+            - 'fiber_x' (ndarray): Fiber x-positions after dithering adjustments.
+            - 'fiber_y' (ndarray): Fiber y-positions after dithering adjustments.
+            - 'def_wave' (ndarray): Rectified wavelength grid.
+            - 'reduced_spectra' (ndarray): Stacked reduced spectra (n_fiber × n_wave).
+            - 'reduced_error' (ndarray): Stacked error estimates (n_fiber × n_wave).
+            - 'header' (fits.Header): Representative FITS header from the reduced data.
+            - 'fiber_area' (float): Geometric fiber area in square arcseconds.
+            - 'extraction_radius' (float): Extraction radius taken from args.
+
+    Raises:
+        ValueError: If required inputs are missing or invalid.
+    """
+    # 1) Build config for this instrument/element
+    config_dict = config.build_config_for_element(
+        dataset_manifest['unit_instrument'].lower(),
+        dataset_manifest['unit_id'].upper()
+    )
+
+    # 2) Validate everything early
+    utils.validate_inputs(dataset_manifest, args, config_dict)
+
+    # 3) Fiber positions (adjusted for dithers)
+    fiber_x, fiber_y = fiber.load_fiber_positions(
+        dataset_manifest['unit_instrument'],
+        dataset_manifest['ndithers'],
+        dataset_manifest['dither_number'],
+        config_dict
+    )
+
+    # 4) Wavelength grid
+    def_wave = wavelength.get_rectified_wavelength(config_dict)
+
+    # 5) Reduced data
+    reduced_spectra, reduced_error, header = io.load_reduced_data(
+        dataset_manifest['in_folder'],
+        dataset_manifest['reduced_files']
+    )
+
+    # 6) Convenience scalars
+    fiber_area = np.pi * (config_dict['fiber_radius'] ** 2)
+    extraction_radius = args.extraction_radius
+
+    return {
+        'config_dict': config_dict,
+        'fiber_x': fiber_x,
+        'fiber_y': fiber_y,
+        'def_wave': def_wave,
+        'reduced_spectra': reduced_spectra,
+        'reduced_error': reduced_error,
+        'header': header,
+        'fiber_area': fiber_area,
+        'extraction_radius': extraction_radius,
+    }
+
+
+def build_psf_and_dar(prep, psf_seeing_grid=None):
+    """Create the PSF interpolator, detect a bright source, and fit the DAR model.
+
+    This function:
+      1) Builds a radially symmetric PSF interpolator on a radius grid sized
+         relative to the extraction radius.
+      2) Detects the brightest source in a collapsed frame for PSF anchoring.
+      3) Fits the PSF as a function of wavelength to derive a DAR model and
+         measures the seeing (FWHM) as a function of wavelength.
+
+    Args:
+        prep (dict): Prepared inputs returned by :func:`prepare_response_inputs`.
+            Must contain:
+            - 'config_dict', 'fiber_x', 'fiber_y', 'def_wave',
+              'reduced_spectra', 'reduced_error', 'fiber_area',
+              'extraction_radius'
+        psf_seeing_grid (ndarray, optional): 1D array of seeing values (arcsec)
+            to tabulate the PSF interpolator. If not provided, uses
+            ``np.linspace(0.5, 5.0, 45)``.
+
+    Returns:
+        tuple:
+            - dar_model (callable): Function mapping (wavelength, fiber_x, fiber_y)
+              to refraction-corrected positions; suitable for downstream use.
+            - measured_fwhm (ndarray): Estimated FWHM (arcsec) vs wavelength.
+
+    Raises:
+        RuntimeError: If source detection or PSF/DAR fitting fails.
+    """
+    config_dict = prep['config_dict']
+    fiber_x = prep['fiber_x']
+    fiber_y = prep['fiber_y']
+    def_wave = prep['def_wave']
+    reduced_spectra = prep['reduced_spectra']
+    reduced_error = prep['reduced_error']
+    fiber_area = prep['fiber_area']
+    extraction_radius = prep['extraction_radius']
+
+    # PSF interpolator grid
+    if psf_seeing_grid is None:
+        psf_seeing_grid = np.linspace(0.5, 5.0, 45)
+    interpolation_radius = 1.5 * extraction_radius
+    r = np.linspace(0.0, interpolation_radius, 101)
+
+    # 1) PSF interpolator
+    psf_interp = psf.build_psf_interpolator(
+        r,
+        seeing=psf_seeing_grid,
+        fiber_radius=config_dict['fiber_radius']
+    )
+
+    # 2) Brightest source for PSF anchoring
+    sources, x_coord, y_coord, X, Y = detect_brightest_source(
+        fiber_x, fiber_y, reduced_spectra, fiber_area
+    )
+
+    # 3) Fit PSF across wavelength to build DAR and seeing model
+    dar_model, measured_fwhm = fit_psf_and_build_dar_model(
+        reduced_spectra, reduced_error, fiber_x, fiber_y,
+        psf_interp, x_coord, y_coord, def_wave,
+        extraction_radius=extraction_radius, nchunks=20
+    )
+
+    return dar_model, measured_fwhm, psf_interp, sources
+
+def construct_cube(prep, dar_model, args, output_file='test.fits'):
+    """Build (or update) the data cube on disk using the DAR model.
+
+    This function delegates to the existing cube builder and writes the result
+    to ``output_file``.
+
+    Args:
+        prep (dict): Prepared inputs returned by :func:`prepare_response_inputs`.
+            Must contain:
+            - 'def_wave', 'reduced_spectra', 'fiber_x', 'fiber_y',
+              'fiber_area', 'header'
+        dar_model (callable): DAR mapping returned by :func:`build_psf_and_dar`.
+        args (argparse.Namespace): Command line arguments. Must include:
+            - pixel_size (float): Cube pixel scale in arcsec/pixel.
+        output_file (str, optional): Where to write the output to.
+
+    Returns:
+        tuple:
+            - data_cube (ndarray): The constructed data cube.
+            - x_grid (ndarray): Cube X-coordinate grid (arcsec or pixels, per builder).
+            - y_grid (ndarray): Cube Y-coordinate grid (arcsec or pixels, per builder).
+
+    Raises:
+        IOError: If writing the cube fails.
+    """
+    def_wave = prep['def_wave']
+    reduced_spectra = prep['reduced_spectra']
+    fiber_x = prep['fiber_x']
+    fiber_y = prep['fiber_y']
+    fiber_area = prep['fiber_area']
+    header = prep['header']
+
+    logger.info("Building Cube")
+    data_cube, x_grid, y_grid = cube.make_cube(
+        def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
+        pixel_size=args.pixel_size, method="gdw", k=15,
+        dar_model=dar_model, sigma=2.0
+    )
+
+    io.write_cube(output_file, data_cube, def_wave, header,
+                  x_grid, y_grid, args.pixel_size, overwrite=True)
+
+    return data_cube, x_grid, y_grid
 
 def build_response(dataset_manifest, args):
     """Build the instrument response function.
@@ -295,54 +450,22 @@ def build_response(dataset_manifest, args):
         args (argparse.Namespace): command line arguments
     """
 
-    # Loading the config dictionary
-    config_dict = config.build_config_for_element(dataset_manifest['unit_instrument'].lower(),
-                                                  dataset_manifest['unit_id'].upper())
+    # Loading the data inputs
+    prep = prepare_response_inputs(dataset_manifest, args)
 
-    # Check that all required keywords are present and pass the sanity checks
-    utils.validate_inputs(dataset_manifest, args, config_dict)
+    # Construct the PSF and DAR model
+    dar_model, measured_fwhm, psf_interp, sources = build_psf_and_dar(prep)
 
-    # Adjust the fiber positions for the dithering of the observation
-    fiber_x, fiber_y = fiber.load_fiber_positions(dataset_manifest['unit_instrument'],
-                                                  dataset_manifest['ndithers'],
-                                                  dataset_manifest['dither_number'],
-                                                  config_dict)
-
-    # Grab the rectified wavelength from parameters in config_dict
-    def_wave = wavelength.get_rectified_wavelength(config_dict)
-
-    # Load the reduced frames and vertically stack them together
-    reduced_spectra, reduced_error, header = io.load_reduced_data(dataset_manifest['in_folder'],
-                                                                  dataset_manifest['reduced_files'])
-
-    # A pre-requisite for PSF extraction is the area of a fiber
-    fiber_area = np.pi * config_dict['fiber_radius'] **2
-
-    # Interpolation radius should be larger than extraction radius or an error will occur
-    extraction_radius = args.extraction_radius
-    interpolation_radius = extraction_radius * 1.5
-
-    # Construct the PSF interpolator
-    r = np.linspace(0, interpolation_radius, 101)
-    psf_interp = psf.build_psf_interpolator(r, seeing=np.linspace(0.5, 5.0, 45),
-                                            fiber_radius=config_dict['fiber_radius'])
-
-    # Detect the brightest source in a collapsed frame
-    sources, x_coord, y_coord, X, Y = detect_brightest_source(fiber_x, fiber_y, reduced_spectra, fiber_area)
-
-    # Fit PSF and build DAR model
-    dar_model, measured_fwhm = fit_psf_and_build_dar_model(
-        reduced_spectra, reduced_error, fiber_x, fiber_y,
-        psf_interp, x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, nchunks=20
-    )
-
-    # Build cube
-    data_cube, X, Y = build_and_write_cube(def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
-                                            header, dar_model, args.pixel_size, output_file="test.fits")
+    data_cube, X, Y = construct_cube(prep, dar_model, args)
 
     # Load calibration data
     cal_spectrum_table, extinction_table = load_calibration_data(args.standard_name)
+    fiber_x = prep['fiber_x']
+    fiber_y = prep['fiber_y']
+    def_wave = prep['def_wave']
+    reduced_spectra = prep['reduced_spectra']
+    reduced_error = prep['reduced_error']
+    header = prep['header']
 
     # Extract spectrum
     spectrum, spectrum_error = extract_optimal_spectrum(
