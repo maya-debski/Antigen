@@ -7,7 +7,25 @@ import sys
 from antigen.datasets import build_dataset_from_reduced_files
 from antigen.manifest import save_manifest
 from antigen.utils import setup_logging
-from antigen.calibrate import build_response
+
+
+# ---- A minimal SPEC describing the context this script needs ----
+SPEC_CALIBRATE = [
+    {"path":"cli.standard_name","source":"args","key":"standard_name","required":True,"units":"name","desc":"Spectrophotometric standard star identifier."},
+    {"path":"cli.output_folder","source":"args","key":"output_folder","required":True,"units":"path","desc":"Directory for response curve and QA outputs."},
+    {"path":"cli.extraction_radius","source":"args","key":"extraction_radius","required":False,"default":2.0,"units":"pix","desc":"Aperture radius around DAR track for extraction.","validate":lambda v: float(v)>0 if v is not None else True},
+
+    {"path":"dataset.unit_instrument","source":"dataset","key":"unit_instrument","required":True,"desc":"Instrument name (e.g., VIRUS2)."},
+    {"path":"dataset.unit_id","source":"dataset","key":"unit_id","required":True,"desc":"Instrument unit identifier (e.g., VP1B)."},
+    {"path":"dataset.ndithers","source":"dataset","key":"ndithers","required":True,"units":"count","desc":"Total number of dithers in the observation.","validate":lambda v: int(v)>=1 and float(v)==int(v)},
+    {"path":"dataset.dither_number","source":"dataset","key":"dither_number","required":True,"units":"index","desc":"Index of this exposure in the dither pattern (1-based).","validate":lambda v: isinstance(v,(list,tuple)) and len(v)>0},
+    {"path":"dataset.in_folder","source":"dataset","key":"in_folder","required":True,"default":"./","units":"path","desc":"Root folder containing reduced frames."},
+    {"path":"dataset.reduced_files","source":"dataset","key":"reduced_files","required":True,"units":"list[str]","desc":"List of reduced spectral frames to process.","validate":lambda v: isinstance(v,(list,tuple)) and len(v)>0},
+
+    {"path":"config.fiber_radius","source":"config","key":"fiber_radius","required":True,"units":"pix","desc":"Effective fiber footprint radius.","validate":lambda v: float(v)>0},
+]
+
+
 
 DESCRIPTION = r"""
 Purpose:
@@ -81,9 +99,10 @@ def main():
 
     # Build response manifests
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
+    from antigen.recipe import Recipe, BuildCalibrateContext, PrepareData, ModelPSFAndDAR, ExtractSpectrum
+    from antigen.recipe import ApplyExtinction, MeasureResponse
 
     for nr, manifest in enumerate(response_manifest):
-        reduction_name = manifest['reduction_name']
         element = manifest['unit_id']
         instrument = manifest['unit_instrument']
         target_name = manifest['target']
@@ -93,9 +112,37 @@ def main():
             save_filepath = save_path / manifest_filename
             save_manifest(manifest, str(save_filepath))
             logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
-            output_response_filename = build_response(manifest, args)
-            logger.info(f'Saved response to {output_response_filename}')
 
+            # 1) Define the recipe
+            steps = [BuildCalibrateContext(),
+                     PrepareData(),
+                     ModelPSFAndDAR(),
+                     ExtractSpectrum(),
+                     ApplyExtinction(),
+                     MeasureResponse()]
+            recipe = Recipe(
+                name="measure_response",
+                spec=SPEC_CALIBRATE,
+                steps=steps,
+                outputs=["flux_cal", "response"],
+                description="Measure an instrument response curve from reduced frames and a standard star.",
+            )
+
+            # 2) See the plan (no execution)
+            print(recipe.plan())
+            from antigen import config
+            config_dict = config.build_config_for_element(
+                manifest['unit_instrument'].lower(),
+                manifest['unit_id'].upper()
+            )
+            # 3) Optional: auto-generate docs of the context + steps
+            md = recipe.describe_markdown(manifest, args, config_dict)
+
+            Path(args.output_folder).mkdir(parents=True, exist_ok=True)
+            (Path(args.output_folder) / "measure_response.md").write_text(md, encoding="utf-8")
+
+            # 4) Run the recipe
+            state = recipe.run(manifest, args, config_dict, outdir=Path(args.output_folder))
     return None
 
 
