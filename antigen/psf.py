@@ -6,6 +6,8 @@ from astropy.modeling.functional_models import Moffat2D
 from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import least_squares
 
+from antigen import dar
+
 logger = logging.getLogger('antigen.psf')
 
 def build_psf_interpolator(r, seeing, scale=0.2, alpha=3.5, fiber_radius=2.1):
@@ -174,3 +176,36 @@ def build_psf_weights(source_x, source_y, source_fwhm, fiber_x, fiber_y,
     weights = fractions / np.nansum(fractions, axis=0)[np.newaxis, :]
     weights[np.isnan(weights)] = 0.0
     return weights
+
+
+def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
+                                psf_interp, x_coord, y_coord, def_wave,
+                                extraction_radius=2.0, nchunks=20):
+    """
+    Fit the PSF to the reduced spectra and construct a DAR model.
+
+    Args:
+        reduced_spectra (ndarray): Flux array of shape (Nfibers, Nlambda).
+        reduced_error (ndarray): Error array of shape (Nfibers, Nlambda).
+        fiber_x (ndarray): Fiber X positions.
+        fiber_y (ndarray): Fiber Y positions.
+        psf_interp (callable): Interpolator for PSF profile.
+        x_coord (float): X coordinate of detected source centroid.
+        y_coord (float): Y coordinate of detected source centroid.
+        def_wave (ndarray): Wavelength grid.
+        extraction_radius (float, optional): Extraction radius in arcsec. Defaults to 2.0.
+        nchunks (int, optional): Number of wavelength chunks for fitting. Defaults to 20.
+
+    Returns:
+        tuple:
+            dar_model (DARModel): Differential atmospheric refraction model.
+            measured_fwhm (ndarray): FWHM of PSF per chunk.
+    """
+    params = fit_psf(
+        reduced_spectra, reduced_error, fiber_x, fiber_y, psf_interp,
+        x_coord, y_coord, def_wave,
+        extraction_radius=extraction_radius, Nchunks=nchunks
+    )
+    _, _, measured_fwhm, coeff_x, coeff_y, _ = params
+    dar_model = dar.DARModel(coeff_x, coeff_y)
+    return dar_model, measured_fwhm
