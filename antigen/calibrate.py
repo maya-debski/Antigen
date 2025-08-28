@@ -52,39 +52,6 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
     return response
 
 
-def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
-                                psf_interp, x_coord, y_coord, def_wave,
-                                extraction_radius=2.0, nchunks=20):
-    """
-    Fit the PSF to the reduced spectra and construct a DAR model.
-
-    Args:
-        reduced_spectra (ndarray): Flux array of shape (Nfibers, Nlambda).
-        reduced_error (ndarray): Error array of shape (Nfibers, Nlambda).
-        fiber_x (ndarray): Fiber X positions.
-        fiber_y (ndarray): Fiber Y positions.
-        psf_interp (callable): Interpolator for PSF profile.
-        x_coord (float): X coordinate of detected source centroid.
-        y_coord (float): Y coordinate of detected source centroid.
-        def_wave (ndarray): Wavelength grid.
-        extraction_radius (float, optional): Extraction radius in arcsec. Defaults to 2.0.
-        nchunks (int, optional): Number of wavelength chunks for fitting. Defaults to 20.
-
-    Returns:
-        tuple:
-            dar_model (DARModel): Differential atmospheric refraction model.
-            measured_fwhm (ndarray): FWHM of PSF per chunk.
-    """
-    params = psf.fit_psf(
-        reduced_spectra, reduced_error, fiber_x, fiber_y, psf_interp,
-        x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, Nchunks=nchunks
-    )
-    _, _, measured_fwhm, coeff_x, coeff_y, _ = params
-    dar_model = dar.DARModel(coeff_x, coeff_y)
-    return dar_model, measured_fwhm
-
-
 def load_calibration_data(standard_name):
     """
     Load standard star spectrum and extinction curve for calibration.
@@ -344,7 +311,7 @@ def build_psf_and_dar(prep, psf_seeing_grid=None):
     )
 
     # 3) Fit PSF across wavelength to build DAR and seeing model
-    dar_model, measured_fwhm = fit_psf_and_build_dar_model(
+    dar_model, measured_fwhm = psf.fit_psf_and_build_dar_model(
         reduced_spectra, reduced_error, fiber_x, fiber_y,
         psf_interp, x_coord, y_coord, def_wave,
         extraction_radius=extraction_radius, nchunks=20
