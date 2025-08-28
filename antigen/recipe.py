@@ -19,7 +19,7 @@ from pathlib import Path
 import json
 import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from antigen.inputs import InputsRegistry, inputs_markdown  # reuse your spec tools
 from antigen import config
@@ -268,7 +268,8 @@ class PrepareData(Operation):
         fx, fy = fiber.load_fiber_positions(ctx.unit_instrument, ctx.ndithers, ctx.dither_number, ctx.config_dict)
         wave = wavelength.get_rectified_wavelength(ctx.config_dict)
         rs, re, hdr = io.load_reduced_data(ctx.in_folder, ctx.reduced_files)
-        state.update({"fiber_x": fx, "fiber_y": fy, "def_wave": wave, "reduced_spectra": rs, "reduced_error": re, "header": hdr})
+        state.update({"fiber_x": fx, "fiber_y": fy, "def_wave": wave, "reduced_spectra": rs,
+                      "reduced_error": re, "header": hdr})
         rlog.debug("data_prepared", n_wave=len(wave), n_files=len(ctx.reduced_files))
 
 
