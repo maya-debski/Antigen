@@ -2,15 +2,12 @@ import logging
 import warnings
 
 import numpy as np
-from numpy import ndarray
-from scipy.signal import savgol_filter
 
 from antigen import config
 from antigen import detection
 from antigen import extinction
 from antigen import fiber
 from antigen import io
-from antigen import plot
 from antigen import psf
 from antigen import spectra
 from antigen import utils
@@ -21,7 +18,7 @@ warnings.filterwarnings("ignore")
 logger = logging.getLogger('antigen.calibrate')
 
 
-def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
+def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=251):
     """Compute the instrument response function from a standard star.
 
     Response is defined as:
@@ -31,14 +28,14 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
     Optionally, a simple moving-average smoothing can be applied.
 
     Args:
-        obs_wave (ndarray): Wavelength grid of the observed (extinction-corrected) spectrum.
-        obs_flux (ndarray): Observed (corrected) flux values.
-        std_wave (ndarray): Wavelength grid of the reference standard star spectrum.
-        std_flux (ndarray): Reference flux of the standard star
-        window (int, optional): Window size for moving-average smoothing (default 11).
+        obs_wave (np.ndarray): Wavelength grid of the observed (extinction-corrected) spectrum.
+        obs_flux (np.ndarray): Observed (corrected) flux values.
+        std_wave (np.ndarray): Wavelength grid of the reference standard star spectrum.
+        std_flux (np.ndarray): Reference flux of the standard star
+        window (int, optional): Window size for moving-average smoothing (default 251).
 
     Returns:
-        response (ndarray): Instrument response values.
+        response (np.ndarray): Instrument response values.
     """
     std_on_obs = np.interp(obs_wave, std_wave, std_flux)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -46,6 +43,7 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
     finite_values = np.isfinite(response)
     response = np.interp(obs_wave, obs_wave[finite_values], response[finite_values],
                         left=response[finite_values][0],  right=response[finite_values][-1])
+    from scipy.signal import savgol_filter
     response = savgol_filter(response, window, 3)
     return response
 
@@ -74,22 +72,22 @@ def extract_optimal_spectrum(reduced_spectra, reduced_error, dar_model,
     Extract an optimal 1D spectrum using PSF-weighted fiber fluxes.
 
     Args:
-        reduced_spectra (ndarray): Flux array of shape (Nfibers, Nlambda).
-        reduced_error (ndarray): Error array of shape (Nfibers, Nlambda).
+        reduced_spectra (np.ndarray): Flux array of shape (Nfibers, Nlambda).
+        reduced_error (np.ndarray): Error array of shape (Nfibers, Nlambda).
         dar_model (DARModel): DAR model for source position correction.
         sources (Table): Detected source catalog.
-        X (ndarray): Grid of X coordinates.
-        Y (ndarray): Grid of Y coordinates.
-        measured_fwhm (ndarray): FWHM array from PSF fit.
-        fiber_x (ndarray): Fiber X positions.
-        fiber_y (ndarray): Fiber Y positions.
+        X (np.ndarray): Grid of X coordinates.
+        Y (np.ndarray): Grid of Y coordinates.
+        measured_fwhm (np.ndarray): FWHM array from PSF fit.
+        fiber_x (np.ndarray): Fiber X positions.
+        fiber_y (np.ndarray): Fiber Y positions.
         psf_interp (callable): PSF interpolator.
-        def_wave (ndarray): Wavelength grid.
+        def_wave (np.ndarray): Wavelength grid.
 
     Returns:
         tuple:
-            spectrum (ndarray): Extracted flux spectrum.
-            spectrum_error (ndarray): Extracted error spectrum.
+            spectrum (np.ndarray): Extracted flux spectrum.
+            spectrum_error (np.ndarray): Extracted error spectrum.
     """
     source_x, source_y = dar_model(
         def_wave,
@@ -116,16 +114,16 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
     Apply atmospheric extinction correction to extracted spectrum.
 
     Args:
-        def_wave (ndarray): Wavelength grid.
-        spectrum (ndarray): Flux spectrum.
-        spectrum_error (ndarray): Error spectrum.
+        def_wave (np.ndarray): Wavelength grid.
+        spectrum (np.ndarray): Flux spectrum.
+        spectrum_error (np.ndarray): Error spectrum.
         extinction_table (Table): Table with 'wavelength' and 'mags_per_airmass'.
         airmass (float): Observed airmass.
 
     Returns:
         tuple:
-            spectrum (ndarray): Extinction-corrected spectrum.
-            spectrum_error (ndarray): Extinction-corrected errors.
+            spectrum (np.ndarray): Extinction-corrected spectrum.
+            spectrum_error (np.ndarray): Extinction-corrected errors.
     """
     return extinction.apply_extinction_correction(
         def_wave, spectrum, spectrum_error,
@@ -141,18 +139,18 @@ def measure_and_apply_response(def_wave, spectrum, spectrum_error,
     Measure the instrument response and apply it to the extracted spectrum.
 
     Args:
-        def_wave (ndarray): Wavelength grid.
-        spectrum (ndarray): Flux spectrum.
-        spectrum_error (ndarray): Error spectrum.
+        def_wave (np.ndarray): Wavelength grid.
+        spectrum (np.ndarray): Flux spectrum.
+        spectrum_error (np.ndarray): Error spectrum.
         cal_spectrum_table (Table): CALSPEC standard star spectrum.
         output_folder (str): Output folder for plots.
         window (int, optional): Smoothing window for response. Defaults to 251.
 
     Returns:
         tuple:
-            spectrum (ndarray): Response-corrected spectrum.
-            spectrum_error (ndarray): Response-corrected errors.
-            response (ndarray): Derived instrument response function.
+            spectrum (np.ndarray): Response-corrected spectrum.
+            spectrum_error (np.ndarray): Response-corrected errors.
+            response (np.ndarray): Derived instrument response function.
     """
     response = measure_response(
         def_wave, spectrum,
@@ -162,7 +160,7 @@ def measure_and_apply_response(def_wave, spectrum, spectrum_error,
 
     spectrum *= response
     spectrum_error *= response
-
+    from antigen import plot  # import here, not at module top
     plot.plot_spectrum_with_standard(
         spectrum, spectrum_error, def_wave,
         cal_spectrum_table["wavelength"], cal_spectrum_table["flux"],
@@ -197,11 +195,11 @@ def prepare_response_inputs(dataset_manifest, args):
     Returns:
         dict: A dictionary with prepared inputs:
             - 'config_dict' (dict): Instrument configuration.
-            - 'fiber_x' (ndarray): Fiber x-positions after dithering adjustments.
-            - 'fiber_y' (ndarray): Fiber y-positions after dithering adjustments.
-            - 'def_wave' (ndarray): Rectified wavelength grid.
-            - 'reduced_spectra' (ndarray): Stacked reduced spectra (n_fiber × n_wave).
-            - 'reduced_error' (ndarray): Stacked error estimates (n_fiber × n_wave).
+            - 'fiber_x' (np.ndarray): Fiber x-positions after dithering adjustments.
+            - 'fiber_y' (np.ndarray): Fiber y-positions after dithering adjustments.
+            - 'def_wave' (np.ndarray): Rectified wavelength grid.
+            - 'reduced_spectra' (np.ndarray): Stacked reduced spectra (n_fiber × n_wave).
+            - 'reduced_error' (np.ndarray): Stacked error estimates (n_fiber × n_wave).
             - 'header' (fits.Header): Representative FITS header from the reduced data.
             - 'fiber_area' (float): Geometric fiber area in square arcseconds.
             - 'extraction_radius' (float): Extraction radius taken from args.
@@ -268,7 +266,7 @@ def build_psf_and_dar(prep, psf_seeing_grid=None):
             - 'config_dict', 'fiber_x', 'fiber_y', 'def_wave',
               'reduced_spectra', 'reduced_error', 'fiber_area',
               'extraction_radius'
-        psf_seeing_grid (ndarray, optional): 1D array of seeing values (arcsec)
+        psf_seeing_grid (np.ndarray, optional): 1D array of seeing values (arcsec)
             to tabulate the PSF interpolator. If not provided, uses
             ``np.linspace(0.5, 5.0, 45)``.
 
@@ -276,7 +274,7 @@ def build_psf_and_dar(prep, psf_seeing_grid=None):
         tuple:
             - dar_model (callable): Function mapping (wavelength, fiber_x, fiber_y)
               to refraction-corrected positions; suitable for downstream use.
-            - measured_fwhm (ndarray): Estimated FWHM (arcsec) vs wavelength.
+            - measured_fwhm (np.ndarray): Estimated FWHM (arcsec) vs wavelength.
 
     Raises:
         RuntimeError: If source detection or PSF/DAR fitting fails.
