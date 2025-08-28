@@ -13,7 +13,7 @@ from antigen.utils import setup_logging
 SPEC_CALIBRATE = [
     {"path":"cli.standard_name","source":"args","key":"standard_name","required":True,"units":"name","desc":"Spectrophotometric standard star identifier."},
     {"path":"cli.output_folder","source":"args","key":"output_folder","required":True,"units":"path","desc":"Directory for response curve and QA outputs."},
-    {"path":"cli.extraction_radius","source":"args","key":"extraction_radius","required":False,"default":2.0,"units":"pix","desc":"Aperture radius around DAR track for extraction.","validate":lambda v: float(v)>0 if v is not None else True},
+    {"path":"cli.extraction_radius","source":"args","key":"extraction_radius","required":True,"units":"pix","desc":"Aperture radius around DAR track for extraction.","validate":lambda v: float(v)>0 if v is not None else True},
 
     {"path":"dataset.unit_instrument","source":"dataset","key":"unit_instrument","required":True,"desc":"Instrument name (e.g., VIRUS2)."},
     {"path":"dataset.unit_id","source":"dataset","key":"unit_id","required":True,"desc":"Instrument unit identifier (e.g., VP1B)."},
