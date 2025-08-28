@@ -48,11 +48,18 @@ class Operation:
 # Run logger (JSONL + std logging)
 # -----------------------------
 class RunLogger:
-    def __init__(self, outdir: Path, recipe_name: str):
+    def __init__(self, outdir: Path, recipe_name: str, *, pretty: bool = True, use_color: bool | None = None):
         self.outdir = outdir
         self.recipe_name = recipe_name
         self.jsonl_path = outdir / f"{recipe_name}.run.jsonl"
         self._fh = None
+        self.pretty = pretty
+        # auto-detect TTY for color unless explicitly set
+        try:
+            import sys
+            self.use_color = use_color if use_color is not None else sys.stderr.isatty()
+        except Exception:
+            self.use_color = False
         self._ensure_file()
 
     def _ensure_file(self) -> None:
@@ -60,37 +67,97 @@ class RunLogger:
         self._fh = self.jsonl_path.open("a", encoding="utf-8")
 
     def emit(self, level: str, event: str, **kv: Any) -> None:
-        rec = {
-            "ts": time.time(),
-            "level": level,
-            "event": event,
-            **kv,
-        }
-        line = json.dumps(rec, ensure_ascii=False)
-        self._fh.write(line + "\n")
+        # 1) Structured JSONL (unchanged)
+        rec = {"ts": time.time(), "level": level, "event": event, **kv}
+        self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self._fh.flush()
-        # also standard logs
-        lvl = getattr(logging, level.upper(), logging.INFO)
-        logger.log(lvl, "%s | %s", event, kv)
 
-    def debug(self, event: str, **kv: Any) -> None:
-        self.emit("debug", event, **kv)
+        # 2) Human log line
+        lvl_no = getattr(logging, level.upper(), logging.INFO)
+        if self.pretty:
+            msg = self._pretty_line(event, kv)
+        else:
+            msg = f"{event} | " + " ".join(f"{k}={v!r}" for k, v in kv.items())
+        logger.log(lvl_no, msg)
 
-    def info(self, event: str, **kv: Any) -> None:
-        self.emit("info", event, **kv)
-
-    def warning(self, event: str, **kv: Any) -> None:
-        self.emit("warning", event, **kv)
-
-    def error(self, event: str, **kv: Any) -> None:
-        self.emit("error", event, **kv)
+    def debug(self, event: str, **kv: Any) -> None: self.emit("debug", event, **kv)
+    def info(self, event: str, **kv: Any) -> None:  self.emit("info", event, **kv)
+    def warning(self, event: str, **kv: Any) -> None: self.emit("warning", event, **kv)
+    def error(self, event: str, **kv: Any) -> None:   self.emit("error", event, **kv)
 
     def close(self) -> None:
         try:
-            if self._fh:
-                self._fh.close()
+            if self._fh: self._fh.close()
         finally:
             self._fh = None
+
+    # ---- Pretty helpers ----
+    def _pretty_line(self, event: str, kv: dict) -> str:
+        icon = {
+            "recipe_start": "🍳",
+            "recipe_done":  "✅",
+            "op_start":     "▶",
+            "op_done":      "✓",
+            "op_missing_inputs": "⚠",
+            "error":        "✖",
+        }.get(event, "•")
+
+        # lift out common fields if present
+        step   = kv.get("step")
+        total  = kv.get("total")
+        op     = kv.get("op")
+        secs   = kv.get("seconds")
+
+        # base headline
+        head = []
+        head.append(icon)
+        if event in ("op_start", "op_done"):
+            if step is not None and total is not None:
+                head.append(f"{int(step)}/{int(total)}")
+            elif step is not None:
+                head.append(f"{int(step)}")
+            if op:
+                head.append(str(op))
+        else:
+            head.append(event)
+
+        # tail bits
+        tail = []
+        if secs is not None:
+            try:
+                tail.append(f"{float(secs):.3f}s")
+            except Exception:
+                tail.append(f"{secs}")
+
+        # remaining kvs, excluding ones we already surfaced
+        exclude = {"step", "total", "op", "seconds"}
+        rest = " ".join(f"{k}={kv[k]!r}" for k in kv if k not in exclude)
+        if rest:
+            tail.append(rest)
+
+        # assemble
+        line = " ".join(head)
+        if tail:
+            line += " " + " ".join(tail)
+
+        # optional colorize simple levels
+        if self.use_color:
+            return self._colorize(event, line)
+        return line
+
+    def _colorize(self, event: str, s: str) -> str:
+        # simple mapping; adjust if you want more nuance
+        if event in ("recipe_start", "op_start"):
+            code = 36   # cyan
+        elif event in ("recipe_done", "op_done"):
+            code = 32   # green
+        elif event in ("op_missing_inputs", "warning"):
+            code = 33   # yellow
+        elif event in ("error",):
+            code = 31   # red
+        else:
+            code = 0
+        return f"\x1b[{code}m{s}\x1b[0m" if code else s
 
 
 # -----------------------------
@@ -157,11 +224,11 @@ class Recipe:
             if missing:
                 rlog.error("op_missing_inputs", step=idx, op=op.name, missing=missing)
                 raise ValueError(f"Operation {op.name} missing inputs: {missing}")
-            rlog.info("op_start", step=idx, op=op.name)
+            rlog.info("op_start", step=idx, total=len(self.steps), op=op.name)
             t0 = time.time()
             op.run(state, rlog)
             dt = time.time() - t0
-            rlog.info("op_done", step=idx, op=op.name, seconds=round(dt, 3))
+            rlog.info("op_done", step=idx, total=len(self.steps), op=op.name, seconds=round(dt, 3))
         rlog.info("recipe_done", name=self.name)
         rlog.close()
         return state
@@ -331,13 +398,3 @@ class CalibrateContext:
         self.config_dict = config.build_config_for_element(
             self.unit_instrument.lower(), self.unit_id.upper()
         )
-
-# Convenience bundle for the typical calibration pipeline
-CALIBRATION_STEPS: List[Operation] = [
-    BuildCalibrateContext(),
-    PrepareData(),
-    ModelPSFAndDAR(),
-    ExtractSpectrum(),
-    ApplyExtinction(),
-    MeasureResponse(),
-]
