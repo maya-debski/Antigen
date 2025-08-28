@@ -1,5 +1,5 @@
 """
-calibrate_inputs_registry.py (spec-agnostic)
+inputs.py
 
 A tiny, dependency-light pattern to make inputs obvious, validated,
 printable, and reproducible. No typing libs, no globals.
