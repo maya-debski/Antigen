@@ -6,8 +6,6 @@ from numpy import ndarray
 from scipy.signal import savgol_filter
 
 from antigen import config
-from antigen import cube
-from antigen import dar
 from antigen import detection
 from antigen import extinction
 from antigen import fiber
@@ -317,51 +315,9 @@ def build_psf_and_dar(prep, psf_seeing_grid=None):
         extraction_radius=extraction_radius, nchunks=20
     )
 
-    return dar_model, measured_fwhm, psf_interp, sources
+    return dar_model, measured_fwhm, psf_interp, sources, X, Y
 
-def construct_cube(prep, dar_model, args, output_file='test.fits'):
-    """Build (or update) the data cube on disk using the DAR model.
 
-    This function delegates to the existing cube builder and writes the result
-    to ``output_file``.
-
-    Args:
-        prep (dict): Prepared inputs returned by :func:`prepare_response_inputs`.
-            Must contain:
-            - 'def_wave', 'reduced_spectra', 'fiber_x', 'fiber_y',
-              'fiber_area', 'header'
-        dar_model (callable): DAR mapping returned by :func:`build_psf_and_dar`.
-        args (argparse.Namespace): Command line arguments. Must include:
-            - pixel_size (float): Cube pixel scale in arcsec/pixel.
-        output_file (str, optional): Where to write the output to.
-
-    Returns:
-        tuple:
-            - data_cube (ndarray): The constructed data cube.
-            - x_grid (ndarray): Cube X-coordinate grid (arcsec or pixels, per builder).
-            - y_grid (ndarray): Cube Y-coordinate grid (arcsec or pixels, per builder).
-
-    Raises:
-        IOError: If writing the cube fails.
-    """
-    def_wave = prep['def_wave']
-    reduced_spectra = prep['reduced_spectra']
-    fiber_x = prep['fiber_x']
-    fiber_y = prep['fiber_y']
-    fiber_area = prep['fiber_area']
-    header = prep['header']
-
-    logger.info("Building Cube")
-    data_cube, x_grid, y_grid = cube.make_cube(
-        def_wave, reduced_spectra, fiber_x, fiber_y, fiber_area,
-        pixel_size=args.pixel_size, method="gdw", k=15,
-        dar_model=dar_model, sigma=2.0
-    )
-
-    io.write_cube(output_file, data_cube, def_wave, header,
-                  x_grid, y_grid, args.pixel_size, overwrite=True)
-
-    return data_cube, x_grid, y_grid
 
 def build_response(dataset_manifest, args):
     """Build the instrument response function.
@@ -376,9 +332,7 @@ def build_response(dataset_manifest, args):
     prep = prepare_response_inputs(dataset_manifest, args)
 
     # Construct the PSF and DAR model
-    dar_model, measured_fwhm, psf_interp, sources = build_psf_and_dar(prep)
-
-    data_cube, X, Y = construct_cube(prep, dar_model, args)
+    dar_model, measured_fwhm, psf_interp, sources, X, Y = build_psf_and_dar(prep)
 
     # Load calibration data
     cal_spectrum_table, extinction_table = load_calibration_data(args.standard_name)
