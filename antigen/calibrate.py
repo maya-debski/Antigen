@@ -2,7 +2,7 @@ import logging
 import warnings
 
 import numpy as np
-from numpy import ndarray, dtype
+from numpy import ndarray
 from scipy.signal import savgol_filter
 
 from antigen import config
@@ -51,51 +51,6 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=51):
     response = savgol_filter(response, window, 3)
     return response
 
-def detect_brightest_source(fiber_x, fiber_y, reduced_spectra, fiber_area):
-    """
-    Detect the brightest source in a collapsed fiber image.
-
-    This function collapses the reduced spectra across wavelength to create a
-    synthetic "white-light" image of the field, projects the fiber fluxes into
-    image space, and runs source detection to locate the brightest object.
-    It returns both the object catalog and the coordinates of the detected
-    source in image units.
-
-    Args:
-        fiber_x (ndarray): X positions of fibers (1D array of length Nfibers).
-        fiber_y (ndarray): Y positions of fibers (1D array of length Nfibers).
-        reduced_spectra (ndarray): Reduced spectra with shape (Nfibers, Nlambda).
-        fiber_area (float): Effective area of each fiber (used in flux projection).
-
-    Returns:
-        sources (Table): Source catalog from detection routine.
-        x_coord (float): X coordinate of the brightest source centroid.
-        y_coord (float): Y coordinate of the brightest source centroid.
-        X (ndarray): Grid of X coordinates corresponding to the detection image.
-        Y (ndarray): Grid of Y coordinates corresponding to the detection image.
-
-    Raises:
-        RuntimeError: If no sources are detected.
-    """
-    # Collapse flux over wavelength to make detection image
-    collapsed_fiber_flux = np.nanmedian(reduced_spectra, axis=1)
-    bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
-
-    detection_image, X, Y = cube.fibers_to_image(
-        fiber_x, fiber_y, collapsed_fiber_flux, fiber_area, bounds=bounds
-    )
-
-    sources = detection.detect_sources(detection_image, brightest_only=True)
-    if len(sources) == 0:
-        raise RuntimeError("No sources detected in the collapsed fiber image.")
-
-    j, i = (int(sources['xcentroid']), int(sources['ycentroid']))
-    x_coord = X[i, j]
-    y_coord = Y[i, j]
-
-    logger.info("Detected brightest source near %.1f, %.1f", x_coord, y_coord)
-
-    return sources, x_coord, y_coord, X, Y
 
 def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
                                 psf_interp, x_coord, y_coord, def_wave,
@@ -384,7 +339,7 @@ def build_psf_and_dar(prep, psf_seeing_grid=None):
     )
 
     # 2) Brightest source for PSF anchoring
-    sources, x_coord, y_coord, X, Y = detect_brightest_source(
+    sources, x_coord, y_coord, X, Y = detection.detect_brightest_source(
         fiber_x, fiber_y, reduced_spectra, fiber_area
     )
 
