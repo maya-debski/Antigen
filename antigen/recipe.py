@@ -19,7 +19,7 @@ from pathlib import Path
 import json
 import time
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Type
 
 from antigen.inputs import InputsRegistry, inputs_markdown  # reuse your spec tools
 from antigen import config
@@ -237,22 +237,6 @@ class Recipe:
 # -----------------------------
 # Example operations (reusable)
 # -----------------------------
-class BuildCalibrateContext(Operation):
-    def __init__(self):
-        super().__init__(
-            name="BuildCalibrateContext",
-            needs=["inputs"],
-            provides=["ctx"],
-            summary="Create narrow context object from validated inputs.",
-        )
-
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        ctx = CalibrateContext(state["inputs"])
-        ctx.output_folder.mkdir(parents=True, exist_ok=True)
-        state["ctx"] = ctx
-        rlog.debug("ctx_ready", out=str(ctx.output_folder))
-
-
 class PrepareData(Operation):
     def __init__(self):
         super().__init__(
@@ -372,30 +356,68 @@ class MeasureResponse(Operation):
         # io.save_response_curve(ctx.output_folder, state["def_wave"], response)
         rlog.debug("response_measured", out=str(ctx.output_folder))
 
-class CalibrateContext:
-    """Minimal, explicit payload for calibration.
+@dataclass
+class BuildContext:
+    """Base context class that provides common context building functionality."""
+    inputs: Dict[str, Any]
+    
+    def __post_init__(self):
+        self._process_inputs()
+    
+    def _process_inputs(self):
+        """Process inputs according to their categories.
+        Override this in subclasses to add specific processing."""
+        pass
 
-    Build this from an inputs dict collected/validated by InputsRegistry.
-    """
+    def ensure_paths(self):
+        """Ensure all path-like attributes are properly converted to Path objects"""
+        for attr_name, attr_value in self.__dict__.items():
+            if isinstance(attr_value, str) and ('path' in attr_name.lower() or 
+                                              'folder' in attr_name.lower() or 
+                                              'dir' in attr_name.lower()):
+                setattr(self, attr_name, Path(attr_value).expanduser())
 
-    def __init__(self, inputs: dict):
-        # CLI
-        self.standard_name = inputs["cli"]["standard_name"]
-        self.output_folder = Path(inputs["cli"]["output_folder"]).expanduser()
-        self.extraction_radius = float(inputs["cli"].get("extraction_radius", 2.0))
+class CalibrateContext(BuildContext):
+    """Specific context for calibration operations."""
+    
+    def _process_inputs(self):
+        # CLI inputs
+        self.standard_name = self.inputs["cli"]["standard_name"]
+        self.output_folder = Path(self.inputs["cli"]["output_folder"]).expanduser()
+        self.extraction_radius = float(self.inputs["cli"].get("extraction_radius", 2.0))
 
-        # Dataset
-        self.unit_instrument = inputs["dataset"]["unit_instrument"]
-        self.unit_id = inputs["dataset"]["unit_id"]
-        self.ndithers = int(inputs["dataset"]["ndithers"])
-        self.dither_number = [int(n) for n in inputs["dataset"]["dither_number"]]
-        self.in_folder = Path(inputs["dataset"]["in_folder"]).expanduser()
-        self.reduced_files = [str(self.in_folder / f) for f in inputs["dataset"]["reduced_files"]]
+        # Dataset inputs
+        self.unit_instrument = self.inputs["dataset"]["unit_instrument"]
+        self.unit_id = self.inputs["dataset"]["unit_id"]
+        self.ndithers = int(self.inputs["dataset"]["ndithers"])
+        self.dither_number = [int(n) for n in self.inputs["dataset"]["dither_number"]]
+        self.in_folder = Path(self.inputs["dataset"]["in_folder"]).expanduser()
+        self.reduced_files = [str(self.in_folder / f) for f in self.inputs["dataset"]["reduced_files"]]
 
-        # Config
-        self.fiber_radius = float(inputs["config"]["fiber_radius"])  # px
-
-        # Construct config dict now that instrument identity is known
+        # Config inputs
+        self.fiber_radius = float(self.inputs["config"]["fiber_radius"])
+        
+        # Construct config dict
         self.config_dict = config.build_config_for_element(
             self.unit_instrument.lower(), self.unit_id.upper()
         )
+        
+        # Ensure output folder exists
+        self.output_folder.mkdir(parents=True, exist_ok=True)
+
+class BuildGenericContext(Operation):
+    """Generic context building operation that can work with any context type."""
+    
+    def __init__(self, context_class: Type[BuildContext]):
+        super().__init__(
+            name=f"Build{context_class.__name__}",
+            needs=["inputs"],
+            provides=["ctx"],
+            summary=f"Create {context_class.__name__} from validated inputs.",
+        )
+        self.context_class = context_class
+
+    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
+        ctx = self.context_class(state["inputs"])
+        state["ctx"] = ctx
+        rlog.debug("ctx_ready", context_type=self.context_class.__name__)
