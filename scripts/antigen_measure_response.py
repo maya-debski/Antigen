@@ -99,8 +99,8 @@ def main():
 
     # Build response manifests
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
-    from antigen.recipe import Recipe, BuildCalibrateContext, PrepareData, ModelPSFAndDAR, ExtractSpectrum
-    from antigen.recipe import ApplyExtinction, MeasureResponse
+    from antigen.recipe import Recipe, BuildGenericContext, PrepareData, ModelPSFAndDAR, ExtractSpectrum
+    from antigen.recipe import ApplyExtinction, MeasureResponse, CalibrateContext
 
     for nr, manifest in enumerate(response_manifest):
         element = manifest['unit_id']
@@ -114,7 +114,7 @@ def main():
             logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
 
             # 1) Define the recipe
-            steps = [BuildCalibrateContext(),
+            steps = [BuildGenericContext(CalibrateContext),
                      PrepareData(),
                      ModelPSFAndDAR(),
                      ExtractSpectrum(),
