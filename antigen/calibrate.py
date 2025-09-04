@@ -149,7 +149,7 @@ def measure_and_apply_response(def_wave, spectrum, spectrum_error,
     """
     response = measure_response(
         def_wave, spectrum,
-        cal_spectrum_table["wavelength"], cal_spectrum_table["flux"],
+        cal_spectrum_table["WAVELENGTH"], cal_spectrum_table["FLUX"],
         window=window
     )
 
@@ -158,7 +158,7 @@ def measure_and_apply_response(def_wave, spectrum, spectrum_error,
     from antigen import plot  # import here, not at module top
     plot.plot_spectrum_with_standard(
         spectrum, spectrum_error, def_wave,
-        cal_spectrum_table["wavelength"], cal_spectrum_table["flux"],
+        cal_spectrum_table["WAVELENGTH"], cal_spectrum_table["FLUX"],
         1. / response, outfolder=output_folder
     )
 

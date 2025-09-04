@@ -418,7 +418,7 @@ def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=Fal
     # Get the spectrum
     try:
         calspec_obj = Calspec(name)
-        spectrum = calspec_obj.get_spectrum_table(type=spec_type, date=date)
+        spectrum = calspec_obj.get_spectrum_table()
     except Exception as e:
         raise RuntimeError(f"Failed to retrieve CALSPEC spectrum for {name}") from e
 
