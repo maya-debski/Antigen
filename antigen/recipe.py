@@ -294,7 +294,6 @@ class ExtractSpectrum(Operation):
 
     def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
         from antigen.calibrate import extract_optimal_spectrum
-        ctx = state["ctx"]
         spec, err = extract_optimal_spectrum(
             reduced_spectra=state["reduced_spectra"],
             reduced_error=state["reduced_error"],
@@ -341,6 +340,7 @@ class MeasureResponse(Operation):
             provides=["flux_cal", "flux_cal_err", "response"],
             summary="Measure response vs. standard star and apply calibration.",
         )
+
 
     def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
         from antigen.calibrate import measure_and_apply_response
