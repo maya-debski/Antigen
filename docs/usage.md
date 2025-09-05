@@ -4,16 +4,16 @@
 
 GCMS data for a single night of observations is output in a folder containing all files, including calibrations, standard stars, and science frames. In order to reduce the data for a single night:
 
-- Copy the data to a folder structure to help the antigen reduction using <tt> antigen\_prepare\_gcms\_dataset.py</tt>. An example call might be:
+- Copy the data to a folder structure to help the antigen reduction using <tt>antigen\_prepare\_gcms\_dataset.py</tt>. An example call might be:
    ```bash
    $ conda activate env_antigen
    $ antigen_prepare_gcms_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -c 20240609 -m GCMS -l VP1R -o ~/data -v
    ```
-- Run the basic reduction using <tt> antigen\_reduce.py</tt>. An example call might be:
+- Run the basic reduction using <tt>antigen\_reduce.py</tt>. An example call might be:
    ```bash
    $ antigen_reduce.py -i ~/data -c 20240609 -m GCMS -v
    ```
-- The arguments for <tt> antigen_reduce.py</tt> are:
+- The arguments for <tt>antigen_reduce.py</tt> are:
   ```bash
   usage: antigen_reduce.py [-h] [-i IN_FOLDER] [-o OUT_FOLDER] [-c OBS_DATE] [-n OBS_NAME] [-r] [-w TIME_RADIUS] [-v] [-b BIAS_LABEL] [-a ARC_LABEL] [-d DARK_LABEL] [-f FLAT_LABEL] [-t TWILIGHT_FLAT_LABEL]
                          [-m INSTRUMENT]
@@ -48,13 +48,14 @@ GCMS data for a single night of observations is output in a folder containing al
 
 You can also run antigen on GCMS data by building a manifest file from your restructured data folder through these steps:
 
-- Build the manifest using <tt> antigen\_build\_manifest.py</tt>. An example call might be:
+- Build the manifest using <tt>antigen\_build\_manifest.py</tt>. An example call might be:
    ```bash
    $ antigen_build_manifest.py -i ~/data -o ~/data/manifests -c 20240609
    ```
-- Run a basic reduction using <tt> antigen\_reduce\_manifest.py</tt>. An example call might be:
+- Run a basic reduction using <tt>antigen\_reduce\_manifest.py</tt>. An example call might be:
    ```bash
    $ antigen_reduce_manifest.py -f manifest.yml -o ~/data/reduced -v
    ```
+Please consult <tt>docs/gcms\_reduction\_flowchart.jpg</tt> for a visual representation of the steps required to reduce GCMS data.
 
 ## VIRUS2
