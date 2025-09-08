@@ -445,7 +445,7 @@ def read_extinction_table(file_path=None):
         OSError: If the file cannot be parsed into two numeric columns.
     """
     base_path = config.get_base_config_path()
-    default_path = base_path /  "mcdonald_extinction.dat"
+    default_path = base_path /  "extinction" / "mcdonald_extinction.dat"
 
     file_path = Path(file_path) if file_path else default_path
 
