@@ -16,13 +16,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import inspect
 import json
 import time
 import logging
 from typing import Dict, Any, List, Type
 
-from antigen.inputs import InputsRegistry, inputs_markdown  # reuse your spec tools
-from antigen import config
+from antigen.fiber import load_fiber_positions
+from antigen.wavelength import get_rectified_wavelength
+from antigen.io import load_reduced_data, load_calspec_spectrum, read_extinction_table
+from antigen.extinction import apply_extinction_correction
+from antigen.calibrate import measure_response, build_psf_and_dar, extract_optimal_spectrum
+from antigen.inputs import InputsRegistry, inputs_markdown
+from antigen.plot import plot_spectrum_with_standard
 
 logger = logging.getLogger("antigen.recipe")
 
@@ -32,16 +38,28 @@ logger = logging.getLogger("antigen.recipe")
 # -----------------------------
 @dataclass
 class Operation:
-    name: str
-    needs: List[str] = field(default_factory=list)     # keys required in state
-    provides: List[str] = field(default_factory=list)  # keys added to state
-    summary: str = ""
+    """Base class for all operations in a recipe."""
+    _name: str = field(init=False)
+    _needs: List[str] = field(init=False, default_factory=list)
+    _provides: List[str] = field(init=False, default_factory=list)
+    _summary: str = field(init=False, default="")
+    _init_params: List[str] = field(init=False, default_factory=list)
+
+    def __post_init__(self):
+        # Get initialization parameters (excluding self and optional params)
+        sig = inspect.signature(self.__class__.__init__)
+        self._init_params = [
+            param.name for param in sig.parameters.values()
+            if param.name != 'self' and param.default == param.empty
+        ]
+
+    def get_all_dependencies(self) -> List[str]:
+        """Get both state requirements and initialization parameters."""
+        return list(set(self._needs + self._init_params))
 
     def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        """Implement in subclass: mutate `state` with provided keys.
-        Should log progress via `rlog.info()` etc.
-        """
         raise NotImplementedError
+
 
 
 # -----------------------------
@@ -178,9 +196,16 @@ class Recipe:
             lines.append(self.description)
         lines.append("\nSteps:")
         for i, op in enumerate(self.steps, 1):
-            need = ", ".join(op.needs) or "–"
-            prov = ", ".join(op.provides) or "–"
-            lines.append(f"  {i:02d}. {op.name} | needs: [{need}] -> provides: [{prov}]  {op.summary}")
+            need = ", ".join(op._needs) or "–"
+            init = ", ".join(op._init_params) or "–"
+            prov = ", ".join(op._provides) or "–"
+            lines.append(
+                f"  {i:02d}. {op._name}"
+                f"\n      state needs: [{need}]"
+                f"\n      init params: [{init}]"
+                f"\n      provides: [{prov}]"
+                f"\n      {op._summary}"
+            )
         if self.outputs:
             lines.append("\nExpected outputs: " + ", ".join(self.outputs))
         return "\n".join(lines)
@@ -198,7 +223,7 @@ class Recipe:
         lines.append(ctx_table)
         lines.append("\n## Steps")
         for i, op in enumerate(self.steps, 1):
-            lines.append(f"{i}. **{op.name}** — {op.summary}")
+            lines.append(f"{i}. **{op._name}** — {op._summary}")
         if self.outputs:
             lines.append("\n## Expected outputs")
             lines.append("- " + "\n- ".join(self.outputs))
@@ -220,15 +245,15 @@ class Recipe:
         rlog.info("recipe_start", name=self.name)
         for idx, op in enumerate(self.steps, 1):
             # Check needs
-            missing = [k for k in op.needs if k not in state]
+            missing = [k for k in op._needs if k not in state]
             if missing:
-                rlog.error("op_missing_inputs", step=idx, op=op.name, missing=missing)
-                raise ValueError(f"Operation {op.name} missing inputs: {missing}")
-            rlog.info("op_start", step=idx, total=len(self.steps), op=op.name)
+                rlog.error("op_missing_inputs", step=idx, op=op._name, missing=missing)
+                raise ValueError(f"Operation {op._name} missing inputs: {missing}")
+            rlog.info("op_start", step=idx, total=len(self.steps), op=op._name)
             t0 = time.time()
             op.run(state, rlog)
             dt = time.time() - t0
-            rlog.info("op_done", step=idx, total=len(self.steps), op=op.name, seconds=round(dt, 3))
+            rlog.info("op_done", step=idx, total=len(self.steps), op=op._name, seconds=round(dt, 3))
         rlog.info("recipe_done", name=self.name)
         rlog.close()
         return state
@@ -237,38 +262,93 @@ class Recipe:
 # -----------------------------
 # Example operations (reusable)
 # -----------------------------
-class PrepareData(Operation):
-    def __init__(self):
-        super().__init__(
-            name="PrepareData",
-            needs=["ctx"],
-            provides=["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error", "header"],
-            summary="Load fiber geometry, rectified wavelength, reduced frames.",
+@dataclass
+class LoadFiberPositions(Operation):
+    """Load fiber positions from instrument configuration."""
+    unit_instrument: str
+    unit_id: str
+    ndithers: int
+    dither_number: List[int]
+    config_dict: Dict[str, Any]
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "LoadFiberPositions"
+        self._needs = []
+        self._provides = ["fiber_x", "fiber_y"]
+        self._summary = "Load fiber geometry for the instrument."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        fx, fy = load_fiber_positions(
+            self.unit_instrument,
+            self.ndithers,
+            self.dither_number,
+            self.config_dict
         )
-
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        from antigen import fiber, wavelength, io
-        ctx = state["ctx"]
-        fx, fy = fiber.load_fiber_positions(ctx.unit_instrument, ctx.ndithers, ctx.dither_number, ctx.config_dict)
-        wave = wavelength.get_rectified_wavelength(ctx.config_dict)
-        rs, re, hdr = io.load_reduced_data(ctx.in_folder, ctx.reduced_files)
-        state.update({"fiber_x": fx, "fiber_y": fy, "def_wave": wave, "reduced_spectra": rs,
-                      "reduced_error": re, "header": hdr})
-        rlog.debug("data_prepared", n_wave=len(wave), n_files=len(ctx.reduced_files))
+        state.update({
+            "fiber_x": fx,
+            "fiber_y": fy
+        })
+        rlog.debug("fiber_positions_loaded")
 
 
+@dataclass
+class GetWavelengthGrid(Operation):
+    """Generate wavelength grid from configuration."""
+    config_dict: Dict[str, Any]
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "GetWavelengthGrid"
+        self._needs = []
+        self._provides = ["def_wave"]
+        self._summary = "Generate rectified wavelength grid."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        wave = get_rectified_wavelength(self.config_dict)
+        state.update({
+            "def_wave": wave
+        })
+        rlog.debug("wavelength_grid_created", n_wave=len(wave))
+
+
+@dataclass
+class LoadReducedData(Operation):
+    """Load reduced spectra and error data."""
+    in_folder: str
+    reduced_files: List[str]
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "LoadReducedData"
+        self._needs = []
+        self._provides = ["reduced_spectra", "reduced_error", "header"]
+        self._summary = "Load reduced spectral frames and error data."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        rs, re, hdr = load_reduced_data(self.in_folder, self.reduced_files)
+        state.update({
+            "reduced_spectra": rs,
+            "reduced_error": re,
+            "header": hdr
+        })
+        rlog.debug("data_loaded", n_files=len(self.reduced_files))
+
+
+@dataclass
 class ModelPSFAndDAR(Operation):
-    def __init__(self):
-        super().__init__(
-            name="ModelPSFAndDAR",
-            needs=["ctx", "reduced_spectra", "reduced_error", "fiber_x", "fiber_y", "def_wave"],
-            provides=["modeling"],
-            summary="Fit PSF/DAR/FWHM as functions of wavelength.",
-        )
+    """Model PSF and DAR from spectral data."""
+    extraction_radius: float
+    fiber_radius: float
 
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        from antigen.calibrate import build_psf_and_dar
-        ctx = state["ctx"]
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "ModelPSFAndDAR"
+        self._needs = ["reduced_spectra", "reduced_error", "fiber_x", "fiber_y", "def_wave"]
+        self._provides = ["modeling"]
+        self._summary = "Fit PSF/DAR/FWHM as functions of wavelength."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
 
         modeling = build_psf_and_dar(
             fiber_x=state["fiber_x"],
@@ -276,148 +356,207 @@ class ModelPSFAndDAR(Operation):
             def_wave=state["def_wave"],
             reduced_spectra=state["reduced_spectra"],
             reduced_error=state["reduced_error"],
-            extraction_radius=ctx.extraction_radius,
-            fiber_radius=ctx.fiber_radius,
+            extraction_radius=self.extraction_radius,
+            fiber_radius=self.fiber_radius,
         )
         state["modeling"] = modeling
         rlog.debug("modeling_ready", have=list(modeling.keys()))
 
 
+@dataclass
 class ExtractSpectrum(Operation):
-    def __init__(self):
-        super().__init__(
-            name="ExtractSpectrum",
-            needs=["ctx", "reduced_spectra", "reduced_error", "modeling", "fiber_x", "fiber_y", "def_wave"],
-            provides=["spectrum", "spectrum_error"],
-            summary="Optimal extraction along the DAR track.",
-        )
+    """Extract optimal 1D spectrum using PSF-weighted fiber fluxes."""
 
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        from antigen.calibrate import extract_optimal_spectrum
-        spec, err = extract_optimal_spectrum(
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "ExtractSpectrum"
+        self._needs = [
+            "reduced_spectra",
+            "reduced_error",
+            "modeling",  # Contains dar_model, sources, X, Y, measured_fwhm
+            "fiber_x",
+            "fiber_y",
+            "def_wave"
+        ]
+        self._provides = ["spectrum", "spectrum_error"]
+        self._summary = "Extract optimal 1D spectrum using PSF weights."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+
+        modeling = state["modeling"]
+        spectrum, spectrum_error = extract_optimal_spectrum(
             reduced_spectra=state["reduced_spectra"],
             reduced_error=state["reduced_error"],
-            dar_model=state["modeling"]["dar_model"],
-            sources=state["modeling"].get("sources"),
-            X=state["modeling"].get("X"),
-            Y=state["modeling"].get("Y"),
-            measured_fwhm=state["modeling"].get("measured_fwhm"),
+            dar_model=modeling["dar_model"],
+            sources=modeling["sources"],
+            X=modeling["X"],
+            Y=modeling["Y"],
+            measured_fwhm=modeling["measured_fwhm"],
             fiber_x=state["fiber_x"],
             fiber_y=state["fiber_y"],
-            psf_interp=state["modeling"].get("psf_interp"),
+            psf_interp=modeling["psf_interp"],
             def_wave=state["def_wave"]
         )
-        state["spectrum"] = spec
-        state["spectrum_error"] = err
-        rlog.debug("spectrum_extracted", n=len(spec))
 
-
-class ApplyExtinction(Operation):
-    def __init__(self):
-        super().__init__(
-            name="ApplyExtinction",
-            needs=["ctx", "spectrum", "spectrum_error", "def_wave", "header"],
-            provides=["spec_corr", "err_corr"],
-            summary="Correct for site extinction using header AIRMASS.",
-        )
-
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        from antigen import extinction, io
-        xtab = io.read_extinction_table()
-        airmass = float(state["header"].get("AIRMASS", 1.0))
-        factor = extinction.compute_extinction_factor(state["def_wave"], xtab["wavelength"],
-                                                     xtab["mags_per_airmass"], airmass)
-        state["spec_corr"] = state["spectrum"] * factor
-        state["err_corr"] = state["spectrum_error"] * factor
-        rlog.debug("extinction_applied", airmass=airmass)
-
-
-class MeasureResponse(Operation):
-    def __init__(self):
-        super().__init__(
-            name="MeasureResponse",
-            needs=["ctx", "def_wave", "spec_corr", "err_corr"],
-            provides=["flux_cal", "flux_cal_err", "response"],
-            summary="Measure response vs. standard star and apply calibration.",
-        )
-
-
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        from antigen.calibrate import measure_and_apply_response
-        from antigen import io
-        ctx = state["ctx"]
-        cal_star = io.load_calspec_spectrum(ctx.standard_name)
-        flux_cal, flux_cal_err, response = measure_and_apply_response(
-            state["def_wave"], state["spec_corr"], state["err_corr"], cal_star, ctx.output_folder, window=251
-        )
-        state["flux_cal"] = flux_cal
-        state["flux_cal_err"] = flux_cal_err
-        state["response"] = response
-        # io.save_response_curve(ctx.output_folder, state["def_wave"], response)
-        rlog.debug("response_measured", out=str(ctx.output_folder))
+        state.update({
+            "spectrum": spectrum,
+            "spectrum_error": spectrum_error
+        })
+        rlog.debug("spectrum_extracted", n_wave=len(spectrum))
 
 @dataclass
-class BuildContext:
-    """Base context class that provides common context building functionality."""
-    inputs: Dict[str, Any]
+class LoadExtinctionTable(Operation):
+    """Load atmospheric extinction table."""
     
     def __post_init__(self):
-        self._process_inputs()
+        super().__post_init__()
+        self._name = "LoadExtinctionTable"
+        self._needs = []
+        self._provides = ["extinction_table"]
+        self._summary = "Load McDonald Observatory extinction curve."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        extinction_table = read_extinction_table()
+        state["extinction_table"] = extinction_table
+        rlog.debug("extinction_table_loaded")
+
+
+@dataclass
+class GetAirmass(Operation):
+    """Extract airmass from header."""
     
-    def _process_inputs(self):
-        """Process inputs according to their categories.
-        Override this in subclasses to add specific processing."""
-        pass
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "GetAirmass"
+        self._needs = ["header"]
+        self._provides = ["airmass"]
+        self._summary = "Get airmass value from observation header."
 
-    def ensure_paths(self):
-        """Ensure all path-like attributes are properly converted to Path objects"""
-        for attr_name, attr_value in self.__dict__.items():
-            if isinstance(attr_value, str) and ('path' in attr_name.lower() or 
-                                              'folder' in attr_name.lower() or 
-                                              'dir' in attr_name.lower()):
-                setattr(self, attr_name, Path(attr_value).expanduser())
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        airmass = float(state["header"]["AIRMASS"])
+        state["airmass"] = airmass
+        rlog.debug("airmass_extracted", airmass=airmass)
 
-class CalibrateContext(BuildContext):
-    """Specific context for calibration operations."""
+
+@dataclass
+class ApplyExtinctionCorrection(Operation):
+    """Apply extinction correction to spectrum."""
     
-    def _process_inputs(self):
-        # CLI inputs
-        self.standard_name = self.inputs["cli"]["standard_name"]
-        self.output_folder = Path(self.inputs["cli"]["output_folder"]).expanduser()
-        self.extraction_radius = float(self.inputs["cli"].get("extraction_radius", 2.0))
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "ApplyExtinctionCorrection"
+        self._needs = [
+            "def_wave",
+            "spectrum",
+            "spectrum_error",
+            "extinction_table",
+            "airmass"
+        ]
+        self._provides = ["spec_corr", "err_corr"]
+        self._summary = "Apply atmospheric extinction correction to spectrum."
 
-        # Dataset inputs
-        self.unit_instrument = self.inputs["dataset"]["unit_instrument"]
-        self.unit_id = self.inputs["dataset"]["unit_id"]
-        self.ndithers = int(self.inputs["dataset"]["ndithers"])
-        self.dither_number = [int(n) for n in self.inputs["dataset"]["dither_number"]]
-        self.in_folder = Path(self.inputs["dataset"]["in_folder"]).expanduser()
-        self.reduced_files = [str(self.in_folder / f) for f in self.inputs["dataset"]["reduced_files"]]
-
-        # Config inputs
-        self.fiber_radius = float(self.inputs["config"]["fiber_radius"])
-        
-        # Construct config dict
-        self.config_dict = config.build_config_for_element(
-            self.unit_instrument.lower(), self.unit_id.upper()
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        spec_corr, err_corr = apply_extinction_correction(
+            obs_wave=state["def_wave"],
+            flux=state["spectrum"],
+            flux_err=state["spectrum_error"],
+            ext_wave=state["extinction_table"]["wavelength"],
+            A_lambda_airmass=state["extinction_table"]["mags_per_airmass"],
+            airmass=state["airmass"]
         )
-        
-        # Ensure output folder exists
-        self.output_folder.mkdir(parents=True, exist_ok=True)
+        state.update({
+            "spec_corr": spec_corr,
+            "err_corr": err_corr
+        })
+        rlog.info("extinction_correction_applied", airmass=state["airmass"])
 
-class BuildGenericContext(Operation):
-    """Generic context building operation that can work with any context type."""
-    
-    def __init__(self, context_class: Type[BuildContext]):
-        super().__init__(
-            name=f"Build{context_class.__name__}",
-            needs=["inputs"],
-            provides=["ctx"],
-            summary=f"Create {context_class.__name__} from validated inputs.",
+
+@dataclass
+class LoadCalibrationSpectrum(Operation):
+    """Load standard star calibration spectrum."""
+    standard_name: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "LoadCalibrationSpectrum"
+        self._needs = []
+        self._provides = ["cal_spectrum"]
+        self._summary = "Load CALSPEC standard star spectrum."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        cal_spectrum = load_calspec_spectrum(self.standard_name)
+        state["cal_spectrum"] = cal_spectrum
+        rlog.debug("calibration_spectrum_loaded", standard=self.standard_name)
+
+
+@dataclass
+class SaveResponsePlot(Operation):
+    """Generate and save response function plot."""
+    output_folder: Path
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "SaveResponsePlot"
+        self._needs = [
+            "def_wave",
+            "spec_corr",
+            "err_corr",
+            "cal_spectrum",
+            "response"
+        ]
+        self._provides = ["flux_cal"]
+        self._summary = "Save diagnostic plot of response function."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        plot_spectrum_with_standard(
+            state["flux_calibrated"],
+            state["error_calibrated"],
+            state["def_wave"],
+            state["cal_spectrum"]["WAVELENGTH"],
+            state["cal_spectrum"]["FLUX"],
+            1.0 / state["response"],
+            outfolder=self.output_folder
         )
-        self.context_class = context_class
+        state["flux_cal"] = True
+        rlog.info("response_plot_saved", output_folder=str(self.output_folder))
 
-    def run(self, state: Dict[str, Any], rlog: RunLogger) -> None:
-        ctx = self.context_class(state["inputs"])
-        state["ctx"] = ctx
-        rlog.debug("ctx_ready", context_type=self.context_class.__name__)
+@dataclass
+class MeasureResponse(Operation):
+    """Measure instrument response function."""
+    
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "MeasureResponse"
+        self._needs = ["def_wave", "spec_corr", "cal_spectrum"]
+        self._provides = ["response"]
+        self._summary = "Compute instrument response from standard star observation."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        response = measure_response(
+            obs_wave=state["def_wave"],
+            obs_flux=state["spec_corr"],
+            std_wave=state["cal_spectrum"]["WAVELENGTH"],
+            std_flux=state["cal_spectrum"]["FLUX"]
+        )
+        state["response"] = response
+        rlog.debug("response_measured")
+
+
+@dataclass
+class ApplyResponse(Operation):
+    """Apply response correction to spectrum."""
+    
+    def __post_init__(self):
+        super().__post_init__()
+        self._name = "ApplyResponse"
+        self._needs = ["spec_corr", "err_corr", "response"]
+        self._provides = ["flux_calibrated", "error_calibrated"]
+        self._summary = "Apply response correction to spectrum and error."
+
+    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        spectrum = state["spec_corr"] * state["response"]
+        error = state["err_corr"] * state["response"]
+        
+        state["flux_calibrated"] = spectrum
+        state["error_calibrated"] = error
+        rlog.debug("response_applied")

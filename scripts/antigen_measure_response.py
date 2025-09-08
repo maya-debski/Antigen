@@ -1,13 +1,18 @@
 #!/usr/bin/env python
-
-import argparse
 from pathlib import Path
 import sys
+import argparse
+from typing import Dict, Any
 
 from antigen.datasets import build_dataset_from_reduced_files
 from antigen.manifest import save_manifest
 from antigen.utils import setup_logging
+from antigen.recipe import Recipe, LoadFiberPositions, GetWavelengthGrid, LoadReducedData
+from antigen.recipe import ModelPSFAndDAR, ExtractSpectrum, LoadExtinctionTable, GetAirmass
+from antigen.recipe import ApplyExtinctionCorrection, LoadCalibrationSpectrum, MeasureResponse
+from antigen.recipe import ApplyResponse, SaveResponsePlot
 
+from antigen import config
 
 # ---- A minimal SPEC describing the context this script needs ----
 SPEC_CALIBRATE = [
@@ -86,6 +91,72 @@ def get_args():
     return parser.parse_args()
 
 
+def create_recipe(manifest: Dict[str, Any], args: Any, config_dict: Dict[str, Any]) -> Recipe:
+    # Load and prepare data operations
+    load_fibers = LoadFiberPositions(
+        unit_instrument=manifest['unit_instrument'],
+        unit_id=manifest['unit_id'],
+        ndithers=manifest['ndithers'],
+        dither_number=manifest['dither_number'],
+        config_dict=config_dict
+    )
+
+    get_wavelength = GetWavelengthGrid(
+        config_dict=config_dict
+    )
+
+    load_data = LoadReducedData(
+        in_folder=manifest['in_folder'],
+        reduced_files=manifest['reduced_files']
+    )
+
+    # PSF and spectrum extraction operations
+    model_psf = ModelPSFAndDAR(
+        extraction_radius=float(args.extraction_radius),
+        fiber_radius=float(config_dict['fiber_radius'])
+    )
+
+    extract_spectrum = ExtractSpectrum()
+
+    # Extinction correction operations
+    load_extinction = LoadExtinctionTable()
+    get_airmass = GetAirmass()
+    apply_extinction = ApplyExtinctionCorrection()
+
+    # Response measurement operations
+    load_cal_spectrum = LoadCalibrationSpectrum(
+        standard_name=args.standard_name
+    )
+    measure_response = MeasureResponse()
+    apply_response = ApplyResponse()
+    save_response_plot = SaveResponsePlot(
+        output_folder=Path(args.output_folder)
+    )
+
+    recipe = Recipe(
+        name="measure_response",
+        spec=SPEC_CALIBRATE,
+        steps=[
+            load_fibers,
+            get_wavelength,
+            load_data,
+            model_psf,
+            extract_spectrum,
+            load_extinction,
+            get_airmass,
+            apply_extinction,
+            load_cal_spectrum,
+            measure_response,
+            apply_response,
+            save_response_plot
+        ],
+        outputs=["flux_cal", "response"],
+        description="Measure an instrument response curve."
+    )
+
+    return recipe
+
+
 def main():
     args = get_args()
 
@@ -99,8 +170,6 @@ def main():
 
     # Build response manifests
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
-    from antigen.recipe import Recipe, BuildGenericContext, PrepareData, ModelPSFAndDAR, ExtractSpectrum
-    from antigen.recipe import ApplyExtinction, MeasureResponse, CalibrateContext
 
     for nr, manifest in enumerate(response_manifest):
         element = manifest['unit_id']
@@ -112,29 +181,15 @@ def main():
             save_filepath = save_path / manifest_filename
             save_manifest(manifest, str(save_filepath))
             logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
-
-            # 1) Define the recipe
-            steps = [BuildGenericContext(CalibrateContext),
-                     PrepareData(),
-                     ModelPSFAndDAR(),
-                     ExtractSpectrum(),
-                     ApplyExtinction(),
-                     MeasureResponse()]
-            recipe = Recipe(
-                name="measure_response",
-                spec=SPEC_CALIBRATE,
-                steps=steps,
-                outputs=["flux_cal", "response"],
-                description="Measure an instrument response curve from reduced frames and a standard star.",
-            )
-
-            # 2) See the plan (no execution)
-            print(recipe.plan())
-            from antigen import config
             config_dict = config.build_config_for_element(
                 manifest['unit_instrument'].lower(),
                 manifest['unit_id'].upper()
             )
+            recipe = create_recipe(manifest, args, config_dict)
+
+            # 2) See the plan (no execution)
+            print(recipe.plan())
+
             # 3) Optional: auto-generate docs of the context + steps
             md = recipe.describe_markdown(manifest, args, config_dict)
 

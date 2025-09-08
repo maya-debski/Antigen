@@ -2,6 +2,7 @@ import logging
 import warnings
 
 import numpy as np
+from scipy.signal import savgol_filter
 
 from antigen import detection
 from antigen import extinction
@@ -38,7 +39,6 @@ def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=251):
     finite_values = np.isfinite(response)
     response = np.interp(obs_wave, obs_wave[finite_values], response[finite_values],
                         left=response[finite_values][0],  right=response[finite_values][-1])
-    from scipy.signal import savgol_filter
     response = savgol_filter(response, window, 3)
     return response
 
@@ -126,44 +126,6 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
         extinction_table["mags_per_airmass"],
         airmass
     )
-
-
-def measure_and_apply_response(def_wave, spectrum, spectrum_error,
-                               cal_spectrum_table, output_folder, window=251):
-    """
-    Measure the instrument response and apply it to the extracted spectrum.
-
-    Args:
-        def_wave (np.ndarray): Wavelength grid.
-        spectrum (np.ndarray): Flux spectrum.
-        spectrum_error (np.ndarray): Error spectrum.
-        cal_spectrum_table (Table): CALSPEC standard star spectrum.
-        output_folder (str): Output folder for plots.
-        window (int, optional): Smoothing window for response. Defaults to 251.
-
-    Returns:
-        tuple:
-            spectrum (np.ndarray): Response-corrected spectrum.
-            spectrum_error (np.ndarray): Response-corrected errors.
-            response (np.ndarray): Derived instrument response function.
-    """
-    response = measure_response(
-        def_wave, spectrum,
-        cal_spectrum_table["WAVELENGTH"], cal_spectrum_table["FLUX"],
-        window=window
-    )
-
-    spectrum *= response
-    spectrum_error *= response
-    from antigen import plot  # import here, not at module top
-    plot.plot_spectrum_with_standard(
-        spectrum, spectrum_error, def_wave,
-        cal_spectrum_table["WAVELENGTH"], cal_spectrum_table["FLUX"],
-        1. / response, outfolder=output_folder
-    )
-
-    return spectrum, spectrum_error, response
-
 
 
 def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error,
