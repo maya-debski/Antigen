@@ -1,36 +1,12 @@
 #!/usr/bin/env python
 from pathlib import Path
-import sys
 import argparse
-from typing import Dict, Any
 
 from antigen.datasets import build_dataset_from_reduced_files
 from antigen.manifest import save_manifest
 from antigen.utils import setup_logging
-from antigen.recipe import Recipe, LoadFiberPositions, GetWavelengthGrid, LoadReducedData
-from antigen.recipe import ModelPSFAndDAR, ExtractSpectrum, LoadExtinctionTable, GetAirmass
-from antigen.recipe import ApplyExtinctionCorrection, LoadCalibrationSpectrum, MeasureResponse
-from antigen.recipe import ApplyResponse, SaveResponsePlot
-
 from antigen import config
-
-# ---- A minimal SPEC describing the context this script needs ----
-SPEC_CALIBRATE = [
-    {"path":"cli.standard_name","source":"args","key":"standard_name","required":True,"units":"name","desc":"Spectrophotometric standard star identifier."},
-    {"path":"cli.output_folder","source":"args","key":"output_folder","required":True,"units":"path","desc":"Directory for response curve and QA outputs."},
-    {"path":"cli.extraction_radius","source":"args","key":"extraction_radius","required":True,"units":"pix","desc":"Aperture radius around DAR track for extraction.","validate":lambda v: float(v)>0 if v is not None else True},
-
-    {"path":"dataset.unit_instrument","source":"dataset","key":"unit_instrument","required":True,"desc":"Instrument name (e.g., VIRUS2)."},
-    {"path":"dataset.unit_id","source":"dataset","key":"unit_id","required":True,"desc":"Instrument unit identifier (e.g., VP1B)."},
-    {"path":"dataset.ndithers","source":"dataset","key":"ndithers","required":True,"units":"count","desc":"Total number of dithers in the observation.","validate":lambda v: int(v)>=1 and float(v)==int(v)},
-    {"path":"dataset.dither_number","source":"dataset","key":"dither_number","required":True,"units":"index","desc":"Index of this exposure in the dither pattern (1-based).","validate":lambda v: isinstance(v,(list,tuple)) and len(v)>0},
-    {"path":"dataset.in_folder","source":"dataset","key":"in_folder","required":True,"default":"./","units":"path","desc":"Root folder containing reduced frames."},
-    {"path":"dataset.reduced_files","source":"dataset","key":"reduced_files","required":True,"units":"list[str]","desc":"List of reduced spectral frames to process.","validate":lambda v: isinstance(v,(list,tuple)) and len(v)>0},
-
-    {"path":"config.fiber_radius","source":"config","key":"fiber_radius","required":True,"units":"pix","desc":"Effective fiber footprint radius.","validate":lambda v: float(v)>0},
-]
-
-
+from antigen.recipe import Recipe
 
 DESCRIPTION = r"""
 Purpose:
@@ -45,161 +21,71 @@ What it does:
         * Builds an instrument response function by comparing the observed
           spectrum with a reference CALSPEC spectrum.
         * Saves the response manifest and response products to the output folder.
-
-Inputs:
-    - Reduced directory: Path containing reduced standard star datasets
-      (already processed with bias, flats, arcs, etc.).
-    - Output folder: Destination for response files (defaults to reduced directory).
-    - Standard star name: Substring to identify the target (e.g., "Feige").
-    - PSF and cube-building settings such as extraction radius and pixel size.
-
-Outputs:
-    - A YAML manifest file for each standard star response dataset.
-    - Instrument response function FITS and diagnostic plots, written to the output folder.
-
-Example:
-    Build a response function from reduced Feige standard star frames:
-
-    $ antigen_build_response.py -r /data/VIRUS2/reduced/ -o /data/VIRUS2/response/ -s Feige
-
-Notes:
-    - This script assumes that the input data have already been reduced
-      (use the main reduction pipeline first).
-    - Logs will report any datasets that do not match the requested standard.
-    - Response functions are required for flux calibration of science targets.
 """
 
-
-
-
 def get_args():
-    parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=DESCRIPTION, 
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-r', '--reduced_dir', required=True,
-                        help='Path to directory with reduced standard star frames.')
+                       help='Path to directory with reduced standard star frames.')
     parser.add_argument('-o', '--output_folder', default=None,
-                        help='Path to output folder for response function.')
+                       help='Path to output folder for response function.')
     parser.add_argument('-s', '--standard_name', required=True,
-                        help='Name for standard star files in reduced-dir (ex: Feige).')
-
-    # PSF/extraction settings
+                       help='Name for standard star files in reduced-dir (ex: Feige).')
     parser.add_argument('-e', '--extraction_radius', type=float, default=10.0,
-                        help='Extraction radius in arcsec.')
+                       help='Extraction radius in arcsec.')
     parser.add_argument('-p', '--pixel_size', type=float, default=1.0,
-                        help='Cube pixel size in arcsec.')
+                       help='Cube pixel size in arcsec.')
     parser.add_argument('-v', '--verbose', action='store_true',
-                   help='if True, print more process details and logger.info to console')
+                       help='if True, print more process details and logger.info to console')
     return parser.parse_args()
-
-
-def create_recipe(manifest: Dict[str, Any], args: Any, config_dict: Dict[str, Any]) -> Recipe:
-    # Load and prepare data operations
-    load_fibers = LoadFiberPositions(
-        unit_instrument=manifest['unit_instrument'],
-        unit_id=manifest['unit_id'],
-        ndithers=manifest['ndithers'],
-        dither_number=manifest['dither_number'],
-        config_dict=config_dict
-    )
-
-    get_wavelength = GetWavelengthGrid(
-        config_dict=config_dict
-    )
-
-    load_data = LoadReducedData(
-        in_folder=manifest['in_folder'],
-        reduced_files=manifest['reduced_files']
-    )
-
-    # PSF and spectrum extraction operations
-    model_psf = ModelPSFAndDAR(
-        extraction_radius=float(args.extraction_radius),
-        fiber_radius=float(config_dict['fiber_radius'])
-    )
-
-    extract_spectrum = ExtractSpectrum()
-
-    # Extinction correction operations
-    load_extinction = LoadExtinctionTable()
-    get_airmass = GetAirmass()
-    apply_extinction = ApplyExtinctionCorrection()
-
-    # Response measurement operations
-    load_cal_spectrum = LoadCalibrationSpectrum(
-        standard_name=args.standard_name
-    )
-    measure_response = MeasureResponse()
-    apply_response = ApplyResponse()
-    save_response_plot = SaveResponsePlot(
-        output_folder=Path(args.output_folder)
-    )
-
-    recipe = Recipe(
-        name="measure_response",
-        spec=SPEC_CALIBRATE,
-        steps=[
-            load_fibers,
-            get_wavelength,
-            load_data,
-            model_psf,
-            extract_spectrum,
-            load_extinction,
-            get_airmass,
-            apply_extinction,
-            load_cal_spectrum,
-            measure_response,
-            apply_response,
-            save_response_plot
-        ],
-        outputs=["flux_cal", "response"],
-        description="Measure an instrument response curve."
-    )
-
-    return recipe
-
 
 def main():
     args = get_args()
-
     logger = setup_logging('antigen', verbose=args.verbose)
-    logger.info(f'Starting application...')
+    logger.info('Starting application...')
 
-    if args.output_folder is None:
-        args.output_folder = args.reduced_dir
-    save_path = Path(args.output_folder).expanduser().resolve()
+    save_path = Path(args.output_folder or args.reduced_dir).expanduser().resolve()
     save_path.mkdir(parents=True, exist_ok=True)
 
-    # Build response manifests
+    # Process manifests
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
 
-    for nr, manifest in enumerate(response_manifest):
-        element = manifest['unit_id']
-        instrument = manifest['unit_instrument']
-        target_name = manifest['target']
-        logger.info(f'Manifest for {target_name} with instrument={instrument} and unit={element}')
-        if args.standard_name.lower() in target_name.lower():
-            manifest_filename = f'manifest_response_{target_name}.yml'
+    for manifest in response_manifest:
+        if args.standard_name.lower() in manifest['target'].lower():
+            # Save manifest
+            manifest_filename = f'manifest_response_{manifest["target"]}.yml'
             save_filepath = save_path / manifest_filename
             save_manifest(manifest, str(save_filepath))
-            logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
+            
+            logger.info(f'Processing response for {manifest["target"]}')
+            
+            # Get instrument configuration
             config_dict = config.build_config_for_element(
                 manifest['unit_instrument'].lower(),
                 manifest['unit_id'].upper()
             )
-            recipe = create_recipe(manifest, args, config_dict)
 
-            # 2) See the plan (no execution)
-            print(recipe.plan())
+            # Load recipe
+            base_path = config.get_base_config_path()
+            recipe = Recipe.load("measure_response", base_path)
+            
+            # Collect inputs
+            inputs = recipe.collect_inputs(args, manifest, config_dict)
+            
+            # Validate inputs
+            if errors := recipe.validate_inputs(inputs):
+                raise ValueError("Input validation failed:\n" + "\n".join(errors))
+            
+            # Generate and save markdown description
+            md = recipe.describe_markdown(inputs, viz_type='mermaid', output_folder=save_path)
 
-            # 3) Optional: auto-generate docs of the context + steps
-            md = recipe.describe_markdown(manifest, args, config_dict)
+            (save_path / "measure_response.md").write_text(md, encoding="utf-8")
+            
+            # Run recipe
+            outputs = recipe.run(inputs, save_path)
 
-            Path(args.output_folder).mkdir(parents=True, exist_ok=True)
-            (Path(args.output_folder) / "measure_response.md").write_text(md, encoding="utf-8")
-
-            # 4) Run the recipe
-            state = recipe.run(manifest, args, config_dict, outdir=Path(args.output_folder))
     return None
-
-
-if __name__ == '__main__':
-    sys.exit(main())
+    
+if __name__ == "__main__":
+    main()
