@@ -1,0 +1,41 @@
+description: "Measure instrument response from standard star observation"
+inputs:
+  cli:
+    standard_name: null
+    output_folder: null
+    extraction_radius: 10.0
+  dataset:
+    unit_instrument: null
+    unit_id: null
+    ndithers: null
+    dither_number: []
+    in_folder: "./"
+    reduced_files: []
+  config:
+    fiber_radius: null
+    ifu_x: null
+    ifu_y: null
+    start_wavelength: null
+    end_wavelength: null
+    detector_dimensions:
+      X: null
+      Y: null
+
+steps:
+  - LoadFiberPositions
+  - GetWavelengthGrid
+  - LoadReducedData
+  - ModelPSFAndDAR
+  - ExtractSpectrum
+  - LoadExtinctionTable
+  - GetAirmass
+  - ApplyExtinctionCorrection
+  - LoadCalibrationSpectrum
+  - MeasureResponse
+  - ApplyResponse
+  - SaveResponsePlot
+
+outputs:
+  - flux_calibrated
+  - error_calibrated
+  - response

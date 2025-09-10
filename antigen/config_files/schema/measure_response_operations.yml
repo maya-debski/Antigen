@@ -1,0 +1,295 @@
+schema:
+  operations:
+    LoadFiberPositions:
+      description: "Load fiber positions and apply dither pattern offsets"
+      params:
+        unit_instrument:
+          type: str
+          required: true
+          source: inputs.dataset
+        ndithers:
+          type: int
+          required: true
+          source: inputs.dataset
+        dither_number:
+          type: "list[int]"
+          required: true
+          source: inputs.dataset
+        ifu_x:
+          type: ndarray
+          required: true
+          source: inputs.config
+        ifu_y:
+          type: ndarray
+          required: true
+          source: inputs.config
+      needs: []  # First step, no dependencies
+      provides: ["fiber_x", "fiber_y"]
+      algorithm:
+        function: "antigen.fiber.load_fiber_positions"
+        args: ["unit_instrument", "ndithers", "dither_number", "ifu_x", "ifu_y"]
+
+
+    GetWavelengthGrid:
+      description: "Generate a uniformly spaced wavelength grid for the detector"
+      params:
+        start_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        end_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        detector_dimensions:
+          type: dict
+          required: true
+          source: inputs.config
+      needs: []  # Independent of previous steps
+      provides: ["def_wave"]
+      algorithm:
+        function: "antigen.wavelength.get_rectified_wavelength"
+        args: ["start_wavelength", "end_wavelength", "detector_dimensions"]
+
+
+    LoadReducedData:
+      description: "Load reduced data files source the specified folder"
+      params:
+        in_folder:
+          type: str
+          required: true
+          source: inputs.dataset
+        reduced_files:
+          type: "list[str]"
+          required: true
+          source: inputs.dataset
+      needs: []  
+      provides: ["reduced_spectra", "reduced_error", "header"]  
+      algorithm:
+        function: "antigen.io.load_reduced_data"
+        args: ["in_folder", "reduced_files"]
+
+
+    ModelPSFAndDAR:
+      description: "Build PSF interpolator, detect source, and fit PSF/DAR model."
+      params:
+        fiber_x:
+          type: ndarray
+          required: true
+          source: state
+        fiber_y:
+          type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        reduced_spectra:
+          type: ndarray
+          required: true
+          source: state
+        reduced_error:
+          type: ndarray
+          required: true
+          source: state
+        extraction_radius:
+          type: float
+          required: true
+          source: inputs.cli
+        fiber_radius:
+          type: float
+          required: true
+          source: inputs.config
+      needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
+      provides: ["modeling"]
+      algorithm:
+        function: "antigen.calibrate.build_psf_and_dar"
+        args: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", 
+               "reduced_error", "extraction_radius", "fiber_radius"]
+
+
+    ExtractSpectrum:
+      description: "Extract optimal 1D spectrum using PSF weights"
+      params:
+        reduced_spectra:
+          type: ndarray
+          required: true
+          source: state
+        reduced_error:
+          type: ndarray
+          required: true
+          source: state
+        modeling:
+          type: dict
+          required: true
+          source: state
+        fiber_x:
+          type: ndarray
+          required: true
+          source: state
+        fiber_y:
+          type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+      needs: ["reduced_spectra", "reduced_error", "modeling", "fiber_x", "fiber_y", "def_wave"]
+      provides: ["spectrum", "spectrum_error"]
+      algorithm:
+        function: "antigen.calibrate.extract_optimal_spectrum"
+        args: ["reduced_spectra", "reduced_error", "modeling", "fiber_x", "fiber_y", "def_wave"]
+
+    LoadExtinctionTable:
+      description: "Load the atmospheric extinction table."
+      params: {}
+      needs: []
+      provides: ["extinction_table"]
+      algorithm:
+        function: "antigen.io.read_extinction_table"
+        args: []
+
+    GetAirmass:
+      description: "Extract airmass source header"
+      params:
+        header:
+          type: dict
+          required: true
+          source: state
+      needs: ["header"]
+      provides: ["airmass"]
+      algorithm:
+        function: "antigen.io.get_airmass"  # Assuming we put the function in header.py
+        args: ["header"]
+
+    ApplyExtinctionCorrection:
+      description: "Apply atmospheric extinction correction to the spectrum"
+      params:
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        spectrum:
+          type: ndarray
+          required: true
+          source: state
+        spectrum_error:
+          type: ndarray
+          required: true
+          source: state
+        extinction_table:
+          type: dict
+          required: true
+          source: state
+        airmass:
+          type: float
+          required: true
+          source: state
+      needs: ["def_wave", "spectrum", "spectrum_error", "extinction_table", "airmass"]
+      provides: ["spectrum_corr", "error_corr"]
+      algorithm:
+        function: "antigen.calibrate.apply_extinction"
+        args: ["def_wave", "spectrum", "spectrum_error", "extinction_table", "airmass"]
+
+    LoadCalibrationSpectrum:
+      description: "Load CALSPEC standard star spectrum."
+      params:
+        standard_name:
+          type: str
+          required: true
+          source: inputs.cli
+      needs: []  # Independent operation with no dependencies
+      provides: ["std_star_wave", "std_star_flux"]
+      algorithm:
+        function: "antigen.io.load_calspec_spectrum"
+        args: ["standard_name"]
+
+    MeasureResponse:
+      description: "Compute instrument response source standard star observation."
+      params:
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        spectrum_corr:
+          type: ndarray
+          required: true
+          source: state
+        std_star_wave:
+          type: ndarray
+          required: true
+          source: state
+        std_star_flux:
+          type: ndarray
+          required: true
+          source: state
+        window:
+          type: int
+          required: false
+          default: 251
+      needs: ["def_wave", "spectrum_corr", "std_star_wave", "std_star_flux"]
+      provides: ["response"]
+      algorithm:
+        function: "antigen.calibrate.measure_response"
+        args: ["def_wave", "spectrum_corr", "std_star_wave", "std_star_flux", "window"]
+
+    ApplyResponse:
+      description: "Apply response correction to the extinction-corrected spectrum"
+      params:
+        spectrum_corr:
+          type: ndarray
+          required: true
+          source: state
+        error_corr:
+          type: ndarray
+          required: true
+          source: state
+        response:
+          type: ndarray
+          required: true
+          source: state
+      needs: ["spectrum_corr", "error_corr", "response"]
+      provides: ["flux_calibrated", "error_calibrated"]
+      algorithm:
+        function: "antigen.calibrate.apply_response"
+        args: ["spectrum_corr", "error_corr", "response"]
+
+    SaveResponsePlot:
+      description: "Save diagnostic plot of response function"
+      params:
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        flux_calibrated:
+          type: ndarray
+          required: true
+          source: state
+        error_calibrated:
+          type: ndarray
+          required: true
+          source: state
+        std_star_wave:
+          type: ndarray
+          required: true
+          source: state
+        std_star_flux:
+          type: ndarray
+          required: true
+          source: state
+        response:
+          type: ndarray
+          required: true
+          source: state
+        output_folder:
+          type: path
+          required: True
+          source: inputs.cli
+      needs: ["def_wave", "flux_calibrated", "error_calibrated", "std_star_wave", "std_star_flux", "response"]
+      provides: ["fig", "ax"]
+      algorithm:
+        function: "antigen.plot.plot_spectrum_with_standard"
+        args: ["flux_calibrated", "error_calibrated", "def_wave", "std_star_wave", "std_star_flux", "response",
+               "output_folder"]

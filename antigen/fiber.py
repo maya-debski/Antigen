@@ -73,7 +73,7 @@ def get_fiber_bounds(fiber_x, fiber_y):
     bounds = [x_min, x_max, y_min, y_max]
     return bounds
 
-def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
+def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base):
     """
     Load the fiber positions for a given instrument and apply the appropriate dither offsets.
 
@@ -91,19 +91,13 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
         instrument (str): Instrument name (used to locate the correct dither file).
         ndithers (int): Number of dithers in the observing sequence.
         dither_numbers (list of int): Indices of the dithers to apply (1-based).
-        config_dict (dict): Instrument configuration containing 'ifu_x' and 'ifu_y' arrays
-            for the base fiber positions.
+        fiber_x_base (ndarray): X positions of fibers in arcseconds
+        fiber_y_base (ndarray): Y positions of fibers in arcseconds
 
     Returns:
         fiber_x (ndarray): X positions of fibers with dither offsets applied.
         fiber_y (ndarray): Y positions of fibers with dither offsets applied.
     """
-    # --- Input validation ---
-    if "ifu_x" not in config_dict or "ifu_y" not in config_dict:
-        raise ValueError("config_dict must contain 'ifu_x' and 'ifu_y' arrays.")
-
-    fiber_x_base, fiber_y_base = config_dict["ifu_x"], config_dict["ifu_y"]
-
     base_path = config.get_base_config_path()
 
     dither_file = base_path / instrument / f"{instrument}_dither_{ndithers}pt.lis"
