@@ -282,14 +282,21 @@ def _get_arclines_fiber(spectrum, init_loc=None, limit=5, use_kernel=True):
 
     return np.array(loc)
 
-def get_rectified_wavelength(config_dict):
-    """
+def get_rectified_wavelength(start_wavelength, end_wavelength, detector_dimensions):
+    """Generate a uniformly spaced wavelength grid.
+
+    Creates a linear wavelength grid between specified start and end wavelengths
+    with the number of points equal to the X dimension of the detector.
+
     Args:
-        config_dict: Dictionary of configuration parameters.
+        start_wavelength (float): Starting wavelength value
+        end_wavelength (float): Ending wavelength value
+        detector_dimensions (dict): Dictionary containing detector dimensions with keys:
+            - X (int): Number of points in the wavelength grid (detector X dimension)
+            - Y (int): Y dimension of the detector (not used)
 
     Returns:
-        def_wavelength (ndarray): 1D rectified wavelength array
+        def_wavelength (ndarray): 1D rectified wavelength array with uniform spacing
     """
-    def_wavelength = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
-                                 config_dict['detector_dimensions']['X'])
+    def_wavelength = np.linspace(start_wavelength, end_wavelength, detector_dimensions['X'])
     return def_wavelength

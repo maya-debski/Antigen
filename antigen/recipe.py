@@ -1,562 +1,700 @@
-"""
-recipe.py — lightweight "scripts as recipes" framework for antigen
-
-Goals:
-  • Make each script a *recipe*: Context (inputs), Operations (steps), Outputs.
-  • Be clear, editable, and dependency-light.
-  • Strong logging: human logs + JSONL run log, plus auto docs.
-
-Key pieces:
-  - Operation: single-responsibility step with declared needs/provides.
-  - Recipe: ordered list of Operations + context spec (from antigen.inputs).
-  - RunLogger: structured JSONL + standard logging integration.
-
-"""
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
-import inspect
-import json
-import time
+from typing import Dict, Any, List, Optional, Callable
+import yaml
+import re
 import logging
-from typing import Dict, Any, List, Type
 
-from antigen.fiber import load_fiber_positions
-from antigen.wavelength import get_rectified_wavelength
-from antigen.io import load_reduced_data, load_calspec_spectrum, read_extinction_table
-from antigen.extinction import apply_extinction_correction
-from antigen.calibrate import measure_response, build_psf_and_dar, extract_optimal_spectrum
-from antigen.inputs import InputsRegistry, inputs_markdown
-from antigen.plot import plot_spectrum_with_standard
+import numpy as np
 
-logger = logging.getLogger("antigen.recipe")
+logger = logging.getLogger('antigen.recipe')
 
-
-# -----------------------------
-# Operation base class
-# -----------------------------
 @dataclass
-class Operation:
-    """Base class for all operations in a recipe."""
-    _name: str = field(init=False)
-    _needs: List[str] = field(init=False, default_factory=list)
-    _provides: List[str] = field(init=False, default_factory=list)
-    _summary: str = field(init=False, default="")
-    _init_params: List[str] = field(init=False, default_factory=list)
+class InputField:
+    """Represents a single input field with its validation rules."""
+    type: str
+    required: bool = False
+    description: str = ""
+    units: str = ""
+    default: Any = None
+    validate: Dict[str, Any] = field(default_factory=dict)
+    source: Optional[str] = None
 
-    def __post_init__(self):
-        # Get initialization parameters (excluding self and optional params)
-        sig = inspect.signature(self.__class__.__init__)
-        self._init_params = [
-            param.name for param in sig.parameters.values()
-            if param.name != 'self' and param.default == param.empty
-        ]
+    def validate_value(self, value: Any) -> Optional[str]:
+        """
+        Validates a given value against various conditions such as type, required
+        rules, and additional validation constraints. This method ensures that the
+        provided value meets specified requirements or raises appropriate validation
+        messages.
 
-    def get_all_dependencies(self) -> List[str]:
-        """Get both state requirements and initialization parameters."""
-        return list(set(self._needs + self._init_params))
+        Args:
+            value: The value to be validated. Can be of any type depending on the
+                validation rules defined.
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        raise NotImplementedError
+        Returns:
+            Optional[str]: Returns an error message string if validation fails;
+                otherwise, returns None.
+        """
+        if value is None:
+            return "Required field is missing" if self.required else None
 
+        # Type validation
+        if not self._validate_type(value):
+            return f"Expected type {self.type}, got {type(value).__name__}"
 
+        # Validation rules
+        for rule, rule_value in self.validate.items():
+            if rule == 'min_length' and len(value) < rule_value:
+                return f"Length must be at least {rule_value}"
+            elif rule == 'pattern' and not re.match(rule_value, str(value)):
+                return f"Must match pattern {rule_value}"
+            elif rule == 'choices' and value not in rule_value:
+                return f"Must be one of {rule_value}"
+            elif rule == 'min' and float(value) < float(rule_value):
+                return f"Must be at least {rule_value}"
 
-# -----------------------------
-# Run logger (JSONL + std logging)
-# -----------------------------
-class RunLogger:
-    def __init__(self, outdir: Path, recipe_name: str, *, pretty: bool = True, use_color: bool | None = None):
-        self.outdir = outdir
-        self.recipe_name = recipe_name
-        self.jsonl_path = outdir / f"{recipe_name}.run.jsonl"
-        self._fh = None
-        self.pretty = pretty
-        # auto-detect TTY for color unless explicitly set
+        return None
+
+    def _validate_type(self, value: Any) -> bool:
         try:
-            import sys
-            self.use_color = use_color if use_color is not None else sys.stderr.isatty()
-        except Exception:
-            self.use_color = False
-        self._ensure_file()
+            if self.type == 'str':
+                return isinstance(value, str)
+            elif self.type == 'float':
+                float(value)
+                return True
+            elif self.type == 'int':
+                return isinstance(value, int)
+            elif self.type == 'path':
+                Path(value)
+                return True
+            elif self.type.startswith('list['):
+                return isinstance(value, (list, tuple))
+            elif self.type == 'dict':
+                return isinstance(value, dict)
+            elif self.type == 'ndarray':
+                return isinstance(value, np.ndarray)
+            return True
+        except (ValueError, TypeError):
+            return False
 
-    def _ensure_file(self) -> None:
-        self.outdir.mkdir(parents=True, exist_ok=True)
-        self._fh = self.jsonl_path.open("a", encoding="utf-8")
+@dataclass
+class FunctionExecutor:
+    """Handles function loading, argument resolution, and execution."""
+    function_path: str
+    function_args: List[str]
+    params: Dict[str, InputField]
 
-    def emit(self, level: str, event: str, **kv: Any) -> None:
-        # 1) Structured JSONL (unchanged)
-        rec = {"ts": time.time(), "level": level, "event": event, **kv}
-        self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        self._fh.flush()
+    def build_function(self) -> Callable:
+        """Import and return the function specified by function_path."""
+        if not self.function_path:
+            raise ValueError("No function implementation provided")
 
-        # 2) Human log line
-        lvl_no = getattr(logging, level.upper(), logging.INFO)
-        if self.pretty:
-            msg = self._pretty_line(event, kv)
-        else:
-            msg = f"{event} | " + " ".join(f"{k}={v!r}" for k, v in kv.items())
-        logger.log(lvl_no, msg)
-
-    def debug(self, event: str, **kv: Any) -> None: self.emit("debug", event, **kv)
-    def info(self, event: str, **kv: Any) -> None:  self.emit("info", event, **kv)
-    def warning(self, event: str, **kv: Any) -> None: self.emit("warning", event, **kv)
-    def error(self, event: str, **kv: Any) -> None:   self.emit("error", event, **kv)
-
-    def close(self) -> None:
         try:
-            if self._fh: self._fh.close()
-        finally:
-            self._fh = None
+            module_path, func_name = self.function_path.rsplit('.', 1)
+            module = __import__(module_path, fromlist=[func_name])
+            return getattr(module, func_name)
+        except (ImportError, AttributeError) as e:
+            raise ImportError(f"Failed to import {self.function_path}: {str(e)}")
 
-    # ---- Pretty helpers ----
-    def _pretty_line(self, event: str, kv: dict) -> str:
-        icon = {
-            "recipe_start": "🍳",
-            "recipe_done":  "✅",
-            "op_start":     "▶",
-            "op_done":      "✓",
-            "op_missing_inputs": "⚠",
-            "error":        "✖",
-        }.get(event, "•")
+    def resolve_param_value(self, param_name: str, param_def: InputField, state: Dict[str, Any]) -> Any:
+        """
+        Resolves the value of a parameter either from a predefined default, state context,
+        or specified source input.
 
-        # lift out common fields if present
-        step   = kv.get("step")
-        total  = kv.get("total")
-        op     = kv.get("op")
-        secs   = kv.get("seconds")
+        Args:
+            param_name: The name of the parameter for which the value is being resolved.
+            param_def: The input field definition which contains sourcing directions and
+                defaults for resolving the parameter.
+            state: A dictionary holding the current state and input mappings
+                from which the parameter's value can be resolved.
 
-        # base headline
-        head = []
-        head.append(icon)
-        if event in ("op_start", "op_done"):
-            if step is not None and total is not None:
-                head.append(f"{int(step)}/{int(total)}")
-            elif step is not None:
-                head.append(f"{int(step)}")
-            if op:
-                head.append(str(op))
+        Returns:
+            The resolved value of the parameter, determined from the default or a
+            specified source mapping.
+
+        Raises:
+            ValueError: If the source defined in param_def is invalid or if a required
+                parameter value cannot be found when expected.
+        """
+        if not param_def.source:
+            return param_def.default
+
+        parts = param_def.source.split('.')
+        if parts[0] not in ('state', 'inputs'):
+            raise ValueError(f"Invalid source '{parts[0]}' for parameter {param_name}")
+
+        # Navigate to source
+        value = state if parts[0] == 'state' else state['inputs']
+        for part in parts[1:]:
+            value = value[part]
+
+        # Get actual parameter value
+        if isinstance(value, dict) and param_name in value:
+            value = value[param_name]
+
+        if value is None and param_def.required:
+            raise ValueError(f"Required parameter {param_name} from '{param_def.source}' is missing")
+
+        return value
+
+    def construct_args(self, state: Dict[str, Any]) -> List[Any]:
+        """Build function arguments list from parameter definitions and state."""
+        args = []
+        for arg_name in self.function_args:
+            param_def = self.params[arg_name]
+            value = self.resolve_param_value(arg_name, param_def, state)
+            args.append(value)
+        return args
+
+    def execute(self, state: Dict[str, Any]) -> Any:
+        """Execute the function with resolved arguments."""
+        func = self.build_function()
+        args = self.construct_args(state)
+        return func(*args)
+
+@dataclass
+class Step:
+    """Represents a single step in the recipe."""
+    name: str
+    description: str
+    params: Dict[str, InputField]
+    needs: List[str]
+    provides: List[str]
+    executor: Optional[FunctionExecutor] = None
+
+    @classmethod
+    def from_yaml(cls, name: str, data: Dict[str, Any]) -> 'Step':
+        """Create a Step instance from YAML data."""
+        params = {
+            param_name: InputField(**param_def)
+            for param_name, param_def in data.get('params', {}).items()
+        }
+
+        executor = None
+        if 'algorithm' in data and 'function' in data['algorithm']:
+            executor = FunctionExecutor(
+                function_path=data['algorithm']['function'],
+                function_args=data['algorithm'].get('args', []),
+                params=params
+            )
+
+        return cls(
+            name=name,
+            description=data.get('description', ''),
+            params=params,
+            needs=data.get('needs', []),
+            provides=data.get('provides', []),
+            executor=executor
+        )
+
+    def execute(self, state: Dict[str, Any]) -> None:
+        """Execute the step and update state."""
+        if not self.executor:
+            raise ValueError(f"Step {self.name} has no executor")
+
+        try:
+            result = self.executor.execute(state)
+        except Exception as e:
+            logger.error(f"Failed to execute step {self.name}: {str(e)}")
+            raise
+
+        # Update state with results
+        if isinstance(result, tuple) and len(result) == len(self.provides):
+            for val, output_name in zip(result, self.provides):
+                state[output_name] = val
+        elif len(self.provides) == 1:
+            state[self.provides[0]] = result
         else:
-            head.append(event)
-
-        # tail bits
-        tail = []
-        if secs is not None:
-            try:
-                tail.append(f"{float(secs):.3f}s")
-            except Exception:
-                tail.append(f"{secs}")
-
-        # remaining kvs, excluding ones we already surfaced
-        exclude = {"step", "total", "op", "seconds"}
-        rest = " ".join(f"{k}={kv[k]!r}" for k in kv if k not in exclude)
-        if rest:
-            tail.append(rest)
-
-        # assemble
-        line = " ".join(head)
-        if tail:
-            line += " " + " ".join(tail)
-
-        # optional colorize simple levels
-        if self.use_color:
-            return self._colorize(event, line)
-        return line
-
-    def _colorize(self, event: str, s: str) -> str:
-        # simple mapping; adjust if you want more nuance
-        if event in ("recipe_start", "op_start"):
-            code = 36   # cyan
-        elif event in ("recipe_done", "op_done"):
-            code = 32   # green
-        elif event in ("op_missing_inputs", "warning"):
-            code = 33   # yellow
-        elif event in ("error",):
-            code = 31   # red
-        else:
-            code = 0
-        return f"\x1b[{code}m{s}\x1b[0m" if code else s
+            raise ValueError(f"Unexpected result format from {self.name}")
 
 
-# -----------------------------
-# Recipe container
-# -----------------------------
 @dataclass
 class Recipe:
+    """Main recipe class that coordinates steps and manages execution."""
     name: str
-    spec: List[Dict[str, Any]]  # Inputs spec used with InputsRegistry
-    steps: List[Operation]
-    outputs: List[str] = field(default_factory=list)  # keys expected in state
-    description: str = ""
+    description: str
+    steps: List[Step]
+    input_schema: Dict[str, Dict[str, InputField]]
+    outputs: List[str]
+    
+    def __post_init__(self):
+        """Create dict of steps for faster lookup."""
+        self.steps_dict = {step.name: step for step in self.steps}
+
+    @classmethod
+    def load(cls, recipe_name: str, base_path: Path) -> 'Recipe':
+        """
+        Loads a recipe definition, its input schema, and operations based on the given
+        recipe name and base path, returning an initialized instance of the Recipe class.
+
+        This method reads and processes YAML files corresponding to the recipe definition,
+        schema, and operations. It constructs a Recipe instance using this data.
+
+        Args:
+            recipe_name: The name of the recipe to load.
+            base_path: The base directory path where recipe, schema, and operations YAML files
+                are located.
+
+        Returns:
+            Recipe: An instance of the Recipe class constructed from the loaded recipe data.
+        """
+        # Load recipe definition
+        with open(base_path / "recipes" / f"{recipe_name}.yml") as f:
+            recipe_data = yaml.safe_load(f)
+
+        # Load input schema
+        with open(base_path / "schema" / f"{recipe_name}_schema.yml") as f:
+            schema_data = yaml.safe_load(f)['schema']
+            input_schema = {
+                section: {
+                    field_name: InputField(**field_def)
+                    for field_name, field_def in fields.items()
+                }
+                for section, fields in schema_data.items()
+            }
+
+        # Load operations
+        with open(base_path / "schema" /  f"{recipe_name}_operations.yml") as f:
+            operations_data = yaml.safe_load(f)['schema']['operations']
+            steps = [
+                Step.from_yaml(step_name, operations_data[step_name])
+                for step_name in recipe_data['steps']
+            ]
+
+        return cls(
+            name=recipe_name,
+            description=recipe_data.get('description', ''),
+            steps=steps,
+            input_schema=input_schema,
+            outputs=recipe_data.get('outputs', [])
+        )
+
+    def collect_inputs(self, args: Any, manifest: Dict[str, Any], config_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Collects and organizes inputs from different sources (CLI, dataset, and
+        configuration dictionary) according to the input schema.
+
+        The method iterates over the defined input schema and extracts relevant
+        fields from provided sources. It segregates inputs based on their
+        source (`cli`, `dataset`, or `config`) and organizes them into a unified
+        structure.
+
+        Args:
+            args: CLI arguments object or namespace containing user-provided
+                inputs via the command line interface.
+            manifest: A dictionary representing the dataset, containing key-value
+                pairs of data fields.
+            config_dict: A dictionary representing the configuration settings,
+                typically provided from configuration files or other sources.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing organized inputs from the CLI,
+                dataset, and configuration source, structured according to the input
+                schema.
+        """
+        inputs = {
+            "cli": {},
+            "dataset": {},
+            "config": {}
+        }
+
+        # Map inputs according to schema
+        for section, fields in self.input_schema.items():
+            source = {
+                "cli": args,
+                "dataset": manifest,
+                "config": config_dict
+            }[section]
+
+            for field_name in fields:
+                if hasattr(source, field_name) if section == "cli" else field_name in source:
+                    value = getattr(source, field_name) if section == "cli" else source[field_name]
+                    inputs[section][field_name] = value
+        return inputs
+
+    def validate_inputs(self, inputs: Dict[str, Any]) -> List[str]:
+        """
+        Validates the inputs against the predefined input schema for each section and
+        field. Ensures that the provided values conform to the validation rules
+        defined in the input schema. Accumulates and returns a list of error messages
+        if validation rules are violated.
+
+        Args:
+            inputs (Dict[str, Any]): A dictionary representing the input values where
+                keys are section names and values are dictionaries containing field
+                names and their respective values.
+
+        Returns:
+            List[str]: A list of error messages for all fields that failed validation.
+            Each error message is in the format 'section.field_name: error'.
+        """
+        errors = []
+        for section, fields in self.input_schema.items():
+            section_inputs = inputs.get(section, {})
+            for field_name, field in fields.items():
+                if error := field.validate_value(section_inputs.get(field_name)):
+                    errors.append(f"{section}.{field_name}: {error}")
+        return errors
+
+    def get_param_value(self, param_def, state):
+        """
+        Retrieves a parameter value from the provided state based on the definition of the parameter.
+
+        This function determines the value of a parameter from a given state object. The retrieval logic
+        is based on where the parameter is defined to exist (e.g., within the `state` dictionary or its
+        nested structures). It offers backward compatibility for older parameter definitions.
+
+        Args:
+            param_def (dict): The definition of the parameter, including information
+                about its source location within the state.
+            state (dict): The state object containing current values of parameters
+                and possibly nested inputs used to resolve the parameter value.
+
+        Returns:
+            Any: The resolved value of the parameter based on its definition in the
+                 state.
+        """
+        if param_def.get('from') == 'state':
+            return state[param_def['name']]
+        elif param_def.get('from', '').startswith('inputs.'):
+            section, key = param_def['from'].split('.')[1:]
+            return state['inputs'][section][key]
+        else:
+            # Default to old behavior for backward compatibility
+            return state.get(param_def['name'])
+
+    def validate_state(self, state: Dict[str, Any], step: Step) -> List[str]:
+        """
+        Validates the provided state against the requirements of a specific step and
+        returns a list of error messages if the validation fails.
+
+        Args:
+            state (Dict[str, Any]): Current execution state containing available inputs
+                and corresponding values.
+            step (Step): Step object that defines the requirements to be validated.
+
+        Returns:
+            List[str]: A list of error messages encountered during validation. If no
+                errors are found, the list will be empty.
+        """
+        errors = []
+        
+        # Check dependencies
+        missing = [need for need in step.needs if need not in state]
+        if missing:
+            errors.append(f"Missing required inputs: {', '.join(missing)}")
+            
+        return errors
+    
+    def verify_outputs(self, state: Dict[str, Any], step: Step) -> List[str]:
+        """
+        Verifies if the required outputs for a step are present in the state.
+
+        This method checks whether all outputs required by the `provides` attribute of
+        the given `step` are available in the `state`. If any required outputs are
+        missing, they are added to the list of errors, and a detailed error message is
+        constructed.
+
+        Args:
+            state (Dict[str, Any]): The current state that contains all the output data
+                provided by previous steps.
+            step (Step): The step object that specifies the outputs it is expected to
+                provide.
+
+        Returns:
+            List[str]: A list of error messages indicating which expected outputs from
+                the step are missing in the state.
+        """
+        errors = []
+        
+        missing_outputs = [out for out in step.provides if out not in state]
+        if missing_outputs:
+            errors.append(f"Step failed to provide outputs: {', '.join(missing_outputs)}")
+            
+        return errors
+    
+    def verify_recipe_outputs(self, state: Dict[str, Any]) -> List[str]:
+        """
+        Verifies that all required recipe outputs are present in the provided state.
+
+        This function checks if any outputs defined in the instance are absent from
+        the provided state. If missing outputs are found, an error message is added
+        to the errors list, detailing which outputs are missing.
+
+        Args:
+            state (Dict[str, Any]): A dictionary representing the current state, where
+                keys are output names and values are their corresponding data.
+
+        Returns:
+            List[str]: A list of error messages indicating which outputs, if any, are
+                missing from the provided state.
+        """
+        errors = []
+        
+        missing_outputs = [out for out in self.outputs if out not in state]
+        if missing_outputs:
+            errors.append(f"Recipe missing required outputs: {', '.join(missing_outputs)}")
+            
+        return errors
+
+    def run(self, inputs: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
+        """
+        Executes a sequence of steps in the recipe pipeline, performing state validation,
+        step execution, and output verification at each step, and ultimately produces the
+        final outputs of the recipe.
+
+        Args:
+            inputs (Dict[str, Any]): Input parameters or data required by the recipe.
+            outdir (Path): Directory path where output data of the recipe will be stored.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the final output values of the recipe.
+
+        Raises:
+            ValueError: If state validation fails before executing a step, or if output
+                verification fails after executing a step or upon finalizing the recipe.
+            Exception: If an exception occurs during step execution, the error is logged
+                and re-raised.
+        """
+        state = {
+            'outdir': outdir,
+            'inputs': inputs
+        }
+
+        logger.info(f"Starting recipe: {self.name}")
+
+        for step in self.steps:
+            logger.info(f"Executing step: {step.name}")
+            
+            # Validate state before execution
+            if errors := self.validate_state(state, step):
+                raise ValueError(f"Step {step.name} state validation failed:\n" + "\n".join(errors))
+
+            # Execute step
+            try:
+                step.execute(state)
+            except Exception as e:
+                logger.error(f"Failed to execute step {self.name}: {str(e)}")
+                raise
+
+            # Verify step outputs
+            if errors := self.verify_outputs(state, step):
+                raise ValueError(f"Step {step.name} output verification failed:\n" + "\n".join(errors))
+
+            logger.info(f"Completed step: {step.name}")
+
+        # Verify recipe outputs and prepare return value
+        if errors := self.verify_recipe_outputs(state):
+            raise ValueError("\n".join(errors))
+
+        recipe_outputs = {out: state[out] for out in self.outputs}
+        logger.info(f"Completed recipe: {self.name}")
+
+        return recipe_outputs
 
     def plan(self) -> str:
-        """Return a human-readable plan (no execution)."""
-        lines: List[str] = [f"Recipe: {self.name}"]
-        if self.description:
-            lines.append(self.description)
-        lines.append("\nSteps:")
-        for i, op in enumerate(self.steps, 1):
-            need = ", ".join(op._needs) or "–"
-            init = ", ".join(op._init_params) or "–"
-            prov = ", ".join(op._provides) or "–"
-            lines.append(
-                f"  {i:02d}. {op._name}"
-                f"\n      state needs: [{need}]"
-                f"\n      init params: [{init}]"
-                f"\n      provides: [{prov}]"
-                f"\n      {op._summary}"
-            )
-        if self.outputs:
-            lines.append("\nExpected outputs: " + ", ".join(self.outputs))
-        return "\n".join(lines)
-
-    def describe_markdown(self, manifest: Dict[str, Any], args, config_dict: Dict[str, Any]) -> str:
-        """Produce Markdown docs: context table + step list."""
-        reg = InputsRegistry(self.spec)
-        inputs = reg.collect(manifest, args, config_dict)
-        reg.validate(inputs)
-        ctx_table = inputs_markdown(inputs, self.spec)
-        lines: List[str] = [f"# Recipe: {self.name}"]
-        if self.description:
-            lines.append(self.description)
-        lines.append("\n## Context (inputs)")
-        lines.append(ctx_table)
-        lines.append("\n## Steps")
-        for i, op in enumerate(self.steps, 1):
-            lines.append(f"{i}. **{op._name}** — {op._summary}")
-        if self.outputs:
-            lines.append("\n## Expected outputs")
-            lines.append("- " + "\n- ".join(self.outputs))
-        return "\n".join(lines)
-
-    def run(self, manifest: Dict[str, Any], args, config_dict: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
-        """Execute the recipe end-to-end.
-
-        Returns the final `state` dict containing outputs.
         """
-        reg = InputsRegistry(self.spec)
-        inputs = reg.collect(manifest, args, config_dict)
-        reg.validate(inputs)
-        reg.log(inputs)
+        Generates a formatted plan as a string representation from the provided steps. It iterates through
+        each defined step, appending its name, description, parameters, and any provided outputs to a
+        formatted string. Each step is properly numbered and separated for better readability.
 
-        rlog = RunLogger(outdir, self.name)
-        state: Dict[str, Any] = {"inputs": inputs, "outdir": Path(outdir)}
+        Returns:
+            str: A formatted string combining all steps, detailing their relevant information in a structured format.
+        """
+        lines = []
 
-        rlog.info("recipe_start", name=self.name)
-        for idx, op in enumerate(self.steps, 1):
-            # Check needs
-            missing = [k for k in op._needs if k not in state]
-            if missing:
-                rlog.error("op_missing_inputs", step=idx, op=op._name, missing=missing)
-                raise ValueError(f"Operation {op._name} missing inputs: {missing}")
-            rlog.info("op_start", step=idx, total=len(self.steps), op=op._name)
-            t0 = time.time()
-            op.run(state, rlog)
-            dt = time.time() - t0
-            rlog.info("op_done", step=idx, total=len(self.steps), op=op._name, seconds=round(dt, 3))
-        rlog.info("recipe_done", name=self.name)
-        rlog.close()
-        return state
+        for i, step in enumerate(self.steps, 1):
+            lines.append(f"### {i}. {step.name}")
 
+            if step.description:
+                lines.append(f"\n{step.description}\n")
 
-# -----------------------------
-# Example operations (reusable)
-# -----------------------------
-@dataclass
-class LoadFiberPositions(Operation):
-    """Load fiber positions from instrument configuration."""
-    unit_instrument: str
-    unit_id: str
-    ndithers: int
-    dither_number: List[int]
-    config_dict: Dict[str, Any]
+            if step.params:
+                lines.append("\n**Parameters:**")
+                for param_name, param in step.params.items():
+                    param_desc = f"- `{param_name}` ({param.type})"
+                    if param.description:
+                        param_desc += f": {param.description}"
+                    if param.units:
+                        param_desc += f" [{param.units}]"
+                    if param.required:
+                        param_desc += " *(required)*"
+                    lines.append(param_desc)
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "LoadFiberPositions"
-        self._needs = []
-        self._provides = ["fiber_x", "fiber_y"]
-        self._summary = "Load fiber geometry for the instrument."
+            if step.provides:
+                lines.append("\n**Provides:**")
+                for provide in step.provides:
+                    lines.append(f"- `{provide}`")
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        fx, fy = load_fiber_positions(
-            self.unit_instrument,
-            self.ndithers,
-            self.dither_number,
-            self.config_dict
-        )
-        state.update({
-            "fiber_x": fx,
-            "fiber_y": fy
-        })
-        rlog.debug("fiber_positions_loaded")
+            lines.append("")  # Empty line between steps
 
+        return "\n".join(lines)
 
-@dataclass
-class GetWavelengthGrid(Operation):
-    """Generate wavelength grid from configuration."""
-    config_dict: Dict[str, Any]
+    def visualize_dependencies_networkx(self, output_folder: Optional[Path] = None) -> str:
+        """
+        Visualizes the dependencies of steps in the current process using NetworkX and Matplotlib.
+        Generates a directed graph where nodes represent steps, and edges indicate dependencies
+        between steps based on provided and required resources.
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "GetWavelengthGrid"
-        self._needs = []
-        self._provides = ["def_wave"]
-        self._summary = "Generate rectified wavelength grid."
+        Args:
+            output_folder (Optional[Path]): A folder where the generated dependency graph image
+                will be saved. If not provided, the method will not save the visualization.
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        wave = get_rectified_wavelength(self.config_dict)
-        state.update({
-            "def_wave": wave
-        })
-        rlog.debug("wavelength_grid_created", n_wave=len(wave))
+        Returns:
+            str: A markdown string referencing the saved image if an output folder is provided,
+                or a message indicating that no output folder was given.
+        """
+        import networkx as nx
+        import matplotlib.pyplot as plt
 
+        G = nx.DiGraph()
 
-@dataclass
-class LoadReducedData(Operation):
-    """Load reduced spectra and error data."""
-    in_folder: str
-    reduced_files: List[str]
+        # Add nodes
+        for step in self.steps:
+            G.add_node(step.name)
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "LoadReducedData"
-        self._needs = []
-        self._provides = ["reduced_spectra", "reduced_error", "header"]
-        self._summary = "Load reduced spectral frames and error data."
+        # Add edges
+        for step in self.steps:
+            for prev_step in self.steps:
+                if set(step.needs) & set(prev_step.provides):
+                    G.add_edge(prev_step.name, step.name)
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        rs, re, hdr = load_reduced_data(self.in_folder, self.reduced_files)
-        state.update({
-            "reduced_spectra": rs,
-            "reduced_error": re,
-            "header": hdr
-        })
-        rlog.debug("data_loaded", n_files=len(self.reduced_files))
+        # Create the plot
+        plt.figure(figsize=(12, 8))
+        pos = nx.spring_layout(G, k=1, iterations=50)
+        nx.draw(G, pos, with_labels=True, node_color='lightblue',
+                node_size=2000, font_size=10, font_weight='bold',
+                arrows=True, edge_color='gray')
+        plt.title(f"Dependencies for {self.name}")
 
+        # Save if output folder is provided
+        if output_folder:
+            output_folder = Path(output_folder)
+            figure_path = output_folder / f"{self.name}_dependencies.png"
+            plt.savefig(figure_path, bbox_inches='tight', dpi=300)
+            plt.close()
 
-@dataclass
-class ModelPSFAndDAR(Operation):
-    """Model PSF and DAR from spectral data."""
-    extraction_radius: float
-    fiber_radius: float
+            # Return markdown that references the saved image
+            return f"![{self.name} Dependencies]({figure_path.name})"
+        else:
+            plt.close()
+            # Return a message if no output folder was provided
+            return "*NetworkX visualization requires an output folder to save the figure.*"
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "ModelPSFAndDAR"
-        self._needs = ["reduced_spectra", "reduced_error", "fiber_x", "fiber_y", "def_wave"]
-        self._provides = ["modeling"]
-        self._summary = "Fit PSF/DAR/FWHM as functions of wavelength."
+    def generate_mermaid_graph(self) -> str:
+        """
+        Generates a Mermaid graph representation based on the defined steps and their
+        dependencies.
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        This function constructs a flowchart in the Mermaid graph syntax by creating
+        nodes and defining connections based on the main flow and dependency
+        relationships between the steps.
 
-        modeling = build_psf_and_dar(
-            fiber_x=state["fiber_x"],
-            fiber_y=state["fiber_y"],
-            def_wave=state["def_wave"],
-            reduced_spectra=state["reduced_spectra"],
-            reduced_error=state["reduced_error"],
-            extraction_radius=self.extraction_radius,
-            fiber_radius=self.fiber_radius,
-        )
-        state["modeling"] = modeling
-        rlog.debug("modeling_ready", have=list(modeling.keys()))
+        Returns:
+            str: The Mermaid graph representation as a string.
+        """
+        lines = ['```mermaid', 'graph TD;']
 
+        # Add nodes
+        for step in self.steps:
+            lines.append(f'    {step.name}[{step.name}];')
 
-@dataclass
-class ExtractSpectrum(Operation):
-    """Extract optimal 1D spectrum using PSF-weighted fiber fluxes."""
+        # Add main flow connections
+        for i in range(len(self.steps) - 1):
+            lines.append(f'    {self.steps[i].name} --> {self.steps[i+1].name};')
 
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "ExtractSpectrum"
-        self._needs = [
-            "reduced_spectra",
-            "reduced_error",
-            "modeling",  # Contains dar_model, sources, X, Y, measured_fwhm
-            "fiber_x",
-            "fiber_y",
-            "def_wave"
+        # Add dependency connections
+        for i, step in enumerate(self.steps):
+            for j, prev_step in enumerate(self.steps):
+                if j < i and set(step.needs) & set(prev_step.provides):
+                    lines.append(f'    {prev_step.name} -.-> {step.name};')
+
+        lines.append('```')
+        return '\n'.join(lines)
+
+    def describe_markdown(self, inputs: Dict[str, Any], viz_type: str = 'mermaid',
+                          output_folder: Optional[Path] = None) -> str:
+        """
+        Generates a markdown description of the recipe, including its inputs, execution plan, and
+        dependency graph visualized using the specified method.
+
+        Args:
+            inputs (Dict[str, Any]): A dictionary of inputs categorized into sections where keys are
+                section names, and values are further dictionaries mapping input names to their values.
+            viz_type (str): The type of visualization for the dependency graph. Supported options are
+                'mermaid', 'ascii', and 'networkx'. Default is 'mermaid'.
+            output_folder (Optional[Path]): The folder path where graph visualizations will be saved
+                (if required by the selected visualization method).
+
+        Returns:
+            str: The generated markdown description as a string.
+
+        Raises:
+            ValueError: If an unsupported visualization type is provided in `viz_type`.
+        """
+        lines = [
+            f"# Recipe: {self.name}",
+            "",
+            self.description,
+            "",
+            "## Inputs",
+            ""
         ]
-        self._provides = ["spectrum", "spectrum_error"]
-        self._summary = "Extract optimal 1D spectrum using PSF weights."
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
+        for section, values in inputs.items():
+            if values:  # Only show sections with values
+                lines.append(f"### {section.title()}")
+                lines.append("```yaml")  # Using yaml for better formatting
+                for key, value in values.items():
+                    lines.append(f"{key}: {value}")
+                lines.append("```")
+                lines.append("")
 
-        modeling = state["modeling"]
-        spectrum, spectrum_error = extract_optimal_spectrum(
-            reduced_spectra=state["reduced_spectra"],
-            reduced_error=state["reduced_error"],
-            dar_model=modeling["dar_model"],
-            sources=modeling["sources"],
-            X=modeling["X"],
-            Y=modeling["Y"],
-            measured_fwhm=modeling["measured_fwhm"],
-            fiber_x=state["fiber_x"],
-            fiber_y=state["fiber_y"],
-            psf_interp=modeling["psf_interp"],
-            def_wave=state["def_wave"]
-        )
+        lines.append("## Execution Plan")
+        lines.append(self.plan())
 
-        state.update({
-            "spectrum": spectrum,
-            "spectrum_error": spectrum_error
-        })
-        rlog.debug("spectrum_extracted", n_wave=len(spectrum))
+        lines.append("## Dependency Graph")
 
-@dataclass
-class LoadExtinctionTable(Operation):
-    """Load atmospheric extinction table."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "LoadExtinctionTable"
-        self._needs = []
-        self._provides = ["extinction_table"]
-        self._summary = "Load McDonald Observatory extinction curve."
+        # Choose visualization type
+        viz_methods = {
+            'mermaid': lambda: self.generate_mermaid_graph(),
+            'ascii': lambda: self.generate_ascii_graph(),
+            'networkx': lambda: self.visualize_dependencies_networkx(output_folder)
+        }
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        extinction_table = read_extinction_table()
-        state["extinction_table"] = extinction_table
-        rlog.debug("extinction_table_loaded")
+        if viz_type not in viz_methods:
+            raise ValueError(f"Unsupported visualization type. Choose from: {', '.join(viz_methods.keys())}")
 
+        lines.append(viz_methods[viz_type]())
 
-@dataclass
-class GetAirmass(Operation):
-    """Extract airmass from header."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "GetAirmass"
-        self._needs = ["header"]
-        self._provides = ["airmass"]
-        self._summary = "Get airmass value from observation header."
+        return "\n".join(lines)
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        airmass = float(state["header"]["AIRMASS"])
-        state["airmass"] = airmass
-        rlog.debug("airmass_extracted", airmass=airmass)
+    def generate_ascii_graph(self) -> str:
+        """
+        Generates an ASCII representation of the dependency graph for steps.
 
+        This function creates a visual representation of how the steps in a particular
+        workflow are dependent on one another. Each step is visualized as part of a tree,
+        showing parent-child relationships between dependency nodes. The root nodes,
+        representing steps with no dependencies, are identified and used to construct
+        the graph recursively.
 
-@dataclass
-class ApplyExtinctionCorrection(Operation):
-    """Apply extinction correction to spectrum."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "ApplyExtinctionCorrection"
-        self._needs = [
-            "def_wave",
-            "spectrum",
-            "spectrum_error",
-            "extinction_table",
-            "airmass"
-        ]
-        self._provides = ["spec_corr", "err_corr"]
-        self._summary = "Apply atmospheric extinction correction to spectrum."
+        Returns:
+            str: A string containing the ASCII representation of the dependency graph.
+        """
+        lines = []
+        indent = "  "
 
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        spec_corr, err_corr = apply_extinction_correction(
-            obs_wave=state["def_wave"],
-            flux=state["spectrum"],
-            flux_err=state["spectrum_error"],
-            ext_wave=state["extinction_table"]["wavelength"],
-            A_lambda_airmass=state["extinction_table"]["mags_per_airmass"],
-            airmass=state["airmass"]
-        )
-        state.update({
-            "spec_corr": spec_corr,
-            "err_corr": err_corr
-        })
-        rlog.info("extinction_correction_applied", airmass=state["airmass"])
+        def find_dependencies(step_name: str, depth: int = 0) -> None:
+            lines.append(f"{indent * depth}└─ {step_name}")
+            for next_step in self.steps:
+                if any(dep in self.steps_dict[step_name].provides
+                      for dep in next_step.needs):
+                    find_dependencies(next_step.name, depth + 1)
 
+        # Find root nodes (no dependencies)
+        roots = [step.name for step in self.steps if not step.needs]
+        for root in roots:
+            find_dependencies(root)
 
-@dataclass
-class LoadCalibrationSpectrum(Operation):
-    """Load standard star calibration spectrum."""
-    standard_name: str
-
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "LoadCalibrationSpectrum"
-        self._needs = []
-        self._provides = ["cal_spectrum"]
-        self._summary = "Load CALSPEC standard star spectrum."
-
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        cal_spectrum = load_calspec_spectrum(self.standard_name)
-        state["cal_spectrum"] = cal_spectrum
-        rlog.debug("calibration_spectrum_loaded", standard=self.standard_name)
-
-
-@dataclass
-class SaveResponsePlot(Operation):
-    """Generate and save response function plot."""
-    output_folder: Path
-
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "SaveResponsePlot"
-        self._needs = [
-            "def_wave",
-            "spec_corr",
-            "err_corr",
-            "cal_spectrum",
-            "response"
-        ]
-        self._provides = ["flux_cal"]
-        self._summary = "Save diagnostic plot of response function."
-
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        plot_spectrum_with_standard(
-            state["flux_calibrated"],
-            state["error_calibrated"],
-            state["def_wave"],
-            state["cal_spectrum"]["WAVELENGTH"],
-            state["cal_spectrum"]["FLUX"],
-            1.0 / state["response"],
-            outfolder=self.output_folder
-        )
-        state["flux_cal"] = True
-        rlog.info("response_plot_saved", output_folder=str(self.output_folder))
-
-@dataclass
-class MeasureResponse(Operation):
-    """Measure instrument response function."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "MeasureResponse"
-        self._needs = ["def_wave", "spec_corr", "cal_spectrum"]
-        self._provides = ["response"]
-        self._summary = "Compute instrument response from standard star observation."
-
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        response = measure_response(
-            obs_wave=state["def_wave"],
-            obs_flux=state["spec_corr"],
-            std_wave=state["cal_spectrum"]["WAVELENGTH"],
-            std_flux=state["cal_spectrum"]["FLUX"]
-        )
-        state["response"] = response
-        rlog.debug("response_measured")
-
-
-@dataclass
-class ApplyResponse(Operation):
-    """Apply response correction to spectrum."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self._name = "ApplyResponse"
-        self._needs = ["spec_corr", "err_corr", "response"]
-        self._provides = ["flux_calibrated", "error_calibrated"]
-        self._summary = "Apply response correction to spectrum and error."
-
-    def run(self, state: Dict[str, Any], rlog: "RunLogger") -> None:
-        spectrum = state["spec_corr"] * state["response"]
-        error = state["err_corr"] * state["response"]
-        
-        state["flux_calibrated"] = spectrum
-        state["error_calibrated"] = error
-        rlog.debug("response_applied")
+        return "\n".join(lines)

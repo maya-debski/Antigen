@@ -14,32 +14,52 @@ warnings.filterwarnings("ignore")
 logger = logging.getLogger('antigen.calibrate')
 
 
-def measure_response(obs_wave, obs_flux, std_wave, std_flux, window=251):
-    """Compute the instrument response function from a standard star.
+def measure_response(obs_wave, obs_flux, std_star_wave, std_star_flux, window=251):
+    """Compute the instrument response function from a standard star observation.
 
-    Response is defined as:
+    The response function R(λ) is defined as the ratio between the calibration
+    standard's absolute flux and the observed (extinction-corrected) flux:
 
         R(λ) = F_std(λ) / F_obs(λ)
 
-    Optionally, a simple moving-average smoothing can be applied.
+    The function handles missing or invalid data points by interpolating over them,
+    and applies Savitzky-Golay smoothing to reduce noise in the final response.
 
     Args:
-        obs_wave (np.ndarray): Wavelength grid of the observed (extinction-corrected) spectrum.
-        obs_flux (np.ndarray): Observed (corrected) flux values.
-        std_wave (np.ndarray): Wavelength grid of the reference standard star spectrum.
-        std_flux (np.ndarray): Reference flux of the standard star
-        window (int, optional): Window size for moving-average smoothing (default 251).
+        obs_wave (np.ndarray): Wavelength grid of the observed (extinction-corrected) spectrum
+                              in Angstroms.
+        obs_flux (np.ndarray): Observed (extinction-corrected) flux values in appropriate units
+                              (typically erg/s/cm^2/Å).
+        std_star_wave (np.ndarray): Wavelength grid of the Standard Star spectrum
+                              in Angstroms.
+        std_star_flux (np.ndarray): Standard Star flux values in appropriate units
+                              (typically erg/s/cm^2/Å).
+        window (int, optional): Window size for Savitzky-Golay smoothing. Must be odd.
+                              Defaults to 251.
 
     Returns:
-        response (np.ndarray): Instrument response values.
+        np.ndarray: Smoothed instrument response function values on the observed wavelength grid.
+
+    Notes:
+        - The function first interpolates the calibration spectrum onto the observed wavelength grid
+        - Invalid or missing data (zeros, NaNs) in the observed flux are handled by interpolation
+        - The final response is smoothed using a Savitzky-Golay filter with polynomial order 3
     """
-    std_on_obs = np.interp(obs_wave, std_wave, std_flux)
+    # Interpolate standard star spectrum onto observed wavelength grid
+    std_on_obs = np.interp(obs_wave, std_star_wave, std_star_flux)
+    
+    # Calculate response, handling division by zero
     with np.errstate(divide="ignore", invalid="ignore"):
         response = np.where(obs_flux > 0, std_on_obs / obs_flux, np.nan)
+    
+    # Interpolate over invalid values
     finite_values = np.isfinite(response)
     response = np.interp(obs_wave, obs_wave[finite_values], response[finite_values],
-                        left=response[finite_values][0],  right=response[finite_values][-1])
+                        left=response[finite_values][0], right=response[finite_values][-1])
+    
+    # Apply Savitzky-Golay smoothing
     response = savgol_filter(response, window, 3)
+    
     return response
 
 
@@ -60,23 +80,23 @@ def load_calibration_data(standard_name):
     return calspectrum_table, extinction_table
 
 
-def extract_optimal_spectrum(reduced_spectra, reduced_error, dar_model,
-                             sources, X, Y, measured_fwhm, fiber_x, fiber_y,
-                             psf_interp, def_wave):
+def extract_optimal_spectrum(reduced_spectra, reduced_error, modeling,
+                           fiber_x, fiber_y, def_wave):
     """
     Extract an optimal 1D spectrum using PSF-weighted fiber fluxes.
 
     Args:
         reduced_spectra (np.ndarray): Flux array of shape (Nfibers, Nlambda).
         reduced_error (np.ndarray): Error array of shape (Nfibers, Nlambda).
-        dar_model (DARModel): DAR model for source position correction.
-        sources (Table): Detected source catalog.
-        X (np.ndarray): Grid of X coordinates.
-        Y (np.ndarray): Grid of Y coordinates.
-        measured_fwhm (np.ndarray): FWHM array from PSF fit.
+        modeling (dict): Dictionary containing PSF and DAR modeling results with keys:
+            - dar_model: DAR model for source position correction
+            - sources: Detected source catalog
+            - X: Grid of X coordinates
+            - Y: Grid of Y coordinates
+            - measured_fwhm: FWHM array from PSF fit
+            - psf_interp: PSF interpolator
         fiber_x (np.ndarray): Fiber X positions.
         fiber_y (np.ndarray): Fiber Y positions.
-        psf_interp (callable): PSF interpolator.
         def_wave (np.ndarray): Wavelength grid.
 
     Returns:
@@ -84,15 +104,15 @@ def extract_optimal_spectrum(reduced_spectra, reduced_error, dar_model,
             spectrum (np.ndarray): Extracted flux spectrum.
             spectrum_error (np.ndarray): Extracted error spectrum.
     """
-    source_x, source_y = dar_model(
+    source_x, source_y = modeling['dar_model'](
         def_wave,
-        sources["xcentroid"] + X[0, 0],
-        sources["ycentroid"] + Y[0, 0]
+        modeling['sources']["xcentroid"] + modeling['X'][0, 0],
+        modeling['sources']["ycentroid"] + modeling['Y'][0, 0]
     )
-    source_fwhm = np.median(measured_fwhm)
+    source_fwhm = np.median(modeling['measured_fwhm'])
 
     weights = psf.build_psf_weights(source_x, source_y, source_fwhm,
-                                    fiber_x, fiber_y, psf_interp)
+                                  fiber_x, fiber_y, modeling['psf_interp'])
     spectrum, spectrum_error = spectra.get_optimal_spectrum(
         reduced_spectra, reduced_error, weights
     )
@@ -195,3 +215,24 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
         "Y": Y,
     }
 
+def apply_response(spectrum_corr, error_corr, response):
+    """Apply response correction to the extinction-corrected spectrum.
+    
+    The response correction is applied by multiplying the extinction-corrected
+    spectrum by the response function. The errors are propagated accordingly.
+    
+    Args:
+        spectrum_corr (np.ndarray): Extinction-corrected spectrum.
+        error_corr (np.ndarray): Error array for the extinction-corrected spectrum.
+        response (np.ndarray): Response function to apply.
+        
+    Returns:
+        flux_calibrated (np.ndarray): Flux-calibrated spectrum.
+        error_calibrated (np.ndarray): Propagated errors for the calibrated spectrum.
+
+    """
+    # Apply response correction to spectrum
+    flux_calibrated = spectrum_corr * response
+    error_calibrated = error_corr * response
+
+    return flux_calibrated, error_calibrated

@@ -117,6 +117,20 @@ def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_d
 
     return output_filename
 
+def get_airmass(header):
+    """Extract airmass value from FITS header.
+
+    Args:
+        header (dict): FITS header dictionary containing 'AIRMASS' key
+
+    Returns:
+        float: Airmass value from the header
+
+    Raises:
+        KeyError: If AIRMASS key is not present in header
+        ValueError: If AIRMASS value cannot be converted to float
+    """
+    return float(header['AIRMASS'])
 
 def load_reduced_data(base_folder, filenames, extname='SKYSUB_PCA'):
     """
@@ -422,7 +436,19 @@ def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=Fal
     except Exception as e:
         raise RuntimeError(f"Failed to retrieve CALSPEC spectrum for {name}") from e
 
-    return spectrum
+    # Handle both upper and lower case column names
+    wave_col = next((col for col in ['wavelength', 'WAVELENGTH']
+                     if col in spectrum.colnames), None)
+    flux_col = next((col for col in ['flux', 'FLUX']
+                     if col in spectrum.colnames), None)
+
+    if wave_col is None or flux_col is None:
+        raise ValueError("Cannot find wavelength/flux columns in calibration spectrum table")
+
+    # Get the column values, handling potential dictionary case
+    wave_data = spectrum[wave_col].value
+    flux_data = spectrum[flux_col].value
+    return wave_data, flux_data
 
 
 def read_extinction_table(file_path=None):
