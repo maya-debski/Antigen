@@ -144,8 +144,8 @@ def process_calibration(manifest_record, output_path, config_dict):
     def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
                            config_dict['detector_dimensions']['X'])
 
-    lines = config_dict['wavelength']
-    xref = config_dict['column']
+    lines = config_dict['arc_lines']
+    xref = config_dict['dispersion_reference_x']
     peak_threshold = config_dict['arc_flux_limit']
     fiber_ref = config_dict['reference_fiber_index']
     use_kernel = True

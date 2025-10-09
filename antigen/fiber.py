@@ -128,6 +128,10 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fib
         )
 
     # --- Apply dithers ---
+    # Convert dither count to 1...N and not 0...N-1.
+    if np.any(dither_numbers == 0):
+        dither_numbers += 1
+
     dithers_observed = [dither_offsets[int(dither_number - 1)] for dither_number in dither_numbers]
     fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dithers_observed])
     fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dithers_observed])

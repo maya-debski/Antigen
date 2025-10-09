@@ -4,6 +4,7 @@ import numpy as np
 from photutils.detection import DAOStarFinder
 from photutils.background import MMMBackground
 from astropy.table import Table
+from astropy.stats import mad_std
 
 from antigen import fiber
 from antigen import cube
@@ -36,13 +37,12 @@ def detect_sources(original_image, fwhm=2.0, threshold_sigma=5.0, brightest_only
     data_sub = image - bkg_value
 
     # Use robust std estimate for threshold
-    sigma = np.std(data_sub)
+    sigma = mad_std(data_sub)
     threshold = threshold_sigma * sigma
 
     # Run DAOStarFinder
     daofind = DAOStarFinder(fwhm=fwhm, threshold=threshold)
     sources = daofind(data_sub)
-
     if sources is None:
         return Table()  # return empty if nothing detected
 
@@ -85,7 +85,7 @@ def detect_brightest_source(fiber_x, fiber_y, reduced_spectra, fiber_area):
     bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
 
     detection_image, X, Y = cube.fibers_to_image(
-        fiber_x, fiber_y, collapsed_fiber_flux, fiber_area, bounds=bounds
+        fiber_x, fiber_y, collapsed_fiber_flux, fiber_area, bounds=bounds, method="gdw", k=5, sigma=2.0
     )
 
     sources = detect_sources(detection_image, brightest_only=True)

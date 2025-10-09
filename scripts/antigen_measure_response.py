@@ -38,11 +38,13 @@ def get_args():
                        help='Cube pixel size in arcsec.')
     parser.add_argument('-v', '--verbose', action='store_true',
                        help='if True, print more process details and logger.info to console')
+    parser.add_argument('-d', '--debug', action='store_true',
+                       help='if True, print more process details and logger.debug to console')
     return parser.parse_args()
 
 def main():
     args = get_args()
-    logger = setup_logging('antigen', verbose=args.verbose)
+    logger = setup_logging('antigen', verbose=args.verbose, debug=args.debug)
     logger.info('Starting application...')
 
     save_path = Path(args.output_folder or args.reduced_dir).expanduser().resolve()

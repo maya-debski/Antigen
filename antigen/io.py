@@ -29,6 +29,24 @@ def get_fits_extension_map():
         "errorrect": "ERROR",
     }
 
+def write_image(image, out_folder, filename):
+    """
+    Writes the provided image to the specified folder.
+
+    The function takes an image and a folder path as input. It saves the image
+    to the designated folder with a specified naming or format mechanism.
+
+    Args:
+        image: The image object or data to be written to the folder.
+        out_folder: The output folder
+        filename: filename string
+    """
+
+    primary_hdu = fits.PrimaryHDU(data=image)
+    primary_hdu.writeto(Path(out_folder) / filename, overwrite=True)
+
+    return None
+
 def write_fits(skysubrect_adv, skysubrect, specrect, errorrect, header, config_dict, outfolder):
     """
     Purpose: Writes the sky-subtracted, rectified spectra and error data to a FITS file,
@@ -573,3 +591,118 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
     # Save FITS
     hdu = fits.PrimaryHDU(data=cube.astype("float32"), header=hdr)
     hdu.writeto(filename, overwrite=overwrite)
+
+def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic, 
+                              rectified_spectra, rectified_error, observation_header,
+                              output_folder, instrument, instrument_element,
+                              def_wave):
+    """
+    Write processed spectra to FITS file with proper WCS and metadata.
+    
+    This function creates a multi-extension FITS file containing the various
+    stages of processed spectra with appropriate WCS information and metadata.
+    
+    Args:
+        sky_subtracted_advanced (np.ndarray): Advanced sky-subtracted spectrum (PCA corrected)
+        sky_subtracted_basic (np.ndarray): Basic sky-subtracted spectrum (optional)
+        rectified_spectra (np.ndarray): Rectified, fiber-to-fiber corrected spectra
+        rectified_error (np.ndarray): Rectified spectral error array
+        observation_header (dict): Original observation FITS header
+        output_folder (str): Output directory for FITS files
+        instrument (str): Instrument name
+        instrument_element (str): Instrument element identifier
+        start_wavelength (float): Starting wavelength for WCS (Angstroms)
+        end_wavelength (float): Ending wavelength for WCS (Angstroms)
+        detector_dimensions (dict): Detector dimensions for wavelength grid
+        include_basic_sky_subtraction (bool): Whether to include basic sky subtraction
+        
+    Returns:
+        str: Path to the created FITS file
+        
+    Example:
+        >>> filename = write_reduced_spectra_fits(
+        ...     sky_sub_adv, sky_sub_basic, spectra_rect, error_rect, header,
+        ...     "/output/path", "VIRUS2", "R001", def_wave
+        ... )
+    """
+    import os
+    from astropy.io import fits
+    from astropy.time import Time
+    import numpy as np
+    
+    # Ensure output directory exists
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Create output filename
+    obj_time_string = Time(observation_header['DATE-OBS'] + 'T' + observation_header['UT']).strftime('%Y%m%dT%H%M%S')
+    header_card_object = observation_header['OBJECT']
+    if len(header_card_object.strip()) > 0:
+        obj_name_string = '_'.join(observation_header['OBJECT'].split())
+    else:
+        obj_name_string = 'ObjectCardEmpty'
+    
+    image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_{instrument}_{instrument_element}_multi'
+    
+    # Get extension mapping
+    extmap = get_fits_extension_map()
+    
+    # Prepare data arrays and extensions
+    data_arrays = [sky_subtracted_advanced, sky_subtracted_basic, rectified_spectra, rectified_error]
+    hdu_types = [fits.PrimaryHDU, fits.ImageHDU, fits.ImageHDU, fits.ImageHDU]
+    ext_names = [extmap['skysubrect_adv'], extmap['skysubrect'], extmap['specrect'], extmap['errorrect']]
+
+    
+    # Create HDU list
+    hdulist = []
+    
+    # Create wavelength grid for WCS
+    wavelength_step = def_wave[1] - def_wave[0]
+    
+    for data_array, hdu_type, ext_name in zip(data_arrays, hdu_types, ext_names):
+        # Create HDU with float32 precision
+        hdu = hdu_type(np.array(data_array, dtype='float32'))
+        hdu.header["EXTNAME"] = ext_name
+        
+        # Remove conflicting WCS elements
+        for key in ['CD1_1', 'CD1_2', 'CD2_1', 'CD2_2', 'CDELT1', 'CDELT2']:
+            if key in hdu.header:
+                del hdu.header[key]
+        
+        # Set proper WCS for spectral data
+        hdu.header['CRVAL1'] = def_wave[0]        # First wavelength (Angstroms)
+        hdu.header['CRPIX1'] = 1                  # First pixel corresponds to first wavelength
+        hdu.header['CD1_1'] = wavelength_step     # Wavelength step per pixel
+        hdu.header['CTYPE1'] = 'WAVE'            # Spectral axis type
+        hdu.header['CUNIT1'] = 'Angstrom'        # Spectral units
+        
+        # Set fiber axis WCS
+        hdu.header['CRVAL2'] = 1                  # Reference fiber number
+        hdu.header['CRPIX2'] = 1                  # First pixel for fiber axis
+        hdu.header['CD2_2'] = 1                   # One fiber per pixel
+        hdu.header['CTYPE2'] = 'FIBER'           # Fiber axis type
+        
+        # Add processing metadata
+        hdu.header['PROCTYPE'] = ext_name         # Processing level identifier
+        hdu.header['INSTRUME'] = instrument       # Instrument name
+        hdu.header['INSTELEM'] = instrument_element # Instrument element
+        
+        # Copy relevant keys from original header, avoiding conflicts
+        excluded_keys = ['CCDSEC', 'DATASEC', 'BSCALE', 'BZERO', 'SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2']
+        for key in observation_header.keys():
+            if any(exc_key in key for exc_key in excluded_keys):
+                continue
+            if key in hdu.header:
+                continue
+            try:
+                hdu.header[key] = observation_header[key]
+            except (ValueError, TypeError):
+                # Skip problematic header cards
+                continue
+        
+        hdulist.append(hdu)
+    
+    # Write FITS file
+    output_filename = os.path.abspath(os.path.join(output_folder, image_name_stem + '.fits'))
+    fits.HDUList(hdulist).writeto(output_filename, overwrite=True)
+    
+    return output_filename

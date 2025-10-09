@@ -149,7 +149,7 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
 
 
 def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error,
-                      extraction_radius, fiber_radius, psf_seeing_grid=None):
+                      extraction_radius, fiber_radius, ndithers=None, psf_seeing_grid=None):
     """Create the PSF interpolator, detect a bright source, and fit the DAR model.
 
     This function:
@@ -167,6 +167,7 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
         reduced_error (np.ndarray): Stacked error estimates.
         extraction_radius (float): Extraction radius taken from args.
         fiber_radius (float): Fiber radius determined from config_dict['fiber_radius']
+        ndithers (int, optional): Number of dithered exposures. If not provided, default is None.
         psf_seeing_grid (np.ndarray, optional): 1D array of seeing values (arcsec)
             to tabulate the PSF interpolator. If not provided, uses
             ``np.linspace(0.5, 5.0, 45)``.
@@ -195,9 +196,81 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
     )
 
     # 2) Brightest source for PSF anchoring
-    sources, x_coord, y_coord, X, Y = detection.detect_brightest_source(
-        fiber_x, fiber_y, reduced_spectra, fiber_area
-    )
+    if ndithers is not None:
+        # Split data and fiber positions into ndither datasets
+        nfibers_per_dither = int(len(fiber_x) / ndithers)
+
+        logger.info(f"Processing {ndithers} dithers with {nfibers_per_dither} fibers each")
+
+        # Store results for each dither
+        dither_sources = []
+        dither_coords = []
+        dither_offsets = []
+
+        # Loop through each dither
+        for dither_idx in range(ndithers):
+            start_idx = dither_idx * nfibers_per_dither
+            end_idx = start_idx + nfibers_per_dither
+
+            logger.debug(f"Processing dither {dither_idx + 1}/{ndithers} (fibers {start_idx}:{end_idx})")
+
+            # Extract fiber positions and spectra for this dither
+            dither_fiber_x = fiber_x[start_idx:end_idx]
+            dither_fiber_y = fiber_y[start_idx:end_idx]
+            dither_spectra = reduced_spectra[start_idx:end_idx]
+
+            # Detect brightest source for this dither
+            sources, x_coord, y_coord, X, Y = detection.detect_brightest_source(
+                dither_fiber_x, dither_fiber_y, dither_spectra, fiber_area
+            )
+
+            dither_sources.append(sources)
+            dither_coords.append((x_coord, y_coord, X, Y))
+
+            logger.debug(f"Dither {dither_idx}: Source detected at ({x_coord:.2f}, {y_coord:.2f})")
+
+
+        # Calculate dither offsets relative to first dither
+        if len(dither_coords) > 0:
+            ref_x, ref_y = dither_coords[0][:2]
+            logger.info("Detected dither offsets relative to first dither:")
+
+            for i, (x, y, _, _) in enumerate(dither_coords):
+                if i == 0:
+                    dx, dy = 0.0, 0.0
+                else:
+                    dx = x - ref_x
+                    dy = y - ref_y
+
+                dither_offsets.append((dx, dy))
+                logger.info(f"  Dither {i+1}: dx={dx:.3f}\", dy={dy:.3f}\"")
+
+    from antigen.plot import plot_fiber_flux_distribution
+    plot_fiber_flux_distribution(fiber_x, fiber_y, reduced_spectra, fiber_radius)
+
+    try:
+        sources, x_coord, y_coord, X, Y = detection.detect_brightest_source(
+            fiber_x, fiber_y, reduced_spectra, fiber_area
+        )
+    except RuntimeError as e:
+        logger.warning(f"Source detection failed: {e}")
+        logger.info("Using fallback: brightest fiber coordinates")
+
+        # Fallback: use brightest fiber
+        collapsed_flux = np.nanmedian(reduced_spectra, axis=1)
+        valid_mask = np.isfinite(collapsed_flux) & (collapsed_flux > 0)
+
+        if np.any(valid_mask):
+            brightest_idx = np.nanargmax(collapsed_flux)
+            x_coord = fiber_x[brightest_idx]
+            y_coord = fiber_y[brightest_idx]
+        else:
+            # Use center of fiber array
+            x_coord = np.nanmean(fiber_x)
+            y_coord = np.nanmean(fiber_y)
+
+        sources, X, Y = None, None, None
+        logger.info(f"Using coordinates ({x_coord:.2f}, {y_coord:.2f})")
 
     # 3) Fit PSF across wavelength to build DAR and seeing model
     dar_model, measured_fwhm = psf.fit_psf_and_build_dar_model(

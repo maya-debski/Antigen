@@ -7,6 +7,7 @@ from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import least_squares
 
 from antigen import dar
+from antigen.plot import plot_psf_fit_diagnostics
 
 logger = logging.getLogger('antigen.psf')
 
@@ -88,7 +89,7 @@ def _psf_residuals(params, fiber_x, fiber_y, fiber_flux, fiber_error, interp):
 
 
 def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelength,
-            extraction_radius=20., Nchunks=20):
+            extraction_radius=20., Nchunks=20, save_diagnostics=True, output_dir="."):
     """
     Fit the PSF to fiber data in chunks.
 
@@ -103,12 +104,21 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelen
         wavelength (ndarray): wavelength array.
         extraction_radius (float, optional): Extraction radius (arcsec).
         Nchunks (int, optional): Number of chunks. Default is 20.
+        save_diagnostics (bool, optional): Save diagnostic plots. Default is True.
+        output_dir (str, optional): Directory to save diagnostics. Default is ".".
 
     Returns:
         source_x (ndarray): location in x of source as a function of wave
         source_y (ndarray): location in y of source as a function of wave
         source_fwhm (ndarray): PSF fwhm of source as a function of wave
+        poly_x (ndarray): polynomial coefficients for x position
+        poly_y (ndarray): polynomial coefficients for y position
+        poly_fwhm (ndarray): polynomial coefficients for fwhm
+        fit_diagnostics (dict): Dictionary containing fit data for diagnostics
     """
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
     datachunks = np.array_split(data, Nchunks, axis=1)
     errorchunks = np.array_split(error, Nchunks, axis=1)
 
@@ -119,36 +129,119 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelen
     little_inds = [int(np.mean(xi)) for xi in np.array_split(indices, Nchunks)]
     little_waves = wavelength[little_inds]
 
+    # Store all fit data for diagnostics
+    fit_diagnostics = {
+        'chunk_data': [],
+        'wavelengths': little_waves
+    }
+
     for idx, (dchunk, echunk) in enumerate(zip(datachunks, errorchunks)):
+        logger.debug(f"Processing PSF fit chunk {idx+1}/{Nchunks}")
+        
         fiber_flux = biweight(dchunk, ignore_nan=True, axis=1)
         fiber_error = np.sqrt(np.nansum(echunk ** 2, axis=1)) / np.sqrt(dchunk.shape[1])
 
         # Use brightest fiber as initial guess
-        # Add an option for a guess??
         fiber_dist = np.sqrt((fiber_x - initial_x) ** 2 + (fiber_y - initial_y) ** 2)
         sel = np.isfinite(fiber_flux) & (fiber_dist < extraction_radius)
+        
+        logger.debug(f"Chunk {idx}: Selected {np.sum(sel)} fibers within extraction radius")
+        
+        if np.sum(sel) < 4:  # Need minimum fibers for fit
+            logger.warning(f"Chunk {idx}: Insufficient valid fibers ({np.sum(sel)}) for PSF fit, skipping")
+            source_x[idx] = initial_x if idx == 0 else source_x[idx-1] 
+            source_y[idx] = initial_y if idx == 0 else source_y[idx-1]
+            source_fwhm[idx] = 1.5 if idx == 0 else source_fwhm[idx-1]
+            continue
 
         # fiber-weighted initial x,y positions
-        x_init = np.nansum(fiber_x[sel] * fiber_flux[sel]) / np.nansum(fiber_flux[sel])
-        y_init = np.nansum(fiber_y[sel] * fiber_flux[sel]) / np.nansum(fiber_flux[sel])
+        weights = fiber_flux[sel]
+        if np.sum(weights) == 0:
+            logger.warning(f"Chunk {idx}: Zero total flux, using initial positions")
+            x_init = initial_x
+            y_init = initial_y
+        else:
+            x_init = np.nansum(fiber_x[sel] * weights) / np.nansum(weights)
+            y_init = np.nansum(fiber_y[sel] * weights) / np.nansum(weights)
 
         # Initial PSF params in the frame of x_init, y_init
-        initial = np.array([0.0, 0.0, 1.5, np.nansum(fiber_flux[sel])])
-
-        # Fit the PSF restricted to the fibers within extraction radius / 2.
-        result = least_squares(
-            _psf_residuals, x0=initial,
-            args=(fiber_x[sel] - initial_x, fiber_y[sel] - initial_y,
-                  fiber_flux[sel], fiber_error[sel], interp)
-        )
-
-        params = result.x
-        source_x[idx] = params[0]
-        source_y[idx] = params[1]
-        source_fwhm[idx] = params[2]
+        total_flux = np.nansum(fiber_flux[sel])
+        initial = np.array([0.0, 0.0, 1.5, total_flux])
+        
+        logger.debug(f"Chunk {idx}: Initial params: x_off={initial[0]:.3f}, y_off={initial[1]:.3f}, "
+                    f"fwhm={initial[2]:.3f}, flux={initial[3]:.1f}")
+        
+        # Validate initial parameters
+        if not np.all(np.isfinite(initial)):
+            logger.error(f"Chunk {idx}: Non-finite initial parameters: {initial}")
+            raise ValueError(f"PSF fit chunk {idx} has non-finite initial parameters")
+        
+        try:
+            # Fit the PSF restricted to the fibers within extraction radius
+            result = least_squares(
+                _psf_residuals, x0=initial,
+                args=(fiber_x[sel] - initial_x, fiber_y[sel] - initial_y,
+                      fiber_flux[sel], fiber_error[sel], interp)
+            )
+            
+            if not result.success:
+                logger.warning(f"Chunk {idx}: PSF fit did not converge: {result.message}")
+            
+            params = result.x
+            
+            # Validate fitted parameters
+            if not np.all(np.isfinite(params)):
+                logger.error(f"Chunk {idx}: Non-finite fitted parameters: {params}")
+                raise ValueError(f"PSF fit chunk {idx} produced non-finite parameters")
+            
+            source_x[idx] = params[0] + initial_x
+            source_y[idx] = params[1] + initial_y  
+            source_fwhm[idx] = params[2]
+            total_flux = params[3]
+            
+            # Calculate model values at fiber positions for diagnostics
+            model_flux = model_psf(params, fiber_x[sel] - initial_x, fiber_y[sel] - initial_y, interp)
+            
+            # Store diagnostic data for this chunk
+            chunk_diagnostics = {
+                'chunk_idx': idx,
+                'wavelength': little_waves[idx],
+                'x_rel': fiber_x[sel] - initial_x,  # Relative to initial guess
+                'y_rel': fiber_y[sel] - initial_y,
+                'x_abs': fiber_x[sel],  # Absolute positions
+                'y_abs': fiber_y[sel],
+                'fiber_flux': fiber_flux[sel] / total_flux,
+                'fiber_error': fiber_error[sel] / total_flux,
+                'model_flux': model_flux / total_flux,
+                'fitted_x': source_x[idx],
+                'fitted_y': source_y[idx],
+                'fitted_fwhm': source_fwhm[idx],
+                'r': np.sqrt((fiber_x[sel] - source_x[idx])**2 + (fiber_y[sel] - source_y[idx])**2),
+                'flux_model_ratio': fiber_flux[sel] / model_flux
+            }
+            fit_diagnostics['chunk_data'].append(chunk_diagnostics)
+            
+            logger.debug(f"Chunk {idx}: Fitted params: x={source_x[idx]:.3f}, y={source_y[idx]:.3f}, "
+                        f"fwhm={source_fwhm[idx]:.3f}")
+            
+        except Exception as e:
+            logger.error(f"Chunk {idx}: PSF fit failed with error: {str(e)}")
+            logger.error(f"Debug info - sel_count: {np.sum(sel)}, x_init: {x_init:.3f}, y_init: {y_init:.3f}")
+            logger.error(f"fiber_flux[sel] range: [{np.nanmin(fiber_flux[sel]):.3f}, {np.nanmax(fiber_flux[sel]):.3f}]")
+            logger.error(f"fiber_error[sel] range: [{np.nanmin(fiber_error[sel]):.3f}, {np.nanmax(fiber_error[sel]):.3f}]")
+            raise
+    
+    # Fit polynomials to the results
     poly_x = np.polyfit(little_waves, source_x - source_x[int(Nchunks/2)], 2)
     poly_y = np.polyfit(little_waves, source_y - source_y[int(Nchunks/2)], 2)
     poly_fwhm = np.polyfit(little_waves, source_fwhm, 2)
+
+    # Create diagnostic plots
+    if save_diagnostics and fit_diagnostics['chunk_data']:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        plot_psf_fit_diagnostics(fit_diagnostics, output_dir="psf_diagnostics")
+
 
     return source_x, source_y, source_fwhm, poly_x, poly_y, poly_fwhm
 
@@ -180,7 +273,7 @@ def build_psf_weights(source_x, source_y, source_fwhm, fiber_x, fiber_y,
 
 def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
                                 psf_interp, x_coord, y_coord, def_wave,
-                                extraction_radius=2.0, nchunks=20):
+                                extraction_radius=2.0, nchunks=20, output_dir="."):
     """
     Fit the PSF to the reduced spectra and construct a DAR model.
 
@@ -195,7 +288,7 @@ def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y
         def_wave (ndarray): Wavelength grid.
         extraction_radius (float, optional): Extraction radius in arcsec. Defaults to 2.0.
         nchunks (int, optional): Number of wavelength chunks for fitting. Defaults to 20.
-
+        output_dir (str, optional): Directory to save diagnostics. Defaults to ".".
     Returns:
         tuple:
             dar_model (DARModel): Differential atmospheric refraction model.

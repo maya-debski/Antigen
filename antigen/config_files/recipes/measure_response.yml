@@ -21,19 +21,27 @@ inputs:
       X: null
       Y: null
 
-steps:
-  - LoadFiberPositions
-  - GetWavelengthGrid
-  - LoadReducedData
-  - ModelPSFAndDAR
-  - ExtractSpectrum
-  - LoadExtinctionTable
-  - GetAirmass
-  - ApplyExtinctionCorrection
-  - LoadCalibrationSpectrum
-  - MeasureResponse
-  - ApplyResponse
-  - SaveResponsePlot
+workflow:
+  - group: "Setup"
+    steps:
+      - LoadFiberPositions
+      - GetWavelengthGrid
+      - LoadReducedData
+
+  - group: "ExtractionAndCalibration"
+    steps:
+      - ModelPSFAndDAR
+      - ExtractSpectrum
+      - LoadExtinctionTable
+      - GetAirmass
+      - ApplyExtinctionCorrection
+
+  - group: "ResponseMeasurement"
+    steps:
+      - LoadCalibrationSpectrum
+      - MeasureResponse
+      - ApplyResponse
+      - SaveResponsePlot
 
 outputs:
   - flux_calibrated

@@ -101,6 +101,10 @@ schema:
           type: float
           required: true
           source: inputs.config
+        ndithers:
+          type: int
+          required: true
+          source: inputs.dataset
       needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
       provides: ["modeling"]
       algorithm:

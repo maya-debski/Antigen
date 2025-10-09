@@ -1,6 +1,8 @@
+from collections import defaultdict
+
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Union
 import yaml
 import re
 import logging
@@ -49,7 +51,12 @@ class InputField:
             elif rule == 'pattern' and not re.match(rule_value, str(value)):
                 return f"Must match pattern {rule_value}"
             elif rule == 'choices' and value not in rule_value:
-                return f"Must be one of {rule_value}"
+                choices = self.validate['choices']
+                if isinstance(value, str):
+                    if value.lower() not in [c.lower() for c in choices]:
+                        return f"must be one of {choices}"
+                else:
+                    return f"Must be one of {rule_value}"
             elif rule == 'min' and float(value) < float(rule_value):
                 return f"Must be at least {rule_value}"
 
@@ -125,12 +132,30 @@ class FunctionExecutor:
 
         # Navigate to source
         value = state if parts[0] == 'state' else state['inputs']
-        for part in parts[1:]:
-            value = value[part]
+
+        # Navigate through the path, handling missing keys gracefully
+        try:
+            for part in parts[1:]:
+                value = value[part]
+        except KeyError as e:
+            # If the source path doesn't exist and parameter is not required, use default
+            if not param_def.required:
+                return param_def.default
+            else:
+                raise ValueError(f"Required parameter {param_name} from '{param_def.source}' is missing: {str(e)}")
 
         # Get actual parameter value
-        if isinstance(value, dict) and param_name in value:
-            value = value[param_name]
+        if isinstance(value, dict):
+            # Check if this dictionary is itself the parameter we want (like detector_dimensions)
+            source_parts = param_def.source.split('.')
+            if param_name == source_parts[-1]:
+                # The dictionary itself is the parameter value we want
+                return value
+            # Otherwise, try to get param_name from inside the dictionary
+            elif param_name in value:
+                value = value[param_name]
+            else:
+                raise ValueError(f"Required parameter {param_name} from '{param_def.source}' is missing")
 
         if value is None and param_def.required:
             raise ValueError(f"Required parameter {param_name} from '{param_def.source}' is missing")
@@ -160,21 +185,79 @@ class Step:
     params: Dict[str, InputField]
     needs: List[str]
     provides: List[str]
+    label: Optional[str] = None
     executor: Optional[FunctionExecutor] = None
+    save_executor: Optional[FunctionExecutor] = None  # Add this field
 
     @classmethod
-    def from_yaml(cls, name: str, data: Dict[str, Any]) -> 'Step':
-        """Create a Step instance from YAML data."""
-        params = {
-            param_name: InputField(**param_def)
-            for param_name, param_def in data.get('params', {}).items()
-        }
+    def from_yaml(cls, name: str, data: Dict[str, Any], step_params: Dict[str, Any] = None, label: Optional[str] = None) -> 'Step':
+        """Create a Step instance from YAML data.
+        
+        Args:
+            name: Name of the step
+            data: YAML data defining the step
+            step_params: Optional parameters provided in the step definition to override/fill templates
+        """
+        # First process any template parameters if provided
+        step_params = step_params or {}
+        
+        # Helper function to substitute template variables in strings
+        def substitute_templates(value: Any, params: Dict[str, Any]) -> Any:
+            if isinstance(value, str):
+                # Handle template substitution in strings
+                for param_name, param_value in params.items():
+                    template = "{" + param_name + "}"
+                    if template in value:
+                        value = value.replace(template, str(param_value))
+                return value
+            elif isinstance(value, list):
+                return [substitute_templates(item, params) for item in value]
+            elif isinstance(value, dict):
+                return {k: substitute_templates(v, params) for k, v in value.items()}
+            return value
 
+        # Process parameter definitions
+        params_def = data.get('params', {})
+        
+        # Apply template substitutions to parameter sources and other fields
+        processed_params_def = substitute_templates(params_def, step_params)
+        
+        # Create InputField instances with processed definitions and override with step_params values
+        params = {}
+        for param_name, param_def in processed_params_def.items():
+            field = InputField(**param_def)
+            # If param is in step_params, set it as the default value
+            if param_name in step_params:
+                field.default = step_params[param_name]
+                # Remove source if we're setting a direct value
+                field.source = None
+            params[param_name] = field
+
+        # Process needs list with template substitutions
+        needs = substitute_templates(data.get('needs', []), step_params)
+        
+        # Process provides list with template substitutions
+        provides = substitute_templates(data.get('provides', []), step_params)
+
+        # Create executor if algorithm is defined
         executor = None
+        save_executor = None  # Initialize save_executor
         if 'algorithm' in data and 'function' in data['algorithm']:
+            algorithm_data = substitute_templates(data['algorithm'], step_params)
+            
+            # Handle additional save operations if present
+            if 'save' in algorithm_data:
+                save_data = algorithm_data.pop('save')
+                save_args = [substitute_templates(arg, step_params) for arg in save_data['args']]
+                save_executor = FunctionExecutor(
+                    function_path=save_data['function'],
+                    function_args=save_args,
+                    params=params
+                )
+            
             executor = FunctionExecutor(
-                function_path=data['algorithm']['function'],
-                function_args=data['algorithm'].get('args', []),
+                function_path=algorithm_data['function'],
+                function_args=algorithm_data.get('args', []),
                 params=params
             )
 
@@ -182,9 +265,11 @@ class Step:
             name=name,
             description=data.get('description', ''),
             params=params,
-            needs=data.get('needs', []),
-            provides=data.get('provides', []),
-            executor=executor
+            needs=needs,
+            provides=provides,
+            label=label,
+            executor=executor,
+            save_executor=save_executor  # Include save_executor in the return
         )
 
     def execute(self, state: Dict[str, Any]) -> None:
@@ -193,57 +278,141 @@ class Step:
             raise ValueError(f"Step {self.name} has no executor")
 
         try:
+            # Execute main operation
             result = self.executor.execute(state)
+
+            results = result if isinstance(result, (tuple, list)) else [result]
+
+            # Update state with results
+            if len(results) == len(self.provides):
+                for val, output_name in zip(results, self.provides):
+                    state[output_name] = val
+                    self.params[output_name] = self.create_input_field_from_value(val, self.name)
+            else:
+                expected = list(self.provides)
+                expected_n = len(expected)
+                try:
+                    actual_n = len(results)
+                except TypeError:
+                    actual_n = 1
+                missing_by_position = expected[actual_n:]  # what we still needed
+
+                raise ValueError(
+                    f"Unexpected result from {self.name}: expected {expected_n} outputs "
+                    f"{expected}, but got {actual_n}. "
+                    f"Missing (by position)={missing_by_position}."
+                )
+
+            # Execute save operation if present
+            if self.save_executor:
+                try:
+                    self.save_executor.execute(state)
+                except Exception as e:
+                    logger.error(f"Failed to execute save operation for step {self.name}: {str(e)}")
+                    raise
+
         except Exception as e:
             logger.error(f"Failed to execute step {self.name}: {str(e)}")
             raise
 
-        # Update state with results
-        if isinstance(result, tuple) and len(result) == len(self.provides):
-            for val, output_name in zip(result, self.provides):
-                state[output_name] = val
-        elif len(self.provides) == 1:
-            state[self.provides[0]] = result
+    def create_input_field_from_value(self, value: Any, name: str) -> InputField:
+        """Create an InputField with appropriate type based on the value."""
+        
+        if isinstance(value, str):
+            type_str = "str"
+        elif isinstance(value, float):
+            type_str = "float"
+        elif isinstance(value, int):
+            type_str = "int"
+        elif isinstance(value, Path):
+            type_str = "path"
+        elif isinstance(value, (list, tuple)):
+            type_str = "list"
+        elif isinstance(value, dict):
+            type_str = "dict"
+        elif isinstance(value, np.ndarray):
+            type_str = "ndarray"
         else:
-            raise ValueError(f"Unexpected result format from {self.name}")
+            type_str = "any"
+
+        return InputField(
+            type=type_str,
+            required=True,
+            source="state",
+            description=f"Output from step: {name}"
+        )
+
+@dataclass
+class StepGroup:
+    """Group of steps that can be iterated over."""
+    name: str
+    steps: List['Step']
+    iterate_over: Optional[str] = None
+    iterator_var: Optional[str] = None
+    
+    def get_iteration_source(self, state: Dict[str, Any]) -> List[Any]:
+        """Get the list of items to iterate over from state."""
+        if not self.iterate_over:
+            return [None]  # Single iteration if no iterator specified
+        
+        # Parse the source path (e.g., "inputs.dataset.observation_files")
+        parts = self.iterate_over.split('.')
+        value = state
+        for part in parts:
+            value = value[part]
+        return value
+
+@dataclass
+class Workflow:
+    """Container for workflow steps and groups."""
+    groups: List['StepGroup']
+
+    @classmethod
+    def from_yaml(cls, workflow_data: List[Dict[str, Any]], operations_data: Dict[str, Any]) -> 'Workflow':
+        groups = []
+        for item in workflow_data:
+            # Process group
+            group_steps = []
+            for step_def in item['steps']:
+                step_name = next(iter(step_def)) if isinstance(step_def, dict) else step_def
+                step_label = step_def[step_name].get('label') if isinstance(step_def, dict) else None
+                step_params = step_def[step_name].get('params', {}) if isinstance(step_def, dict) else {}
+                step = Step.from_yaml(step_name, operations_data[step_name],
+                                      step_params=step_params, label=step_label)
+                group_steps.append(step)
+
+            group = StepGroup(
+                name=item['group'],
+                steps=group_steps,
+                iterate_over=item.get('iterate_over'),
+                iterator_var=item.get('iterator_var')
+            )
+            groups.append(group)
+        return cls(groups)
 
 
 @dataclass
 class Recipe:
-    """Main recipe class that coordinates steps and manages execution."""
+    """Main recipe class that coordinates workflow execution."""
     name: str
     description: str
-    steps: List[Step]
+    workflow: Workflow
     input_schema: Dict[str, Dict[str, InputField]]
     outputs: List[str]
-    
-    def __post_init__(self):
-        """Create dict of steps for faster lookup."""
-        self.steps_dict = {step.name: step for step in self.steps}
 
     @classmethod
-    def load(cls, recipe_name: str, base_path: Path) -> 'Recipe':
-        """
-        Loads a recipe definition, its input schema, and operations based on the given
-        recipe name and base path, returning an initialized instance of the Recipe class.
+    def load(cls, name: str, base_path: Path) -> 'Recipe':
+        """Load recipe from YAML files."""
+        recipe_file = base_path / "recipes" / f"{name}.yml"
+        schema_file = base_path / "schema" / f"{name}_schema.yml"
+        operations_file = base_path / "schema" / f"{name}_operations.yml"
 
-        This method reads and processes YAML files corresponding to the recipe definition,
-        schema, and operations. It constructs a Recipe instance using this data.
-
-        Args:
-            recipe_name: The name of the recipe to load.
-            base_path: The base directory path where recipe, schema, and operations YAML files
-                are located.
-
-        Returns:
-            Recipe: An instance of the Recipe class constructed from the loaded recipe data.
-        """
         # Load recipe definition
-        with open(base_path / "recipes" / f"{recipe_name}.yml") as f:
+        with open(recipe_file) as f:
             recipe_data = yaml.safe_load(f)
 
         # Load input schema
-        with open(base_path / "schema" / f"{recipe_name}_schema.yml") as f:
+        with open(schema_file) as f:
             schema_data = yaml.safe_load(f)['schema']
             input_schema = {
                 section: {
@@ -254,20 +423,73 @@ class Recipe:
             }
 
         # Load operations
-        with open(base_path / "schema" /  f"{recipe_name}_operations.yml") as f:
-            operations_data = yaml.safe_load(f)['schema']['operations']
-            steps = [
-                Step.from_yaml(step_name, operations_data[step_name])
-                for step_name in recipe_data['steps']
-            ]
+        with open(operations_file) as f:
+            operations_data = yaml.safe_load(f)
 
+        # Create workflow from the workflow section if it exists
+        workflow = Workflow.from_yaml(recipe_data['workflow'], operations_data['schema']['operations'])
         return cls(
-            name=recipe_name,
+            name=name,
             description=recipe_data.get('description', ''),
-            steps=steps,
+            workflow=workflow,
             input_schema=input_schema,
             outputs=recipe_data.get('outputs', [])
         )
+
+    def run(self, inputs: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
+        """Execute the workflow and return outputs."""
+        state = {
+            'outdir': outdir,
+            'inputs': inputs
+        }
+
+        logger.info(f"Starting recipe: {self.name}")
+
+        for step in self.workflow.groups:
+            self._execute_group(step, state)
+
+        if errors := self.verify_recipe_outputs(state):
+            raise ValueError("\n".join(errors))
+
+        recipe_outputs = {out: state[out] for out in self.outputs}
+        logger.info(f"Completed recipe: {self.name}")
+
+        return recipe_outputs
+
+    def _execute_group(self, group: 'StepGroup', state: Dict[str, Any]):
+        """Execute a group of steps, possibly iterating over a collection."""
+        logger.info(f"Starting group: {group.name}")
+
+        iteration_items = group.get_iteration_source(state)
+        for i, item in enumerate(iteration_items):
+            logger.info(f"Group {group.name} iteration {i + 1}/{len(iteration_items)}")
+
+            # Create iteration-specific state
+            iter_state = state.copy()
+            if group.iterator_var:
+                iter_state[group.iterator_var] = item
+
+            # Execute all steps in group
+            for step in group.steps:
+                self._execute_step(step, iter_state)
+
+            # Update main state with iteration results
+            state.update(iter_state)
+
+        logger.info(f"Completed group: {group.name}")
+
+    def _execute_step(self, step: 'Step', state: Dict[str, Any]):
+        """Execute a single step with validation."""
+        logger.info(f"Executing step: {step.name}")
+
+        if errors := self.validate_state(state, step):
+            raise ValueError(f"Step {step.name} state validation failed:\n" + "\n".join(errors))
+
+        try:
+            step.execute(state)
+        except Exception as e:
+            logger.error(f"Failed to execute step {step.name}: {str(e)}")
+            raise
 
     def collect_inputs(self, args: Any, manifest: Dict[str, Any], config_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -336,34 +558,7 @@ class Recipe:
                     errors.append(f"{section}.{field_name}: {error}")
         return errors
 
-    def get_param_value(self, param_def, state):
-        """
-        Retrieves a parameter value from the provided state based on the definition of the parameter.
-
-        This function determines the value of a parameter from a given state object. The retrieval logic
-        is based on where the parameter is defined to exist (e.g., within the `state` dictionary or its
-        nested structures). It offers backward compatibility for older parameter definitions.
-
-        Args:
-            param_def (dict): The definition of the parameter, including information
-                about its source location within the state.
-            state (dict): The state object containing current values of parameters
-                and possibly nested inputs used to resolve the parameter value.
-
-        Returns:
-            Any: The resolved value of the parameter based on its definition in the
-                 state.
-        """
-        if param_def.get('from') == 'state':
-            return state[param_def['name']]
-        elif param_def.get('from', '').startswith('inputs.'):
-            section, key = param_def['from'].split('.')[1:]
-            return state['inputs'][section][key]
-        else:
-            # Default to old behavior for backward compatibility
-            return state.get(param_def['name'])
-
-    def validate_state(self, state: Dict[str, Any], step: Step) -> List[str]:
+    def validate_state(self, state: Dict[str, Any], step: 'Step') -> List[str]:
         """
         Validates the provided state against the requirements of a specific step and
         returns a list of error messages if the validation fails.
@@ -378,14 +573,14 @@ class Recipe:
                 errors are found, the list will be empty.
         """
         errors = []
-        
+
         # Check dependencies
         missing = [need for need in step.needs if need not in state]
         if missing:
             errors.append(f"Missing required inputs: {', '.join(missing)}")
-            
+
         return errors
-    
+
     def verify_outputs(self, state: Dict[str, Any], step: Step) -> List[str]:
         """
         Verifies if the required outputs for a step are present in the state.
@@ -406,13 +601,13 @@ class Recipe:
                 the step are missing in the state.
         """
         errors = []
-        
+
         missing_outputs = [out for out in step.provides if out not in state]
         if missing_outputs:
             errors.append(f"Step failed to provide outputs: {', '.join(missing_outputs)}")
-            
+
         return errors
-    
+
     def verify_recipe_outputs(self, state: Dict[str, Any]) -> List[str]:
         """
         Verifies that all required recipe outputs are present in the provided state.
@@ -430,208 +625,53 @@ class Recipe:
                 missing from the provided state.
         """
         errors = []
-        
+
         missing_outputs = [out for out in self.outputs if out not in state]
         if missing_outputs:
             errors.append(f"Recipe missing required outputs: {', '.join(missing_outputs)}")
-            
+
         return errors
 
-    def run(self, inputs: Dict[str, Any], outdir: Path) -> Dict[str, Any]:
-        """
-        Executes a sequence of steps in the recipe pipeline, performing state validation,
-        step execution, and output verification at each step, and ultimately produces the
-        final outputs of the recipe.
-
-        Args:
-            inputs (Dict[str, Any]): Input parameters or data required by the recipe.
-            outdir (Path): Directory path where output data of the recipe will be stored.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the final output values of the recipe.
-
-        Raises:
-            ValueError: If state validation fails before executing a step, or if output
-                verification fails after executing a step or upon finalizing the recipe.
-            Exception: If an exception occurs during step execution, the error is logged
-                and re-raised.
-        """
-        state = {
-            'outdir': outdir,
-            'inputs': inputs
-        }
-
-        logger.info(f"Starting recipe: {self.name}")
-
-        for step in self.steps:
-            logger.info(f"Executing step: {step.name}")
-            
-            # Validate state before execution
-            if errors := self.validate_state(state, step):
-                raise ValueError(f"Step {step.name} state validation failed:\n" + "\n".join(errors))
-
-            # Execute step
-            try:
-                step.execute(state)
-            except Exception as e:
-                logger.error(f"Failed to execute step {self.name}: {str(e)}")
-                raise
-
-            # Verify step outputs
-            if errors := self.verify_outputs(state, step):
-                raise ValueError(f"Step {step.name} output verification failed:\n" + "\n".join(errors))
-
-            logger.info(f"Completed step: {step.name}")
-
-        # Verify recipe outputs and prepare return value
-        if errors := self.verify_recipe_outputs(state):
-            raise ValueError("\n".join(errors))
-
-        recipe_outputs = {out: state[out] for out in self.outputs}
-        logger.info(f"Completed recipe: {self.name}")
-
-        return recipe_outputs
-
     def plan(self) -> str:
-        """
-        Generates a formatted plan as a string representation from the provided steps. It iterates through
-        each defined step, appending its name, description, parameters, and any provided outputs to a
-        formatted string. Each step is properly numbered and separated for better readability.
-
-        Returns:
-            str: A formatted string combining all steps, detailing their relevant information in a structured format.
-        """
+        """Generate a formatted plan from the workflow."""
         lines = []
+        step_num = 1
 
-        for i, step in enumerate(self.steps, 1):
-            lines.append(f"### {i}. {step.name}")
+        for item in self.workflow.groups:
+            lines.append(f"## Group: {item.name}")
+            if item.iterate_over:
+                lines.append(f"\nIterates over: {item.iterate_over}\n")
 
-            if step.description:
-                lines.append(f"\n{step.description}\n")
+            for step in item.steps:
+                lines.append(f"### {step_num}. {step.name}")
+                if step.description:
+                    lines.append(f"\n{step.description}\n")
 
-            if step.params:
-                lines.append("\n**Parameters:**")
-                for param_name, param in step.params.items():
-                    param_desc = f"- `{param_name}` ({param.type})"
-                    if param.description:
-                        param_desc += f": {param.description}"
-                    if param.units:
-                        param_desc += f" [{param.units}]"
-                    if param.required:
-                        param_desc += " *(required)*"
-                    lines.append(param_desc)
+                if step.params:
+                    lines.append("\n**Parameters:**")
+                    for param_name, param in step.params.items():
+                        param_desc = f"- `{param_name}` ({param.type})"
+                        if param.description:
+                            param_desc += f": {param.description}"
+                        if param.units:
+                            param_desc += f" [{param.units}]"
+                        if param.required:
+                            param_desc += " *(required)*"
+                        lines.append(param_desc)
 
-            if step.provides:
-                lines.append("\n**Provides:**")
-                for provide in step.provides:
-                    lines.append(f"- `{provide}`")
+                if step.provides:
+                    lines.append("\n**Provides:**")
+                    for provide in step.provides:
+                        lines.append(f"- `{provide}`")
 
-            lines.append("")  # Empty line between steps
+                lines.append("")
+                step_num += 1
 
         return "\n".join(lines)
 
-    def visualize_dependencies_networkx(self, output_folder: Optional[Path] = None) -> str:
-        """
-        Visualizes the dependencies of steps in the current process using NetworkX and Matplotlib.
-        Generates a directed graph where nodes represent steps, and edges indicate dependencies
-        between steps based on provided and required resources.
-
-        Args:
-            output_folder (Optional[Path]): A folder where the generated dependency graph image
-                will be saved. If not provided, the method will not save the visualization.
-
-        Returns:
-            str: A markdown string referencing the saved image if an output folder is provided,
-                or a message indicating that no output folder was given.
-        """
-        import networkx as nx
-        import matplotlib.pyplot as plt
-
-        G = nx.DiGraph()
-
-        # Add nodes
-        for step in self.steps:
-            G.add_node(step.name)
-
-        # Add edges
-        for step in self.steps:
-            for prev_step in self.steps:
-                if set(step.needs) & set(prev_step.provides):
-                    G.add_edge(prev_step.name, step.name)
-
-        # Create the plot
-        plt.figure(figsize=(12, 8))
-        pos = nx.spring_layout(G, k=1, iterations=50)
-        nx.draw(G, pos, with_labels=True, node_color='lightblue',
-                node_size=2000, font_size=10, font_weight='bold',
-                arrows=True, edge_color='gray')
-        plt.title(f"Dependencies for {self.name}")
-
-        # Save if output folder is provided
-        if output_folder:
-            output_folder = Path(output_folder)
-            figure_path = output_folder / f"{self.name}_dependencies.png"
-            plt.savefig(figure_path, bbox_inches='tight', dpi=300)
-            plt.close()
-
-            # Return markdown that references the saved image
-            return f"![{self.name} Dependencies]({figure_path.name})"
-        else:
-            plt.close()
-            # Return a message if no output folder was provided
-            return "*NetworkX visualization requires an output folder to save the figure.*"
-
-    def generate_mermaid_graph(self) -> str:
-        """
-        Generates a Mermaid graph representation based on the defined steps and their
-        dependencies.
-
-        This function constructs a flowchart in the Mermaid graph syntax by creating
-        nodes and defining connections based on the main flow and dependency
-        relationships between the steps.
-
-        Returns:
-            str: The Mermaid graph representation as a string.
-        """
-        lines = ['```mermaid', 'graph TD;']
-
-        # Add nodes
-        for step in self.steps:
-            lines.append(f'    {step.name}[{step.name}];')
-
-        # Add main flow connections
-        for i in range(len(self.steps) - 1):
-            lines.append(f'    {self.steps[i].name} --> {self.steps[i+1].name};')
-
-        # Add dependency connections
-        for i, step in enumerate(self.steps):
-            for j, prev_step in enumerate(self.steps):
-                if j < i and set(step.needs) & set(prev_step.provides):
-                    lines.append(f'    {prev_step.name} -.-> {step.name};')
-
-        lines.append('```')
-        return '\n'.join(lines)
-
     def describe_markdown(self, inputs: Dict[str, Any], viz_type: str = 'mermaid',
-                          output_folder: Optional[Path] = None) -> str:
-        """
-        Generates a markdown description of the recipe, including its inputs, execution plan, and
-        dependency graph visualized using the specified method.
-
-        Args:
-            inputs (Dict[str, Any]): A dictionary of inputs categorized into sections where keys are
-                section names, and values are further dictionaries mapping input names to their values.
-            viz_type (str): The type of visualization for the dependency graph. Supported options are
-                'mermaid', 'ascii', and 'networkx'. Default is 'mermaid'.
-            output_folder (Optional[Path]): The folder path where graph visualizations will be saved
-                (if required by the selected visualization method).
-
-        Returns:
-            str: The generated markdown description as a string.
-
-        Raises:
-            ValueError: If an unsupported visualization type is provided in `viz_type`.
-        """
+                        output_folder: Optional[Path] = None) -> str:
+        """Generate markdown description including workflow visualization."""
         lines = [
             f"# Recipe: {self.name}",
             "",
@@ -644,57 +684,105 @@ class Recipe:
         for section, values in inputs.items():
             if values:  # Only show sections with values
                 lines.append(f"### {section.title()}")
-                lines.append("```yaml")  # Using yaml for better formatting
+                lines.append("```yaml")
                 for key, value in values.items():
                     lines.append(f"{key}: {value}")
                 lines.append("```")
                 lines.append("")
 
-        lines.append("## Execution Plan")
+        lines.append("## Workflow Structure")
+        lines.append(self.generate_mermaid_graph())
+        lines.append("")
+
+        lines.append("## Detailed Plan")
         lines.append(self.plan())
 
-        lines.append("## Dependency Graph")
-
-        # Choose visualization type
-        viz_methods = {
-            'mermaid': lambda: self.generate_mermaid_graph(),
-            'ascii': lambda: self.generate_ascii_graph(),
-            'networkx': lambda: self.visualize_dependencies_networkx(output_folder)
-        }
-
-        if viz_type not in viz_methods:
-            raise ValueError(f"Unsupported visualization type. Choose from: {', '.join(viz_methods.keys())}")
-
-        lines.append(viz_methods[viz_type]())
-
         return "\n".join(lines)
 
-    def generate_ascii_graph(self) -> str:
-        """
-        Generates an ASCII representation of the dependency graph for steps.
+    def generate_mermaid_graph(self) -> str:
+        """Generate Mermaid flowcharts showing workflow structure with separate diagrams for each group."""
+        
+        def _label_for(step) -> str:
+            """Generate label for a step, escaping special characters."""
+            lbl = getattr(step, "label", None) or step.name
+            return str(lbl).replace('\n', '\\n').replace('"', "'")
 
-        This function creates a visual representation of how the steps in a particular
-        workflow are dependent on one another. Each step is visualized as part of a tree,
-        showing parent-child relationships between dependency nodes. The root nodes,
-        representing steps with no dependencies, are identified and used to construct
-        the graph recursively.
+        all_diagrams = []
+        
+        # Generate a diagram for each group
+        for group_idx, group in enumerate(self.workflow.groups):
+            group_name = group.name.replace('"', "'")
 
-        Returns:
-            str: A string containing the ASCII representation of the dependency graph.
-        """
-        lines = []
-        indent = "  "
+            lines = [f'### Workflow Group: {group_name}']
 
-        def find_dependencies(step_name: str, depth: int = 0) -> None:
-            lines.append(f"{indent * depth}└─ {step_name}")
-            for next_step in self.steps:
-                if any(dep in self.steps_dict[step_name].provides
-                      for dep in next_step.needs):
-                    find_dependencies(next_step.name, depth + 1)
+            [lines.append(chart_start) for chart_start in ['```mermaid', 'flowchart TD']]
 
-        # Find root nodes (no dependencies)
-        roots = [step.name for step in self.steps if not step.needs]
-        for root in roots:
-            find_dependencies(root)
+            # Add group title as a comment
+            if group.iterate_over:
+                group_name += f" (iterates over {group.iterate_over})"
 
-        return "\n".join(lines)
+            # Create a title node for the group
+
+            node_id = 0
+            node_map = {}
+            
+            # Create nodes for steps in this group
+            for step in group.steps:
+                label = _label_for(step)
+                node_map[label] = f's{node_id}'
+                lines.append(f'  s{node_id}["{label}"]')
+                node_id += 1
+        
+            # Add sequential flow within the group
+            steps = list(group.steps)
+            for i in range(len(steps) - 1):
+                current_label = _label_for(steps[i])
+                next_label = _label_for(steps[i + 1])
+                current_id = node_map[current_label]
+                next_id = node_map[next_label]
+                lines.append(f'  {current_id} --> {next_id}')
+
+            # Add dependency connections within the group
+            for i, step in enumerate(steps):
+                for j, prev_step in enumerate(steps):
+                    if j < i and set(step.needs) & set(prev_step.provides):
+                        step_label = _label_for(step)
+                        prev_label = _label_for(prev_step)
+                        step_id = node_map[step_label]
+                        prev_id = node_map[prev_label]
+                        lines.append(f'  {prev_id} -.-> {step_id}')
+
+
+
+            lines.append('```')
+            lines.append('')  # Empty line between diagrams
+
+            all_diagrams.extend(lines)
+    
+        # Generate an overview diagram showing group relationships
+        if len(self.workflow.groups) > 1:
+            all_diagrams.extend(['## Workflow Overview', ''])
+            all_diagrams.extend(['```mermaid', 'flowchart LR'])
+
+            # Create nodes for each group
+            for i, group in enumerate(self.workflow.groups):
+                group_name = group.name.replace('"', "'")
+                if group.iterate_over:
+                    group_name += f"\\n(iterates over {group.iterate_over})"
+                all_diagrams.append(f'  G{i}["{group_name}"]')
+
+            # Connect groups in sequence
+            for i in range(len(self.workflow.groups) - 1):
+                all_diagrams.append(f'  G{i} --> G{i+1}')
+
+            # Add styling for iteration groups in overview
+            iter_groups = []
+            for i, group in enumerate(self.workflow.groups):
+                if group.iterate_over:
+                    iter_groups.append(f'G{i}')
+
+
+            all_diagrams.append('```')
+            all_diagrams.append('')
+
+        return '\n'.join(all_diagrams)

@@ -1,0 +1,725 @@
+schema:
+  operations:
+    MakeCalibrationFrame:
+      description: "Combines multiple calibration files (bias, flat, or arc) into a master frame by 
+        loading each image, applying geometric transformations, and computing median stacks. 
+        The result is saved to disk with timing metadata."
+      params:
+        filenames:
+          type: "list[str]"
+          required: true
+          source: inputs.dataset.calibration_files.{frame_type}
+        frame_type:
+          type: str
+          required: true
+        out_folder:
+          type: path
+          required: true
+          source: inputs.cli
+        overscan_length:
+          type: int
+          required: true
+          source: inputs.config
+        flip_x:
+          type: bool
+          required: true
+          source: inputs.config
+        flip_y:
+          type: bool
+          required: true
+          source: inputs.config
+        rotate:
+          type: bool
+          required: true
+          source: inputs.config
+        add_rows:
+          type: int
+          required: false
+          default: 0
+          source: inputs.config
+      needs: []
+      provides: ["master_{frame_type}_data", "master_{frame_type}_time", "master_{frame_type}_filename"]
+      algorithm:
+        function: "antigen.ccd.make_master_cal"
+        args: ["filenames", "frame_type", "overscan_length", "flip_x", "flip_y", "rotate", "add_rows"]
+        save:
+          function: "antigen.io.write_image"
+          args: ["master_{frame_type}_data", "out_folder", "master_{frame_type}_filename"]
+
+    GetTraceData:
+      description: "Locates fiber positions across the detector by dividing the master flat into chunks 
+        and measuring fiber centroids in each section. Fits polynomial curves through the measured positions 
+        to create smooth trace arrays while excluding bad fibers specified in the configuration."
+      params:
+        master_flat_data:
+          type: ndarray
+          required: true
+          description: "Bias-subtracted master flat image"
+          source: state  # We'll need to subtract master_bias in the function
+        trace_row:
+          type: ndarray
+          required: true
+          description: "Initial trace list for central wavelength of the detector"
+          source: inputs.config
+        exclude_fiber:
+          type: ndarray
+          required: true
+          description: "List of fibers to exclude from processing"
+          source: inputs.config
+        sample_fiber_indices:
+          type: list[int]
+          required: true
+          description: "List of fiber indices to plot"
+          source: inputs.config
+        out_folder:
+          type: path
+          required: true
+          description: "Output folder for plot files"
+          source: inputs.cli
+        number_chunks:
+          type: int
+          required: false
+          description: "Number of chunks in column direction for measuring trace"
+      needs: ["master_flat_data"]
+      provides: ["trace_array", "good_fiber_mask", "raw_trace_matrix", "x_chunk_centers"]
+      algorithm:
+        function: "antigen.trace.get_trace"
+        args: ["master_flat_data", "trace_row", "exclude_fiber"]
+        save:
+          function: "antigen.plot.plot_trace"
+          args: ["trace_array", "raw_trace_matrix", "x_chunk_centers", "sample_fiber_indices", "out_folder"]
+
+    ExtractSpectra:
+      description: "Extracts 1D spectra from 2D images by summing pixel values within specified apertures 
+        centered on the fiber traces. Handles error propagation from input uncertainty arrays and works 
+        with any image type by using the trace positions to define extraction regions."
+      params:
+        image_data:
+          type: ndarray
+          required: true
+          source: state.{image_type}_data
+        trace_array:
+          type: ndarray
+          required: true
+          source: state
+        image_type:
+          type: str
+          required: true
+        error_data:
+          type: ndarray
+          required: false
+          default: null
+          source: state.{image_type}_error
+          description: "Optional error image for propagation"
+        npix:
+          type: int
+          required: false
+          default: 5
+          description: "Full-width extraction aperture"
+      needs: ["trace_array", "{image_type}_data"]
+      provides: ["{image_type}_spec", "{image_type}_error"]
+      algorithm:
+        function: "antigen.spectra.extract_fiber_spectra"
+        args: ["image_data", "trace_array", "error_data", "npix"]
+
+    WavelengthCalibration:
+      description: "Identifies arc lamp emission lines in extracted spectra and fits polynomial relationships 
+        between pixel positions and known wavelengths. Detects peaks above a S/N threshold, matches them 
+        to reference lines, and creates wavelength solutions across all good fibers."
+      params:
+        master_arc_spec:
+          type: ndarray
+          required: true
+          description: "Arc-lamp spectrum or image used for wavelength calibration"
+          source: state
+        trace_array:
+          type: ndarray
+          required: true
+          description: "Fiber traces from GetTraceData"
+          source: state
+        good_fiber_mask:
+          type: ndarray
+          required: true
+          description: "Boolean mask of usable fibers"
+          source: state
+        dispersion_reference_x:
+          type: ndarray
+          required: true
+          description: "Reference x-positions for dispersion fitting"
+          source: inputs.config
+        arc_lines:
+          type: ndarray
+          required: true
+          description: "Reference arc-line wavelengths"
+          source: inputs.config
+        reference_fiber_index:
+          type: int
+          required: false
+          description: "Reference fiber index for anchoring the solution"
+          source: inputs.config
+        arc_flux_limit:
+          type: float
+          required: true
+          description: "Detection threshold for arc-line peaks"
+          source: inputs.config
+        out_folder:
+          type: path
+          required: true
+          description: "Destination filename for the wavelength diagnostic plot"
+          source: inputs.cli
+        binned:
+          type: bool
+          required: true
+          description: "Data is binned in the x-direction"
+          source: inputs.cli
+        good_arc_residual_limit:
+          type: float
+          required: true
+          description: "Residual in angstroms for a line to be considered well fit"
+          source: inputs.cli
+      needs: [ "trace_array", "good_fiber_mask", "master_arc_spec" ]
+      provides: ["wavelength_solution", "fit_diagnostics", "fitted_arc_line_positions", "arc_pixel_locations"]
+      algorithm:
+        function: "antigen.wavelength.get_wavelength"
+        args: ["master_arc_spec", "trace_array", "good_fiber_mask", "dispersion_reference_x", "arc_lines",
+               "arc_flux_limit", "reference_fiber_index", "good_arc_residual_limit",
+               "binned"]
+        save:
+          function: "antigen.plot.plot_wavelength"
+          args: ["arc_lines", "arc_pixel_locations", "wavelength_solution", "out_folder"]
+
+    GetWavelengthGrid:
+      description: "Creates a linearly-spaced wavelength array between specified start and end wavelengths 
+        with spacing determined by detector dimensions. This uniform grid serves as the target coordinate 
+        system for spectral rectification operations."
+      params:
+        start_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        end_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        detector_dimensions:
+          type: dict
+          required: true
+          source: inputs.config
+      needs: [ ]  # Independent of previous steps
+      provides: [ "def_wave" ]
+      algorithm:
+        function: "antigen.wavelength.get_rectified_wavelength"
+        args: [ "start_wavelength", "end_wavelength", "detector_dimensions" ]
+
+    RectifySpectra:
+      description: "Resamples extracted spectra from their native wavelength solutions onto the uniform 
+        wavelength grid using flux-conserving interpolation. Calculates wavelength bin widths using 
+        gradient methods and converts errors to variance for proper uncertainty propagation through 
+        the resampling process before converting back to error arrays."
+
+      params:
+        spectra:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_spec
+        error:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_error
+        wavelength_solution:
+          type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        spec_type:
+          type: str
+          required: true
+      needs: ["{spec_type}_spec", "{spec_type}_error", "wavelength_solution", "def_wave"]
+      provides: ["{spec_type}_rect", "{spec_type}_error_rect"]
+      algorithm:
+        function: "antigen.spectra.rectify"
+        args: ["spectra", "error", "wavelength_solution", "def_wave"]
+
+    GetFiberToFiber:
+      description: "Computes relative sensitivity corrections by analyzing rectified flat field spectra 
+        across all fibers. Creates normalization factors that account for fiber-to-fiber throughput 
+        variations and produces both raw and smoothed correction arrays."
+      params:
+        master_flat_rect:
+          type: ndarray
+          required: true
+          source: state
+          description: "Rectified master flat field spectra"
+        out_filename:
+          type: str
+          required: true
+          default: 'fiber_normalization.fits'
+          description: "Fiber normalization filename"
+        out_folder:
+          type: path
+          required: true
+          description: "Output folder for plot files"
+          source: inputs.cli
+      needs: [ "master_flat_rect" ]
+      provides: [ "fiber_normalization", "fiber_normalization_smoothed" ]
+      algorithm:
+        function: "antigen.fiber.get_fiber_to_fiber"
+        args: ["master_flat_rect"]
+        save:
+          function: "antigen.io.write_image"
+          args: [ "fiber_normalization", "out_folder", "out_filename" ]
+
+    LoadScienceFrame:
+      description: "Reads FITS file data and header information from a science observation file. 
+        Extracts the primary image array and preserves header metadata needed for subsequent 
+        processing and final output file creation."
+      params:
+        current_observation_file:
+          type: str
+          required: true
+          description: "Path to the science observation file"
+          source: state
+      needs: [ ]
+      provides: [ "science_frame_data", "science_frame_header" ]
+      algorithm:
+        function: "antigen.io.load_fits"
+        args: [ "current_observation_file" ]
+
+
+    ProcessScienceFrame:
+      description: "Applies standard CCD reductions including bias subtraction, gain correction to convert 
+        ADU to electrons, and error estimation combining read noise and photon noise contributions. 
+        Also handles geometric corrections like image flipping and rotation to match calibration frame orientation."
+      params:
+        science_frame_data:
+          type: ndarray
+          required: true
+          source: state
+          description: "Raw science frame data from LoadScienceFrame"
+        master_bias_data:
+          type: ndarray
+          required: true
+          source: state
+          description: "Master bias frame for bias subtraction"
+        overscan_length:
+          type: int
+          required: true
+          source: inputs.config
+          description: "Length of overscan region in pixels"
+        gain:
+          type: float
+          required: true
+          source: inputs.config
+          description: "Detector gain value"
+        read_noise:
+          type: float
+          required: true
+          source: inputs.config
+          description: "Detector read noise"
+        flip_x:
+          type: bool
+          required: true
+          source: inputs.config
+          description: "Flag to flip image in x direction"
+        flip_y:
+          type: bool
+          required: true
+          source: inputs.config
+          description: "Flag to flip image in y direction"
+        rotate:
+          type: bool
+          required: true
+          source: inputs.config
+          description: "Flag to rotate image 90 degrees"
+        add_rows:
+          type: int
+          required: false
+          default: 0
+          source: inputs.config
+          description: "Number of rows to add as padding"
+        science_frame_header:
+          type: dict
+          required: true
+          source: state
+          description: "Science frame header from LoadScienceFrame"
+      needs: [ "science_frame_data", "master_bias_data", "science_frame_header" ]
+      provides: [ "processed_science_data", "processed_science_error", "exposure_time" ]
+      algorithm:
+        function: "antigen.ccd.base_reduction"
+        args: [ "science_frame_data", "master_bias_data", "overscan_length", "gain",
+                "read_noise", "flip_x", "flip_y", "rotate", "add_rows", "science_frame_header" ]
+
+
+    RemoveScatteredLight:
+      description: "Models background scattered light by analyzing signal in regions between fiber traces 
+        and fitting smooth functions to the inter-fiber background. Uses grouped pixel averaging and 2D 
+        polynomial fitting to create a robust scattered light model that is subtracted from the input image."
+      params:
+        processed_science_data:
+          type: ndarray
+          required: true
+          description: "Processed science data"
+          source: state
+        trace_array:
+          type: ndarray
+          required: true
+          description: "Fiber trace positions"
+          source: state
+        fiber_profile_mask_size:
+          type: int
+          required: false
+          default: 11
+          description: "Vertical size (in pixels) of mask region above and below traces"
+        poly_order:
+          type: int
+          required: false
+          default: 2
+          description: "Order of 2D polynomial fit for scattered light model"
+        group_size:
+          type: int
+          required: false
+          default: 40
+          description: "Size of pixel groups (group_size x group_size blocks) for background sampling"
+        sigma_clip_threshold:
+          type: float
+          required: false
+          default: 3.0
+          description: "Sigma threshold for outlier rejection within each pixel group"
+        out_folder:
+          type: path
+          required: false
+          default: null
+          description: "Output folder for diagnostic plots. If null, no plots saved"
+          source: inputs.cli
+      needs: ["processed_science_data", "trace_array"]
+      provides: ["processed_science_data", "scattered_light_model"]
+      algorithm:
+        function: "antigen.ccd.get_scattered_light"
+        args: ["processed_science_data", "trace_array", "fiber_profile_mask_size", 
+               "poly_order", "group_size", "sigma_clip_threshold", "out_folder"]
+
+    CorrectFiberToFiber:
+      description: "Applies fiber-to-fiber sensitivity corrections by dividing each fiber's spectrum 
+        by its corresponding normalization factor derived from flat field analysis. Propagates 
+        uncertainties through the division operation to maintain error estimates."
+      params:
+        rectified_spectra:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_rect
+          description: "Rectified spectra before fiber-to-fiber correction"
+        rectified_error:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_error_rect
+          description: "Rectified spectral errors before fiber-to-fiber correction"
+        rectified_ftf:
+          type: ndarray
+          required: true
+          source: state.fiber_normalization
+          description: "Fiber-to-fiber response function from master flat"
+        spec_type:
+          type: str
+          required: true
+          description: "Spectral data type identifier (e.g., processed_science, master_flat)"
+      needs: ["{spec_type}_rect", "{spec_type}_error_rect", "master_flat_rect"]
+      provides: ["{spec_type}_corrected", "{spec_type}_error_corrected"]
+      algorithm:
+        function: "antigen.spectra.correct_fiber_to_fiber"
+        args: ["rectified_spectra", "rectified_error", "rectified_ftf"]
+
+
+    ConvertSpectralUnits:
+      description: "Converts spectral flux from detector units (electrons per Angstrom) to physical units 
+        (ergs per second per Angstrom per square centimeter) using exposure time and telescope area. 
+        Maintains error propagation through the unit conversion process."
+      params:
+        spectrum:
+          type: ndarray
+          required: true
+          description: "2D array of fiber spectra in units of e-/Å"
+          source: state.{spec_type}_corrected
+        error:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_error_corrected
+          description: "2D array of fiber spectral errors in units of e-/Å"
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+          description: "1D array of wavelengths in Å"
+        exposure_time:
+          type: float
+          required: true
+          source: state
+          description: "Exposure time in seconds"
+        spec_type:
+          type: str
+          required: true
+          description: "Spectral data type identifier (e.g., processed_science)"
+        area:
+          type: float
+          required: false
+          default: 58100.0
+          description: "Telescope mirror area in cm²"
+          units: "cm²"
+      needs: ["{spec_type}_corrected", "{spec_type}_error_corrected", "def_wave", "exposure_time"]
+      provides: ["{spec_type}_calibrated", "{spec_type}_error_calibrated"]
+      algorithm:
+        function: "antigen.spectra.convert_spectral_units"
+        args: ["spectrum", "error", "def_wave", "exposure_time", "area"]
+
+    DetectCosmicRays:
+      description: "Identifies cosmic ray hits using the LA Cosmic algorithm which detects sharp features 
+        that differ from expected astronomical sources. Creates a cosmic ray mask and replaces affected 
+        pixels with interpolated values from neighboring regions."
+      params:
+        image_data:
+          type: ndarray
+          required: true
+          description: "2D image array for cosmic ray detection"
+          source: state.{image_type}_data
+        error_data:
+          type: ndarray
+          required: false
+          default: null
+          description: "Error/uncertainty array corresponding to image"
+          source: state.{image_type}_error
+        image_type:
+          type: str
+          required: true
+          description: "Image type identifier (e.g., processed_science, master_flat)"
+        gain:
+          type: float
+          required: false
+          default: 1.0
+          description: "Detector gain in e-/ADU"
+          units: "e-/ADU"
+        read_noise:
+          type: float
+          required: false
+          description: "Detector read noise in electrons"
+          source: inputs.config
+          units: "electrons"
+        sigclip:
+          type: float
+          required: false
+          default: 4.5
+          description: "Laplacian-to-noise limit for cosmic ray detection"
+          validate:
+            min: 2.0
+            max: 10.0
+        sigfrac:
+          type: float
+          required: false
+          default: 0.3
+          description: "Fractional detection limit for neighboring pixels"
+          validate:
+            min: 0.1
+            max: 1.0
+        objlim:
+          type: float
+          required: false
+          default: 5.0
+          description: "Minimum contrast between kernel and fine structure noise"
+          validate:
+            min: 1.0
+            max: 20.0
+        satlevel:
+          type: float
+          required: false
+          default: 65535.0
+          description: "Detector saturation level in ADU"
+          units: "ADU"
+        niter:
+          type: int
+          required: false
+          default: 4
+          description: "Number of LA Cosmic algorithm iterations"
+          validate:
+            min: 1
+            max: 10
+        sepmed:
+          type: bool
+          required: false
+          default: true
+          description: "Use separable median filter for speed"
+        cleantype:
+          type: str
+          required: false
+          default: "meanmask"
+          description: "Type of cosmic ray cleaning to apply"
+          validate:
+            choices: ["median", "medmask", "meanmask", "idw"]
+        fsmode:
+          type: str
+          required: false
+          default: "median"
+          description: "Method for removing large-scale structure"
+          validate:
+            choices: ["median", "convolve"]
+      needs: ["{image_type}_data"]
+      provides: ["{image_type}_data", "{image_type}_cosmic_ray_mask"]
+      algorithm:
+        function: "antigen.ccd.detect_cosmic_rays"
+        args: ["image_data", "error_data", "gain", "read_noise", "sigclip",
+               "sigfrac", "objlim", "satlevel", "niter", "sepmed", "cleantype", "fsmode"]
+
+    GeneratePCAModel:
+      description: "Builds a Principal Component Analysis model from arc lamp spectra to characterize 
+        systematic fiber profile residual patterns in the data (e.g., P-cgyni profiles). Analyzes covariance 
+        across fibers to identify common modes that can represent instrumental effects 
+        or residual systematic errors."
+      params:
+        arc_spectra:
+          type: ndarray
+          required: true
+          source: state.master_arc_rect
+          description: "Rectified arc lamp spectra"
+        good_fiber_mask:
+          type: ndarray
+          required: true
+          source: state
+          description: "Boolean mask of good fibers"
+        ftf_correction:
+          type: ndarray
+          required: true
+          source: state.fiber_normalization
+          description: "Fiber-to-fiber correction array"
+        skymask_size:
+          type: int
+          required: false
+          default: 25
+          description: "Size parameter for sky mask generation"
+        pca_components:
+          type: int
+          required: false
+          default: 15
+          description: "Number of PCA components (uses config default if null)"
+      needs: ["master_arc_rect", "good_fiber_mask", "fiber_normalization"]
+      provides: ["pca_model", "arc_skymask", "arc_continuum", "arc_biweighted_spectrum"]
+      algorithm:
+        function: "antigen.sky.generate_pca_from_arc_spectra"
+        args: ["arc_spectra", "good_fiber_mask", "ftf_correction", "skymask_size", "pca_components"]
+        
+    AdvancedSkySubtraction:
+      description: "Performs sky subtraction using biweight averaging to model sky variations across 
+        the fiber array, with optional PCA-based residual correction. Generates sky masks for emission 
+        lines and can apply pre-computed PCA models to remove systematic residuals from sky line subtraction."
+      params:
+        spectra:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_calibrated
+          description: "Input spectra for sky subtraction"
+        good_fiber_mask:
+          type: ndarray
+          required: true
+          source: state
+          description: "Boolean mask of good fibers"
+        spec_type:
+          type: str
+          required: true
+          description: "Spectral data type identifier"
+        pca_model:
+          type: object
+          required: false
+          default: null
+          source: state
+          description: "Pre-fitted PCA model for residual correction"
+        skymask_size:
+          type: int
+          required: false
+          default: 25
+          description: "Size parameter for sky mask generation"
+        apply_pca_residuals:
+          type: bool
+          required: false
+          default: true
+          description: "Whether to apply PCA residual correction"
+        continuum_bins:
+          type: int
+          required: false
+          default: 50
+          description: "Number of bins for continuum estimation"
+      needs: ["{spec_type}_calibrated", "good_fiber_mask"]
+      provides: ["{spec_type}_sky_subtracted", "{spec_type}_sky_subtracted_basic",
+                 "{spec_type}_residuals", "{spec_type}_continuum"]
+      algorithm:
+        function: "antigen.sky.advanced_sky_subtraction"
+        args: ["spectra", "good_fiber_mask", "pca_model", "skymask_size", "apply_pca_residuals",
+               "continuum_bins"]
+
+    SaveReducedSpectra:
+      description: "Writes processed spectra to FITS files with headers and 
+        metadata from original observations. Creates multi-extension FITS files containing spectra, 
+        error arrays, and wavelength information."
+      params:
+        sky_subtracted_advanced:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_sky_subtracted
+          description: "Advanced sky-subtracted spectrum (PCA corrected)"
+        sky_subtracted_basic:
+          type: ndarray
+          required: false
+          default: null
+          source: state.{spec_type}_sky_subtracted_basic
+          description: "Basic sky-subtracted spectrum (optional for comparison)"
+        rectified_spectra:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_calibrated
+          description: "Rectified, fiber-to-fiber corrected spectra"
+        rectified_error:
+          type: ndarray
+          required: true
+          source: state.{spec_type}_error_calibrated
+          description: "Rectified spectral error array"
+        observation_header:
+          type: dict
+          required: true
+          source: state.science_frame_header
+          description: "Original observation FITS header"
+        spec_type:
+          type: str
+          required: true
+          description: "Spectral data type identifier"
+        output_folder:
+          type: path
+          required: true
+          source: inputs.cli.out_folder
+          description: "Output directory for FITS files"
+        # Configuration parameters sourced individually
+        instrument:
+          type: str
+          required: true
+          source: inputs.dataset.unit_instrument
+          description: "Instrument name"
+        instrument_element:
+          type: str
+          required: true
+          source: inputs.dataset.unit_id
+          description: "Instrument element identifier"
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+          description: "1D array of wavelengths in Å"
+        include_basic_sky_subtraction:
+          type: bool
+          required: false
+          default: false
+          description: "Whether to include basic sky subtraction in output"
+      needs: [ "{spec_type}_sky_subtracted", "{spec_type}_calibrated",
+               "{spec_type}_error_calibrated", "science_frame_header" , "def_wave"]
+      provides: [ "{spec_type}_output_filename" ]
+      algorithm:
+        function: "antigen.io.write_reduced_spectra_fits"
+        args: [ "sky_subtracted_advanced", "sky_subtracted_basic", "rectified_spectra",
+                "rectified_error", "observation_header", "output_folder", "instrument",
+                "instrument_element", "def_wave" ]

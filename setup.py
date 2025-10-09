@@ -21,6 +21,7 @@ setup(
     ],
     install_requires=[
         'astropy',
+	'astroscrappy',
         'numpy',
         'matplotlib',
         'pandas',
