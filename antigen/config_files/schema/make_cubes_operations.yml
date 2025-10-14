@@ -103,7 +103,7 @@ schema:
           required: true
           source: inputs.dataset
       needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
-      provides: ["dar_model"]
+      provides: ["modeling"]
       algorithm:
         function: "antigen.calibrate.build_psf_and_dar"
         args: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", 
@@ -132,7 +132,7 @@ schema:
           type: float
           required: true
           source: inputs.config
-        dar_model:
+        modeling:
           type: dict
           required: true
           source: state
@@ -161,19 +161,27 @@ schema:
           required: false
           default: "multiquadric"
           source: inputs.cli
-      needs: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "dar_model"]
+      needs: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "modeling"]
       provides: ["datacube", "x_grid", "y_grid"]
       algorithm:
         function: "antigen.cube.make_cube"
         args: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "fiber_radius", 
-               "dar_model", "pixel_size", "interpolation_method", "rbf_function", 
+               "modeling", "pixel_size", "interpolation_method", "rbf_function",
                "k_neighbors", "sigma_gdw"]
 
     SaveCube:
-      description: "Save the datacube and coordinate grids to disk"
+      description: "Save the datacube and coordinate grids to disk using write_cube function"
       params:
         datacube:
           type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        header:
+          type: dict
           required: true
           source: state
         x_grid:
@@ -184,10 +192,10 @@ schema:
           type: ndarray
           required: true
           source: state
-        def_wave:
-          type: ndarray
+        pixel_size:
+          type: float
           required: true
-          source: state
+          source: inputs.cli
         output_folder:
           type: path
           required: true
@@ -196,8 +204,14 @@ schema:
           type: str
           required: true
           source: inputs.dataset
-      needs: ["datacube", "x_grid", "y_grid", "def_wave"]
+        unit_instrument:
+          type: str
+          required: true
+          source: inputs.dataset
+      needs: ["datacube", "def_wave", "header", "x_grid", "y_grid"]
       provides: ["cube_filename"]
       algorithm:
-        function: "antigen.io.save_datacube"
-        args: ["datacube", "x_grid", "y_grid", "def_wave", "output_folder", "unit_id"]
+        function: "antigen.io.write_cube"
+        args: ["datacube", "def_wave", "header", "x_grid", "y_grid", "pixel_size",
+               "output_folder", "unit_instrument", "unit_id"]
+

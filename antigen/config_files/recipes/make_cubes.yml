@@ -4,9 +4,9 @@ inputs:
   cli:
     output_folder: null
     pixel_size: 1.0
-    interpolation_method: "linear"
+    interpolation_method: "gdw"
     k_neighbors: 5
-    sigma_gdw: 1.0
+    sigma_gdw: 1.5
     rbf_function: "multiquadric"
   dataset:
     unit_instrument: null
