@@ -1,0 +1,93 @@
+schema:
+  inputs:
+    cli:
+      output_folder:
+        type: path
+        required: false
+        description: "Output directory for cube files"
+      pixel_size:
+        type: float
+        required: false
+        default: 1.0
+        description: "Pixel size in arcseconds for output cube"
+      interpolation_method:
+        type: str
+        required: false
+        default: "linear"
+        enum: ["linear", "nearest", "cubic", "rbf", "gdw"]
+        description: "Interpolation method for cube construction"
+      k_neighbors:
+        type: int
+        required: false
+        default: 5
+        description: "Number of neighbors for GDW interpolation"
+      sigma_gdw:
+        type: float
+        required: false
+        default: 1.0
+        description: "Standard deviation for GDW interpolation"
+      rbf_function:
+        type: str
+        required: false
+        default: "multiquadric"
+        description: "Radial basis function type for RBF interpolation"
+
+    dataset:
+      unit_instrument:
+        type: str
+        required: true
+        description: "Instrument name (e.g., GCMS, VIRUS2, VIRUSW)"
+      unit_id:
+        type: str
+        required: true
+        description: "Unit identifier"
+      ndithers:
+        type: int
+        required: true
+        description: "Number of dither positions"
+      dither_number:
+        type: list[int]
+        required: true
+        description: "List of dither numbers to process"
+      in_folder:
+        type: path
+        required: false
+        default: "./"
+        description: "Input folder containing reduced data"
+      reduced_files:
+        type: list[str]
+        required: true
+        description: "List of reduced spectrum files"
+
+    config:
+      fiber_radius:
+        type: float
+        required: true
+        description: "Fiber radius in arcseconds"
+      ifu_x:
+        type: ndarray
+        required: true
+        description: "IFU x-coordinates"
+      ifu_y:
+        type: ndarray
+        required: true
+        description: "IFU y-coordinates"
+      start_wavelength:
+        type: float
+        required: true
+        description: "Starting wavelength in Angstroms"
+      end_wavelength:
+        type: float
+        required: true
+        description: "Ending wavelength in Angstroms"
+      detector_dimensions:
+        type: dict
+        required: true
+        properties:
+          X:
+            type: int
+            required: true
+          Y:
+            type: int
+            required: true
+        description: "Detector dimensions in pixels"

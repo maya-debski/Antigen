@@ -1,0 +1,203 @@
+schema:
+  operations:
+    LoadFiberPositions:
+      description: "Load fiber positions and apply dither pattern offsets"
+      params:
+        unit_instrument:
+          type: str
+          required: true
+          source: inputs.dataset
+        ndithers:
+          type: int
+          required: true
+          source: inputs.dataset
+        dither_number:
+          type: "list[int]"
+          required: true
+          source: inputs.dataset
+        ifu_x:
+          type: ndarray
+          required: true
+          source: inputs.config
+        ifu_y:
+          type: ndarray
+          required: true
+          source: inputs.config
+      needs: []
+      provides: ["fiber_x", "fiber_y"]
+      algorithm:
+        function: "antigen.fiber.load_fiber_positions"
+        args: ["unit_instrument", "ndithers", "dither_number", "ifu_x", "ifu_y"]
+
+    GetWavelengthGrid:
+      description: "Generate a uniformly spaced wavelength grid for the detector"
+      params:
+        start_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        end_wavelength:
+          type: float
+          required: true
+          source: inputs.config
+        detector_dimensions:
+          type: dict
+          required: true
+          source: inputs.config
+      needs: []
+      provides: ["def_wave"]
+      algorithm:
+        function: "antigen.wavelength.get_rectified_wavelength"
+        args: ["start_wavelength", "end_wavelength", "detector_dimensions"]
+
+    LoadReducedData:
+      description: "Load reduced data files from the specified folder"
+      params:
+        in_folder:
+          type: str
+          required: true
+          source: inputs.dataset
+        reduced_files:
+          type: "list[str]"
+          required: true
+          source: inputs.dataset
+      needs: []
+      provides: ["reduced_spectra", "reduced_error", "header"]
+      algorithm:
+        function: "antigen.io.load_reduced_data"
+        args: ["in_folder", "reduced_files"]
+
+    ModelPSFAndDAR:
+      description: "Build PSF interpolator, detect source, and fit PSF/DAR model"
+      params:
+        fiber_x:
+          type: ndarray
+          required: true
+          source: state
+        fiber_y:
+          type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        reduced_spectra:
+          type: ndarray
+          required: true
+          source: state
+        reduced_error:
+          type: ndarray
+          required: true
+          source: state
+        extraction_radius:
+          type: float
+          required: false
+          default: 10.0
+        fiber_radius:
+          type: float
+          required: true
+          source: inputs.config
+        ndithers:
+          type: int
+          required: true
+          source: inputs.dataset
+      needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
+      provides: ["dar_model"]
+      algorithm:
+        function: "antigen.calibrate.build_psf_and_dar"
+        args: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", 
+               "reduced_error", "extraction_radius", "fiber_radius"]
+
+    MakeCube:
+      description: "Create 3D datacube from fiber spectra using cube.make_cube function"
+      params:
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        reduced_spectra:
+          type: ndarray
+          required: true
+          source: state
+        fiber_x:
+          type: ndarray
+          required: true
+          source: state
+        fiber_y:
+          type: ndarray
+          required: true
+          source: state
+        fiber_radius:
+          type: float
+          required: true
+          source: inputs.config
+        dar_model:
+          type: dict
+          required: true
+          source: state
+        pixel_size:
+          type: float
+          required: false
+          default: 1.0
+          source: inputs.cli
+        interpolation_method:
+          type: str
+          required: false
+          default: "linear"
+          source: inputs.cli
+        k_neighbors:
+          type: int
+          required: false
+          default: 5
+          source: inputs.cli
+        sigma_gdw:
+          type: float
+          required: false
+          default: 1.0
+          source: inputs.cli
+        rbf_function:
+          type: str
+          required: false
+          default: "multiquadric"
+          source: inputs.cli
+      needs: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "dar_model"]
+      provides: ["datacube", "x_grid", "y_grid"]
+      algorithm:
+        function: "antigen.cube.make_cube"
+        args: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "fiber_radius", 
+               "dar_model", "pixel_size", "interpolation_method", "rbf_function", 
+               "k_neighbors", "sigma_gdw"]
+
+    SaveCube:
+      description: "Save the datacube and coordinate grids to disk"
+      params:
+        datacube:
+          type: ndarray
+          required: true
+          source: state
+        x_grid:
+          type: ndarray
+          required: true
+          source: state
+        y_grid:
+          type: ndarray
+          required: true
+          source: state
+        def_wave:
+          type: ndarray
+          required: true
+          source: state
+        output_folder:
+          type: path
+          required: true
+          source: inputs.cli
+        unit_id:
+          type: str
+          required: true
+          source: inputs.dataset
+      needs: ["datacube", "x_grid", "y_grid", "def_wave"]
+      provides: ["cube_filename"]
+      algorithm:
+        function: "antigen.io.save_datacube"
+        args: ["datacube", "x_grid", "y_grid", "def_wave", "output_folder", "unit_id"]

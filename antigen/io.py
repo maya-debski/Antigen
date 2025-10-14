@@ -522,7 +522,8 @@ def get_fits_files_in_path(input_path, pattern='*.fits'):
     return sorted(Path(input_path).glob(pattern))
 
 
-def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, overwrite=True):
+def write_cube(cube, wavelength, header, x_grid, y_grid, pixel_size, 
+               output_folder=None, instrument=None, instrument_element=None, overwrite=True):
     """Write a spectral cube to a FITS file with relevant metadata.
 
     The function saves a datacube (lambda, y, x) to a FITS file, carrying
@@ -530,17 +531,19 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
     WCS-like keywords for the cube dimensions.
 
     Args:
-        filename (str): Path to the output FITS file.
         cube (ndarray): 3D datacube with shape (N_lambda, Ny, Nx).
         wavelength (ndarray): 1D Array of wavelength values corresponding to the first axis of the cube.
         header (fits.Header): Header from a fiber frame containing telescope/instrument information to be propagated.
         x_grid (ndarray): 2D array of x positions.
         y_grid (ndarray): 2D array of y positions.
         pixel_size (float): Size of pixel in arcsec.
+        output_folder (str, optional): Output directory path. If None, saves to current directory.
+        instrument (str, optional): Instrument name. If None, extracted from header or config.
+        instrument_element (str, optional): Instrument element. If None, extracted from header or config.
         overwrite (bool, optional): If True, overwrite an existing file. Default is True.
 
     Returns:
-        None
+        str: Path to the created FITS file
 
     Notes:
         - The output FITS file has the datacube stored in the primary HDU.
@@ -552,6 +555,7 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
         - `CDELT3` is computed from the median step in the wavelength array.
 
     """
+
     # Copy header to avoid modifying input
     hdr = header.copy()
 
@@ -588,9 +592,30 @@ def write_cube(filename, cube, wavelength, header, x_grid, y_grid, pixel_size, o
     hdr["CRVAL2"] = y_grid[0][0]
     hdr["CRVAL3"] = wavelength[0]
 
+    # Generate cube filename following the same pattern as write_fits
+    obj_time_string = Time(header['DATE-OBS'] + 'T' + header['UT']).strftime('%Y%m%dT%H%M%S')
+    header_card_object = header['OBJECT']
+    if len(header_card_object.strip()) > 0:
+        obj_name_string = '_'.join(header['OBJECT'].split())
+    else:
+        obj_name_string = 'ObjectCardEmpty'
+
+    # Create cube filename stem
+    cube_name_stem = f'cube_{obj_name_string}_{obj_time_string}_{instrument}_{instrument_element}'
+    
+    # Set up output path
+    if output_folder is None:
+        output_folder = '.'
+    else:
+        os.makedirs(output_folder, exist_ok=True)
+    
+    output_filename = os.path.abspath(os.path.join(output_folder, cube_name_stem + '.fits'))
+
     # Save FITS
     hdu = fits.PrimaryHDU(data=cube.astype("float32"), header=hdr)
-    hdu.writeto(filename, overwrite=overwrite)
+    hdu.writeto(output_filename, overwrite=overwrite)
+    
+    return output_filename
 
 def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic, 
                               rectified_spectra, rectified_error, observation_header,
