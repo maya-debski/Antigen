@@ -74,7 +74,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     return img, X, Y
 
 def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
-              dar_model=None, pixel_size=1.0, method="linear",
+              modeling=None, pixel_size=1.0, method="linear",
               rbf_func="multiquadric", k=5, sigma=1.0):
     """Construct a 3D datacube from fiber spectra and positions.
 
@@ -88,10 +88,12 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         fiber_x (ndarray): 1D array of fiber x-locations.
         fiber_y (ndarray): 1D array of fiber y-locations.
         fiber_area (float): Area of fiber in square arcseconds.
-        dar_model (callable, optional):
-            Function that applies DAR corrections. Must accept arguments
-            `(wavelengths, fiber_x, fiber_y)` and return shifted positions
-            `(x_shifted, y_shifted)`. If None, no DAR correction is applied.
+        modeling (dict, optional): Dictionary containing PSF and DAR modeling results with keys:
+            - dar_model: DAR model for position correction
+            - sources: Detected source catalog  
+            - X: Grid of X coordinates
+            - Y: Grid of Y coordinates
+            If None, no DAR correction is applied.
         pixel_size (float): Pixel size in arcseconds (Default is 1.0).
         method (str, optional): interpolation method
         rbf_func (str, optional): Radial basis function type if `method="rbf"`. Default is "multiquadric".
@@ -121,8 +123,22 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
     for i, lam in enumerate(wavelength):
         flux = fiber_spectra[:, i]
 
-        if dar_model is not None:
-            x_shift, y_shift = dar_model(lam, fiber_x, fiber_y)
+        if modeling is not None and 'dar_model' in modeling:
+            # Use the source position from modeling dictionary for DAR correction
+            source_x_base = modeling['sources']["xcentroid"] + modeling['X'][0, 0]
+            source_y_base = modeling['sources']["ycentroid"] + modeling['Y'][0, 0]
+            
+            # Apply DAR correction to get the source position at this wavelength
+            source_x_corrected, source_y_corrected = modeling['dar_model'](
+                lam, source_x_base, source_y_base
+            )
+            
+            # Calculate the DAR shift
+            dx = source_x_corrected - source_x_base
+            dy = source_y_corrected - source_y_base
+            
+            # Apply the same shift to all fiber positions
+            x_shift, y_shift = fiber_x + dx, fiber_y + dy
         else:
             x_shift, y_shift = fiber_x, fiber_y
 
