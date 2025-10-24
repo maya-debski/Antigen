@@ -28,14 +28,18 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     average = biweight(spectrum, axis=0, ignore_nan=True)
 
     # Calculate the initial fiber-to-fiber correction by dividing each fiber by the average spectrum
-    initial_ftf = spectrum / average[np.newaxis, :]
+    # Guard against zeros/NaNs in the average to avoid divide-by-zero/invalid warnings
+    den = average[np.newaxis, :]
+    initial_ftf = np.full_like(spectrum, np.nan)
+    valid = np.isfinite(den) & (den != 0)
+    np.divide(spectrum, den, out=initial_ftf, where=valid)
 
     # Create a wavelength grid and divide it into chunks for smoothing
     columns = np.arange(spectrum.shape[1])
     chunked_columns = np.array([np.mean(chunk) for chunk in np.array_split(columns, n_chunks)])
 
     # Initialize the smoothed correction array
-    ftf = spectrum * 0.
+    ftf = np.zeros_like(spectrum)
 
     # Loop through each fiber to compute the smoothed correction factor
     for i in np.arange(len(spectrum)):

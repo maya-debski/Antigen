@@ -382,8 +382,15 @@ def correct_fiber_to_fiber(rectified_spectra, rectified_error, rectified_ftf):
         corrected_spectra (np.ndarray): The array representing the corrected spectra after
         corrected_error (np.ndarray): The array representing the errors associated with the corrected
     """
-    corrected_spectra = rectified_spectra / rectified_ftf
-    corrected_error = rectified_error / rectified_ftf
+    den = rectified_ftf
+    valid = np.isfinite(den) & (den != 0)
+
+    corrected_spectra = np.full_like(rectified_spectra, np.nan)
+    np.divide(rectified_spectra, den, out=corrected_spectra, where=valid)
+
+    corrected_error = np.full_like(rectified_error, np.nan)
+    np.divide(rectified_error, den, out=corrected_error, where=valid)
+
     return corrected_spectra, corrected_error
 
 

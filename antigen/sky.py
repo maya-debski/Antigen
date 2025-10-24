@@ -22,7 +22,10 @@ def identify_sky_pixels(sky, per=50, size=50):
     # Apply a percentile filter to smooth the sky data and estimate the continuum
     cont = percentile_filter(sky, per, size=size)
 
-    mask = sigma_clip(sky - cont, masked=True, maxiters=None, stdfunc=mad_std, sigma=5)
+    # Mask invalid values before sigma clipping to avoid astropy warnings
+    diff = sky - cont
+    diff_ma = np.ma.masked_invalid(diff)
+    mask = sigma_clip(diff_ma, masked=True, maxiters=None, stdfunc=mad_std, sigma=5)
 
     # Return the mask (True for sky pixels) and the filtered continuum
     return mask.mask, cont
@@ -51,11 +54,16 @@ def get_skymask(sky, per=50, size=50, niter=3):
 
         try:
             # Apply sigma-clipping to identify sky pixels using robust statistics
-            mask = sigma_clip(sky - cont, masked=True, maxiters=None,
+            # Mask invalid values before sigma clipping to avoid astropy warnings
+            diff = sky - cont
+            diff_ma = np.ma.masked_invalid(diff)
+            mask = sigma_clip(diff_ma, masked=True, maxiters=None,
                               stdfunc=mad_std, sigma=5, sigma_lower=500)
         except:
             # Fallback for older versions of sigma_clip
-            mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std,
+            diff = sky - cont
+            diff_ma = np.ma.masked_invalid(diff)
+            mask = sigma_clip(diff_ma, iters=None, stdfunc=mad_std,
                               sigma=5, sigma_lower=500)
 
         # Update the sky values for masked pixels using the continuum
@@ -63,10 +71,15 @@ def get_skymask(sky, per=50, size=50, niter=3):
 
     # Perform a final sigma-clipping pass using the original sky data
     try:
-        mask = sigma_clip(sky_orig - cont, masked=True, maxiters=None,
+        # Final pass with invalids masked to avoid warnings
+        diff_final = sky_orig - cont
+        diff_final_ma = np.ma.masked_invalid(diff_final)
+        mask = sigma_clip(diff_final_ma, masked=True, maxiters=None,
                           stdfunc=mad_std, sigma=5, sigma_lower=500)
     except:
-        mask = sigma_clip(sky_orig - cont, iters=None, stdfunc=mad_std,
+        diff_final = sky_orig - cont
+        diff_final_ma = np.ma.masked_invalid(diff_final)
+        mask = sigma_clip(diff_final_ma, iters=None, stdfunc=mad_std,
                           sigma=5, sigma_lower=500)
 
     # Return the final mask and continuum array
@@ -103,7 +116,14 @@ def subtract_sky(spectra, good):
     n2 = int(2. / 3. * N)
 
     # Calculate the biweight of spectra over the middle third of each fiber's data
-    biweighted_spectrum = biweight(spectra[:, n1:n2], axis=1, ignore_nan=True)
+    # Prefilter finite values per fiber to avoid astropy warnings
+    biweighted_spectrum = np.full((nfibs,), np.nan, dtype=float)
+    middle = spectra[:, n1:n2]
+    for i in range(nfibs):
+        row = middle[i]
+        sel = np.isfinite(row)
+        if np.any(sel):
+            biweighted_spectrum[i] = biweight(row[sel], ignore_nan=True)
 
     # Identify sky pixels based on the biweighted data and apply a mask
     mask, cont = identify_sky_pixels(biweighted_spectrum[good], size=15)
@@ -114,10 +134,17 @@ def subtract_sky(spectra, good):
     skyfibers = ~m1
 
     # Compute the biweighted sky spectrum based on sky fibers
-    init_sky = biweight(spectra[skyfibers], axis=0, ignore_nan=True)
+    # Do per-wavelength finite filtering across selected sky fibers
+    init_sky = np.full((N,), np.nan, dtype=float)
+    if np.any(skyfibers):
+        sub = spectra[skyfibers]
+        for j in range(N):
+            col = sub[:, j]
+            sel = np.isfinite(col)
+            if np.any(sel):
+                init_sky[j] = biweight(col[sel], ignore_nan=True)
 
     # Subtract the sky spectrum from the original spectra
-
     sky_subtracted_frame = spectra - init_sky[np.newaxis, :]
     return sky_subtracted_frame, init_sky
 
@@ -180,14 +207,28 @@ def get_residual_map(data, pca):
     # Loop over each column (feature) in the input data
     for i in np.arange(data.shape[1]):
 
-        # Compute the absolute deviation from the median for each column
-        A = np.abs(data[:, i] - np.nanmedian(data[:, i]))
+        # Work on a single column and guard against all-NaN slices
+        col = data[:, i]
+        finite = np.isfinite(col)
+        if not np.any(finite):
+            # No valid data in this column; skip (leave zeros)
+            continue
+
+        # Compute deviations from median using only finite data
+        med = np.nanmedian(col[finite])
+        A = np.abs(col - med)
+        A_finite = A[np.isfinite(A)]
+        if A_finite.size == 0:
+            continue
 
         # Identify the "good" data points (those within 3 times the median deviation)
-        good = A < (3. * np.nanmedian(A))
+        thr = 3.0 * np.nanmedian(A_finite)
+        good = A < thr
 
         # Select finite values and good points for the model fitting
-        sel = np.isfinite(data[:, i]) * good
+        sel = finite & good
+        if not np.any(sel):
+            continue
 
         # Compute the PCA coefficients for the selected data points
         coeff = np.dot(data[sel, i], pca.components_.T[sel])
@@ -404,7 +445,11 @@ def generate_pca_from_arc_spectra(arc_spectra, good_fiber_mask, ftf_correction,
             - biweighted_spectrum (numpy.ndarray): Biweighted spectrum
     """
     # Apply fiber-to-fiber correction to arc spectra
-    arc_corrected = arc_spectra / ftf_correction
+    # Guard against zeros/NaNs in ftf_correction to avoid divide-by-zero/invalid warnings
+    den = ftf_correction
+    valid = np.isfinite(den) & (den != 0)
+    arc_corrected = np.full_like(arc_spectra, np.nan)
+    np.divide(arc_spectra, den, out=arc_corrected, where=valid)
 
     # Generate biweighted spectrum for sky mask creation
     biweighted_spectrum = biweight(arc_corrected, axis=0, ignore_nan=True)
