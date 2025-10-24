@@ -173,8 +173,9 @@ def get_residual_map(data, pca):
         The residual map, which is the difference between the input data and the PCA model.
     """
 
-    # Initialize the residual map with zeros
-    res = data * 0.
+    # Initialize the residual map with zeros without propagating NaNs
+    # Avoid data * 0. which can emit RuntimeWarning when data contains NaNs
+    res = np.zeros_like(data)
 
     # Loop over each column (feature) in the input data
     for i in np.arange(data.shape[1]):
@@ -275,8 +276,9 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
     """
     # TODO: fix magic number default for nbins, use CONFIG params?
 
-    # Initialize the output array for the continuum with zeros
-    bigcont = skysub * 0.
+    # Initialize the output array for the continuum with zeros without propagating NaNs
+    # Avoid skysub * 0. which can emit RuntimeWarning when skysub contains NaNs
+    bigcont = np.zeros_like(skysub)
 
     # Loop over each row (spectrum) in the sky-subtracted data
     for j in np.arange(skysub.shape[0]):
@@ -288,7 +290,12 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
         x = np.array([np.mean(chunk) for chunk in np.array_split(np.arange(len(y)), nbins)])
 
         # Calculate the biweighted median for each bin
-        z = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(y, nbins)])
+        # Prefilter NaNs/Infs to avoid RuntimeWarnings inside astropy stats
+        z = np.array([
+            (biweight(chunk[np.isfinite(chunk)], ignore_nan=True)
+             if np.isfinite(chunk).sum() > 0 else np.nan)
+            for chunk in np.array_split(y, nbins)
+        ])
 
         # Select bins with finite values for interpolation
         sel = np.isfinite(z)
