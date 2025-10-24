@@ -42,7 +42,7 @@ Outputs:
 Example:
     Prepare GCMS data for the night of 20240609 taken with the VP1R configuration:
 
-    $ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -c 20240609 -m GCMS -l VP1R -o ~/data -v
+    $ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -c 20240609 -m GCMS -j VP1R -o ~/data -v
 
 Notes:
     - Frame types are inferred by matching keywords in the OBJECT header card.
