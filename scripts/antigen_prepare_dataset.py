@@ -40,9 +40,9 @@ Outputs:
       instrument, date, observation ID, frame type, configuration element, exposure index, UT time, and object name.
 
 Example:
-    Prepare GCMS data for the night of 20240801 taken with the VP1B configuration:
+    Prepare GCMS data for the night of 20240609 taken with the VP1R configuration:
 
-    $ antigen_prepare_dataset.py -i /Night1 -o ~/data -c 20240801 -m GCMS -l VP1B
+    $ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -c 20240609 -m GCMS -l VP1R -o ~/data -v
 
 Notes:
     - Frame types are inferred by matching keywords in the OBJECT header card.
@@ -60,6 +60,18 @@ def get_args():
     add_common_args(parser)
     add_calibration_args(parser)
 
+    # Override the generic in_folder help text from add_common_args for this script's context
+    # We only change the help string, leaving defaults and behavior unchanged.
+    for action in parser._actions:
+        if '--in_folder' in action.option_strings:
+            action.help = 'Root path where raw data folder is located, (default: %(default)s)'
+            break
+
+    for action in parser._actions:
+        if '--out_folder' in action.option_strings:
+            action.help = 'Root path modified raw data folder will go, (default: %(default)s)'
+            break
+
     parser.add_argument(
         '-m', '--instrument',
         type=str,
@@ -69,7 +81,7 @@ def get_args():
     )
 
     parser.add_argument(
-        '-l', '--element',
+        '-j', '--element',
         type=str,
         default='VP1B',
         help='Spectrograph setup or configuration element, such as VP1B or VP1R '

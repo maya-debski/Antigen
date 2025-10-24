@@ -58,40 +58,38 @@ def main():
     cube_manifests = build_dataset_from_reduced_files(args.reduced_dir)
 
     for manifest in cube_manifests:
-        if args.standard_name.lower() in manifest['target'].lower():
+        # Save manifest
+        manifest_filename = f'manifest_make_cubes.yml'
+        save_filepath = save_path / manifest_filename
+        save_manifest(manifest, str(save_filepath))
 
-            # Save manifest
-            manifest_filename = f'manifest_make_cubes.yml'
-            save_filepath = save_path / manifest_filename
-            save_manifest(manifest, str(save_filepath))
+        logger.info(f'Processing cube creation for {manifest_filename}')
 
-            logger.info(f'Processing cube creation for {manifest_filename}')
+        # Get instrument configuration
+        config_dict = config.build_config_for_element(
+            manifest['unit_instrument'].lower(),
+            manifest['unit_id'].upper()
+        )
 
-            # Get instrument configuration
-            config_dict = config.build_config_for_element(
-                manifest['unit_instrument'].lower(),
-                manifest['unit_id'].upper()
-            )
+        # Load recipe
+        base_path = config.get_base_config_path()
+        recipe = Recipe.load("make_cubes", base_path)
 
-            # Load recipe
-            base_path = config.get_base_config_path()
-            recipe = Recipe.load("make_cubes", base_path)
+        # Collect inputs
+        inputs = recipe.collect_inputs(args, manifest, config_dict)
 
-            # Collect inputs
-            inputs = recipe.collect_inputs(args, manifest, config_dict)
+        # Validate inputs
+        if errors := recipe.validate_inputs(inputs):
+            raise ValueError("Input validation failed:\n" + "\n".join(errors))
 
-            # Validate inputs
-            if errors := recipe.validate_inputs(inputs):
-                raise ValueError("Input validation failed:\n" + "\n".join(errors))
+        # Generate and save markdown description
+        md = recipe.describe_markdown(inputs, viz_type='mermaid', output_folder=save_path)
+        (save_path / "make_cubes.md").write_text(md, encoding="utf-8")
 
-            # Generate and save markdown description
-            md = recipe.describe_markdown(inputs, viz_type='mermaid', output_folder=save_path)
-            (save_path / "make_cubes.md").write_text(md, encoding="utf-8")
+        # Run recipe
+        outputs = recipe.run(inputs, save_path)
 
-            # Run recipe
-            outputs = recipe.run(inputs, save_path)
-
-            logger.info(f"Cube creation completed. Output saved to {save_path}")
+        logger.info(f"Cube creation completed. Output saved to {save_path}")
 
     return None
 
