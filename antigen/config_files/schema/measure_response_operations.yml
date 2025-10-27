@@ -105,12 +105,16 @@ schema:
           type: int
           required: true
           source: inputs.dataset
+        outdir:
+          type: path
+          required: true
+          source: state
       needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
       provides: ["modeling"]
       algorithm:
         function: "antigen.calibrate.build_psf_and_dar"
         args: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", 
-               "reduced_error", "extraction_radius", "fiber_radius"]
+               "reduced_error", "extraction_radius", "fiber_radius", "outdir"]
 
 
     ExtractSpectrum:

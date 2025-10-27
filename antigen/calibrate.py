@@ -149,7 +149,7 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
 
 
 def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error,
-                      extraction_radius, fiber_radius, ndithers=None, psf_seeing_grid=None):
+                      extraction_radius, fiber_radius, output_dir=".", ndithers=None, psf_seeing_grid=None):
     """Create the PSF interpolator, detect a bright source, and fit the DAR model.
 
     This function:
@@ -167,6 +167,7 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
         reduced_error (np.ndarray): Stacked error estimates.
         extraction_radius (float): Extraction radius taken from args.
         fiber_radius (float): Fiber radius determined from config_dict['fiber_radius']
+        output_dir (str, optional): Directory to save plots. Defaults to ".".
         ndithers (int, optional): Number of dithered exposures. If not provided, default is None.
         psf_seeing_grid (np.ndarray, optional): 1D array of seeing values (arcsec)
             to tabulate the PSF interpolator. If not provided, uses
@@ -246,7 +247,8 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
                 logger.info(f"  Dither {i+1}: dx={dx:.3f}\", dy={dy:.3f}\"")
 
     from antigen.plot import plot_fiber_flux_distribution
-    plot_fiber_flux_distribution(fiber_x, fiber_y, reduced_spectra, fiber_radius)
+    # Save the fiber flux distribution plot under the provided output directory
+    plot_fiber_flux_distribution(fiber_x, fiber_y, reduced_spectra, fiber_radius, output_dir=output_dir)
 
     try:
         sources, x_coord, y_coord, X, Y = detection.detect_brightest_source(
@@ -276,7 +278,7 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
     dar_model, measured_fwhm = psf.fit_psf_and_build_dar_model(
         reduced_spectra, reduced_error, fiber_x, fiber_y,
         psf_interp, x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, nchunks=20
+        extraction_radius=extraction_radius, nchunks=20, output_dir=output_dir
     )
 
     return {

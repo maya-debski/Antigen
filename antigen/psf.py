@@ -240,7 +240,8 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelen
     if save_diagnostics and fit_diagnostics['chunk_data']:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        plot_psf_fit_diagnostics(fit_diagnostics, output_dir="psf_diagnostics")
+        # Save diagnostics under a subfolder within the provided output_dir
+        plot_psf_fit_diagnostics(fit_diagnostics, output_dir=output_path / "psf_diagnostics")
 
 
     return source_x, source_y, source_fwhm, poly_x, poly_y, poly_fwhm
@@ -297,7 +298,8 @@ def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y
     params = fit_psf(
         reduced_spectra, reduced_error, fiber_x, fiber_y, psf_interp,
         x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, Nchunks=nchunks
+        extraction_radius=extraction_radius, Nchunks=nchunks,
+        save_diagnostics=True, output_dir=output_dir
     )
     _, _, measured_fwhm, coeff_x, coeff_y, _ = params
     dar_model = dar.DARModel(coeff_x, coeff_y)
