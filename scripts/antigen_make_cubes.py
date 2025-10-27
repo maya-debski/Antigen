@@ -23,7 +23,7 @@ def get_args():
                        help='Path to directory with reduced standard star frames.')
     parser.add_argument('-o', '--output_folder', default=None,
                        help='Path to output folder for response function.')
-    parser.add_argument('-s', '--standard_name', required=True,
+    parser.add_argument('-s', '--object_name', required=False, default=None,
                        help='Name for standard star files in reduced-dir (ex: Feige).')
     parser.add_argument('-e', '--extraction_radius', type=float, default=10.0,
                        help='Extraction radius in arcsec.')
@@ -56,6 +56,15 @@ def main():
 
     # Process manifests
     cube_manifests = build_dataset_from_reduced_files(args.reduced_dir)
+
+    # If an object name is provided, only process manifests matching that target
+    if args.object_name:
+        filtered = [m for m in cube_manifests if args.object_name.lower() in m.get('target', '').lower()]
+        if not filtered:
+            logger.warning(f"No manifests matched object_name='{args.object_name}'. Nothing to do.")
+            return None
+        logger.info(f"Filtering manifests by object_name='{args.object_name}'. {len(filtered)} match(es) will be processed.")
+        cube_manifests = filtered
 
     for manifest in cube_manifests:
         # Save manifest
