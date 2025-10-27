@@ -1,9 +1,9 @@
 schema:
   cli:
-    standard_name:
+    object_name:
       type: str
       required: true
-      description: Spectrophotometric standard star identifier
+      description: target identifier
       validate:
         min_length: 1
         pattern: "^[A-Za-z0-9_]+$"
