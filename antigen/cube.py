@@ -32,7 +32,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
         img (ndarray): synthetic image on uniform grid
         X, Y (ndarray): meshgrid coordinates
     """
-    # Clean NaNs
+    # Clean NaNs in flux and align x/y/flux
     finite_values = np.isfinite(fiber_flux)
     x, y, flux = (fiber_x[finite_values], fiber_y[finite_values], fiber_flux[finite_values])
 
@@ -41,30 +41,56 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     grid_size_y = int((bounds[3] - bounds[2]) / pixel_size) + 1
 
     xi = np.linspace(bounds[0], bounds[0] + (grid_size_x - 1) * pixel_size, grid_size_x)
-    yi = np.linspace(bounds[2], bounds[2] + (grid_size_x - 1) * pixel_size, grid_size_y)
+    yi = np.linspace(bounds[2], bounds[2] + (grid_size_y - 1) * pixel_size, grid_size_y)
     X, Y = np.meshgrid(xi, yi)
 
-    flux_factor = pixel_size **2 / fiber_area
+    # If no valid input points, return zeros image
+    if x.size == 0:
+        img = np.zeros_like(X, dtype=float)
+        # Correct for the area difference between the fiber size and the new pixel area
+        flux_factor = pixel_size ** 2 / fiber_area
+        img = img * flux_factor
+        return img, X, Y
+
+    flux_factor = pixel_size ** 2 / fiber_area
+
     if method in ["linear", "nearest", "cubic"]:
-        img = griddata((x, y), flux, (X, Y), method=method)
+        # griddata can fail for too few points or outside convex hull; fall back to nearest
+        try:
+            img = griddata((x, y), flux, (X, Y), method=method)
+        except Exception:
+            img = griddata((x, y), flux, (X, Y), method="nearest")
 
     elif method == "rbf":
+        # RBF interpolation
         rbf = Rbf(x, y, flux, function=rbf_func)
         img = rbf(X, Y)
 
     elif method == "gdw":
-        # Inverse Distance Weighting
-        tree = cKDTree(np.c_[x, y])
-        dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k)
-        # Gaussian weights based on seeing sigma
-        # dist has shape (n_points, k)
-        weights = np.exp(-0.5 * (dist / sigma) ** 2)
+        # Gaussian Distance Weighting (IDW-style)
+        npts = x.size
+        k_eff = min(k, npts)
+        if k_eff == 0:
+            img = np.zeros_like(X, dtype=float)
+        else:
+            tree = cKDTree(np.c_[x, y])
+            dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k_eff)
 
-        # Normalize
-        weights /= weights.sum(axis=1)[:, None]
+            # Ensure 2D shapes for k_eff == 1
+            if k_eff == 1:
+                dist = dist[:, None]
+                idx = idx[:, None]
 
-        # Weighted sum of flux
-        img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
+            # Gaussian weights based on seeing sigma
+            weights = np.exp(-0.5 * (dist / sigma) ** 2)
+
+            # Normalize rows safely
+            row_sums = weights.sum(axis=1, keepdims=True)
+            with np.errstate(invalid='ignore', divide='ignore'):
+                weights = np.where(row_sums > 0, weights / row_sums, 0.0)
+
+            # Weighted sum of flux
+            img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
 
     else:
         raise ValueError(f"Unknown method {method}")
