@@ -2,7 +2,7 @@ schema:
   cli:
     object_name:
       type: str
-      required: true
+      required: false
       description: target identifier
       validate:
         min_length: 1
