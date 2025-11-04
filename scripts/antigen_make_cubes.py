@@ -43,6 +43,8 @@ def get_args():
     parser.add_argument('--rbf_function', type=str, default='multiquadric',
                         choices=['multiquadric', 'inverse', 'gaussian', 'linear', 'cubic', 'quintic', 'thin_plate'],
                         help='Radial basis function type for RBF interpolation (default: %(default)s)')
+    parser.add_argument('-g', '--binned', action='store_true', default=False,
+                        help='Data is binned in the x-direction?')
     return parser.parse_args()
 
 
@@ -79,6 +81,10 @@ def main():
             manifest['unit_instrument'].lower(),
             manifest['unit_id'].upper()
         )
+
+        # Binning?
+        if args.binned == True:
+            config_dict['detector_dimensions'] = [1024,2048]
 
         # Load recipe
         base_path = config.get_base_config_path()

@@ -71,6 +71,10 @@ def main():
             manifest['unit_id'].upper()
         )
 
+        # Binning?
+        if args.binned == True:
+            config_dict['detector_dimensions'] = [1024,2048]
+
         # Load recipe
         base_path = config.get_base_config_path()
         recipe = Recipe.load("base_reduction", base_path)
