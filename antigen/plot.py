@@ -565,6 +565,126 @@ def plot_psf_fit_diagnostics(fit_diagnostics, output_dir="."):
     logger.info(f"PSF fit diagnostics saved to {output_path}")
 
 
+def plot_dar_models_comparison(wave, dx_psf, dy_psf, dx_hdr, dy_hdr, output_dir=".", align_to_ref=True, ref_wave=5000.0):
+    """Plot comparison between DAR models derived from PSF-fit coefficients and from header metadata.
+
+    To examine models consistently, this function can normalize (shift) both
+    measured and modeled DAR curves so that they share the same zero-point at a
+    common reference wavelength (by default 5000 Å, matching the modeled DAR's
+    typical ref_wave). This removes any arbitrary constant offset between the
+    two dx/dy curves due to different normalization choices.
+
+    Args:
+        wave (ndarray): Wavelength grid (Angstroms).
+        dx_psf (ndarray): DAR dx from PSF-derived model (arcsec).
+        dy_psf (ndarray): DAR dy from PSF-derived model (arcsec).
+        dx_hdr (ndarray): DAR dx from header-derived model (arcsec).
+        dy_hdr (ndarray): DAR dy from header-derived model (arcsec).
+        output_dir (str, optional): Directory to save plot. Defaults to ".".
+        align_to_ref (bool, optional): If True, align both models to share the
+            same zero-point at ref_wave (or the closest available wavelength if
+            ref_wave lies outside the grid). Defaults to True.
+        ref_wave (float, optional): Reference wavelength (Å) used for alignment.
+            Defaults to 5000.0.
+    """
+    from pathlib import Path
+
+    wave = np.asarray(wave, dtype=float)
+    dx_psf = np.asarray(dx_psf, dtype=float)
+    dy_psf = np.asarray(dy_psf, dtype=float)
+    dx_hdr = np.asarray(dx_hdr, dtype=float)
+    dy_hdr = np.asarray(dy_hdr, dtype=float)
+
+    # Determine anchor wavelength for alignment
+    anchor_wave = None
+    if align_to_ref and np.isfinite(ref_wave):
+        wmin, wmax = np.nanmin(wave), np.nanmax(wave)
+        if (ref_wave >= wmin) and (ref_wave <= wmax):
+            anchor_wave = float(ref_wave)
+        elif (5000.0 >= wmin) and (5000.0 <= wmax):
+            anchor_wave = 5000.0
+        else:
+            # Fallback: pick the wavelength where the modeled dx is closest to zero
+            try:
+                idx = int(np.nanargmin(np.abs(dx_hdr)))
+                anchor_wave = float(wave[idx])
+            except Exception:
+                # Last resort: center of wavelength range
+                anchor_wave = float(0.5 * (wmin + wmax))
+
+    # If aligning, subtract value at anchor wavelength from each curve
+    def _at_anchor(y, x, x0):
+        # Linear interpolation for value at anchor
+        if x0 <= x[0]:
+            return float(y[0])
+        if x0 >= x[-1]:
+            return float(y[-1])
+        i = np.searchsorted(x, x0)  # index where x[i-1] < x0 <= x[i]
+        i = max(1, min(i, len(x) - 1))
+        x1, x2 = x[i-1], x[i]
+        y1, y2 = y[i-1], y[i]
+        t = (x0 - x1) / (x2 - x1) if np.isfinite(x2 - x1) and (x2 != x1) else 0.0
+        return float(y1 + t * (y2 - y1))
+
+    if anchor_wave is not None:
+        dx_psf0 = _at_anchor(dx_psf, wave, anchor_wave)
+        dy_psf0 = _at_anchor(dy_psf, wave, anchor_wave)
+        dx_hdr0 = _at_anchor(dx_hdr, wave, anchor_wave)
+        dy_hdr0 = _at_anchor(dy_hdr, wave, anchor_wave)
+
+        dx_psf_al = dx_psf - dx_psf0
+        dy_psf_al = dy_psf - dy_psf0
+        dx_hdr_al = dx_hdr - dx_hdr0
+        dy_hdr_al = dy_hdr - dy_hdr0
+    else:
+        dx_psf_al, dy_psf_al = dx_psf, dy_psf
+        dx_hdr_al, dy_hdr_al = dx_hdr, dy_hdr
+
+    outdir = Path(output_dir) / "dar_diagnostics"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+
+    # dx comparison
+    ax = axes[0, 0]
+    ax.plot(wave, dx_psf_al, label="dx (PSF)", color="tab:blue")
+    ax.plot(wave, dx_hdr_al, label="dx (Header)", color="tab:orange", linestyle="--")
+    ax.set_ylabel("dx (arcsec)")
+    title = "DAR dx vs wavelength"
+    if anchor_wave is not None:
+        ax.axvline(anchor_wave, color="gray", linestyle=":", alpha=0.6)
+        title += f" (aligned at {anchor_wave:.0f} Å)"
+    ax.set_title(title)
+    ax.legend()
+
+    # dy comparison
+    ax = axes[0, 1]
+    ax.plot(wave, dy_psf_al, label="dy (PSF)", color="tab:green")
+    ax.plot(wave, dy_hdr_al, label="dy (Header)", color="tab:red", linestyle="--")
+    ax.set_ylabel("dy (arcsec)")
+    title = "DAR dy vs wavelength"
+    if anchor_wave is not None:
+        ax.axvline(anchor_wave, color="gray", linestyle=":", alpha=0.6)
+        title += f" (aligned at {anchor_wave:.0f} Å)"
+    ax.set_title(title)
+    ax.legend()
+
+    # residuals (after alignment if applied)
+    ax = axes[1, 0]
+    ax.plot(wave, dx_psf_al - dx_hdr_al, color="tab:purple")
+    ax.set_xlabel("Wavelength (Å)")
+    ax.set_ylabel("dx residual (PSF - Header) [arcsec]")
+
+    ax = axes[1, 1]
+    ax.plot(wave, dy_psf_al - dy_hdr_al, color="tab:brown")
+    ax.set_xlabel("Wavelength (Å)")
+    ax.set_ylabel("dy residual (PSF - Header) [arcsec]")
+
+    plt.tight_layout()
+    plt.savefig(outdir / "dar_models_comparison.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_dither_summary(dither_info, output_dir="."):
     """
     Create summary plots for dither pattern analysis.

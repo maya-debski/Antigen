@@ -1,9 +1,12 @@
 import numpy as np
+import logging
 
 from scipy.interpolate import griddata, Rbf
 from scipy.spatial import cKDTree
 
 from antigen import fiber
+
+logger = logging.getLogger('antigen.cube')
 
 def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10., -10., 10],
                     pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
@@ -141,30 +144,28 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
     nx = int((x_max - x_min) / pixel_size) + 1
     ny = int((y_max - y_min) / pixel_size) + 1
 
+    # Determine spectral dimensions and guard against mismatches
+    n_wave = int(len(wavelength))
+    n_spec = int(fiber_spectra.shape[1])
+    n_lambda = min(n_wave, n_spec)
+    if n_wave != n_spec:
+        logger.warning(
+            "Wavelength grid length (%d) != spectra columns (%d). Proceeding with %d planes. "
+            "This often indicates an incorrect binning setting; check the --binned flag in antigen_make_cubes.py.",
+            n_wave, n_spec, n_lambda
+        )
+
     # Allocate cube
-    cube = np.zeros((len(wavelength), ny, nx), dtype=float)
+    cube = np.zeros((n_lambda, ny, nx), dtype=float)
     bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
 
     # Loop over wavelength bins
-    for i, lam in enumerate(wavelength):
+    for i, lam in enumerate(wavelength[:n_lambda]):
         flux = fiber_spectra[:, i]
 
         if modeling is not None and 'dar_model' in modeling:
-            # Use the source position from modeling dictionary for DAR correction
-            source_x_base = modeling['sources']["xcentroid"] + modeling['X'][0, 0]
-            source_y_base = modeling['sources']["ycentroid"] + modeling['Y'][0, 0]
-            
-            # Apply DAR correction to get the source position at this wavelength
-            source_x_corrected, source_y_corrected = modeling['dar_model'](
-                lam, source_x_base, source_y_base
-            )
-            
-            # Calculate the DAR shift
-            dx = source_x_corrected - source_x_base
-            dy = source_y_corrected - source_y_base
-            
-            # Apply the same shift to all fiber positions
-            x_shift, y_shift = fiber_x + dx, fiber_y + dy
+            # Apply DAR model directly to each fiber position at this wavelength
+            x_shift, y_shift = modeling['dar_model'](lam, fiber_x, fiber_y)
         else:
             x_shift, y_shift = fiber_x, fiber_y
 

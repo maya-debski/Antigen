@@ -149,7 +149,7 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
 
 
 def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error,
-                      extraction_radius, fiber_radius, output_dir=".", ndithers=None, psf_seeing_grid=None):
+                      extraction_radius, fiber_radius, output_dir=".",  header=None, ndithers=None, psf_seeing_grid=None):
     """Create the PSF interpolator, detect a bright source, and fit the DAR model.
 
     This function:
@@ -168,6 +168,7 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
         extraction_radius (float): Extraction radius taken from args.
         fiber_radius (float): Fiber radius determined from config_dict['fiber_radius']
         output_dir (str, optional): Directory to save plots. Defaults to ".".
+        header (dict, optional): Header of the input data. Defaults to None.
         ndithers (int, optional): Number of dithered exposures. If not provided, default is None.
         psf_seeing_grid (np.ndarray, optional): 1D array of seeing values (arcsec)
             to tabulate the PSF interpolator. If not provided, uses
@@ -278,7 +279,7 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
     dar_model, measured_fwhm = psf.fit_psf_and_build_dar_model(
         reduced_spectra, reduced_error, fiber_x, fiber_y,
         psf_interp, x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, nchunks=20, output_dir=output_dir
+        extraction_radius=extraction_radius, nchunks=20, output_dir=output_dir, header=header
     )
 
     return {

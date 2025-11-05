@@ -7,7 +7,7 @@ from scipy.interpolate import LinearNDInterpolator
 from scipy.optimize import least_squares
 
 from antigen import dar
-from antigen.plot import plot_psf_fit_diagnostics
+from antigen.plot import plot_psf_fit_diagnostics, plot_dar_models_comparison
 
 logger = logging.getLogger('antigen.psf')
 
@@ -232,8 +232,8 @@ def fit_psf(data, error, fiber_x, fiber_y, interp, initial_x, initial_y, wavelen
             raise
     
     # Fit polynomials to the results
-    poly_x = np.polyfit(little_waves, source_x - source_x[int(Nchunks/2)], 2)
-    poly_y = np.polyfit(little_waves, source_y - source_y[int(Nchunks/2)], 2)
+    poly_x = np.polyfit(little_waves, source_x[int(Nchunks/2)] - source_x, 2)
+    poly_y = np.polyfit(little_waves, source_y[int(Nchunks/2)] - source_y, 2)
     poly_fwhm = np.polyfit(little_waves, source_fwhm, 2)
 
     # Create diagnostic plots
@@ -274,7 +274,7 @@ def build_psf_weights(source_x, source_y, source_fwhm, fiber_x, fiber_y,
 
 def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
                                 psf_interp, x_coord, y_coord, def_wave,
-                                extraction_radius=2.0, nchunks=20, output_dir="."):
+                                extraction_radius=2.0, nchunks=20, output_dir=".", header=None):
     """
     Fit the PSF to the reduced spectra and construct a DAR model.
 
@@ -302,5 +302,30 @@ def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y
         save_diagnostics=True, output_dir=output_dir
     )
     _, _, measured_fwhm, coeff_x, coeff_y, _ = params
-    dar_model = dar.DARModel(coeff_x, coeff_y)
+
+    # Build DARModel. If polynomial coeffs are available from PSF fit, use them
+    if coeff_x is not None and coeff_y is not None:
+        dar_model = dar.DARModel(wave=def_wave, header=header)
+        # If header is provided, also build a header-based DAR model and compare
+        if header is not None:
+            try:
+                # Evaluate both models across the wavelength grid
+                dx_psf_instr = np.polyval(coeff_x, def_wave)
+                dy_psf_instr = np.polyval(coeff_y, def_wave)
+                # Convert PSF-fitted instrument-axis shifts to East/North for comparison
+                # Convention: +X (instrument) = West => East = -X; +Y (instrument) = North
+                dx_psf = -dx_psf_instr  # East
+                dy_psf = dy_psf_instr   # North
+                dx_hdr = np.polyval(dar_model.coeffs_x, def_wave)
+                dy_hdr = np.polyval(dar_model.coeffs_y, def_wave)
+                # Plot comparison (align both models to a common reference wavelength for fair comparison)
+                plot_dar_models_comparison(
+                    def_wave, dx_psf, dy_psf, dx_hdr, dy_hdr,
+                    output_dir=output_dir, align_to_ref=True, ref_wave=5000.0
+                )
+                logger.info("DAR model comparison plot saved under dar_diagnostics (aligned to common ref wavelength).")
+            except Exception as e:
+                logger.warning(f"Failed to build/compare header-based DAR model: {e}")
+    else:
+        dar_model = dar.DARModel(wave=def_wave, header=header)
     return dar_model, measured_fwhm
