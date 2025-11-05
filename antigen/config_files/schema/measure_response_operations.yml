@@ -109,12 +109,16 @@ schema:
           type: path
           required: true
           source: state
-      needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error"]
+        header:
+          type: dict
+          required: true
+          source: state
+      needs: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", "reduced_error", "header"]
       provides: ["modeling"]
       algorithm:
         function: "antigen.calibrate.build_psf_and_dar"
         args: ["fiber_x", "fiber_y", "def_wave", "reduced_spectra", 
-               "reduced_error", "extraction_radius", "fiber_radius", "outdir"]
+               "reduced_error", "extraction_radius", "fiber_radius", "outdir", "header"]
 
 
     ExtractSpectrum:
