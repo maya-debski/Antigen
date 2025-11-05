@@ -41,7 +41,7 @@ schema:
     k_neighbors:
       type: int
       required: false
-      default: 5
+      default: 11
       validate:
         min: 1
       description: "Number of neighbors for GDW interpolation"
@@ -49,7 +49,7 @@ schema:
     sigma_gdw:
       type: float
       required: false
-      default: 1.5
+      default: 2.5
       validate:
         min: 0.1
       description: "Standard deviation for GDW interpolation in arcseconds"
