@@ -73,7 +73,7 @@ def main():
 
         # Binning?
         if args.binned == True:
-            config_dict['detector_dimensions'] = [1024,2048]
+            config_dict['detector_dimensions']['X'] = int(config_dict['detector_dimensions']['X'] / 2)
 
         # Load recipe
         base_path = config.get_base_config_path()

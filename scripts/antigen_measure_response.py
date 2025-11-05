@@ -40,6 +40,8 @@ def get_args():
                        help='if True, print more process details and logger.info to console')
     parser.add_argument('-d', '--debug', action='store_true',
                        help='if True, print more process details and logger.debug to console')
+    parser.add_argument('-g', '--binned', action='store_true', default=False,
+                        help='Data is binned in the x-direction?')
     return parser.parse_args()
 
 def main():
@@ -67,6 +69,10 @@ def main():
                 manifest['unit_instrument'].lower(),
                 manifest['unit_id'].upper()
             )
+
+            # Binning?
+            if args.binned == True:
+                config_dict['detector_dimensions']['X'] = int(config_dict['detector_dimensions']['X'] / 2)
 
             # Load recipe
             base_path = config.get_base_config_path()
