@@ -36,9 +36,9 @@ def get_args():
     parser.add_argument('-i', '--interpolation_method', type=str, default='gdw',
                         choices=['linear', 'nearest', 'cubic', 'rbf', 'gdw'],
                         help='Interpolation method for cube construction (default: %(default)s)')
-    parser.add_argument('-k', '--k_neighbors', type=int, default=5,
+    parser.add_argument('-k', '--k_neighbors', type=int, default=11,
                         help='Number of neighbors for GDW interpolation (default: %(default)s)')
-    parser.add_argument('--sigma_gdw', type=float, default=1.5,
+    parser.add_argument('--sigma_gdw', type=float, default=2.5,
                         help='Standard deviation for GDW interpolation in arcseconds (default: %(default)s)')
     parser.add_argument('--rbf_function', type=str, default='multiquadric',
                         choices=['multiquadric', 'inverse', 'gaussian', 'linear', 'cubic', 'quintic', 'thin_plate'],
