@@ -16,3 +16,4 @@ dependencies:
   - seaborn
   - photutils
   - getcalspec
+  - astroplan

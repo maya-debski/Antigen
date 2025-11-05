@@ -17,6 +17,7 @@ maintainers = [
 ]
 dependencies = [
     'astropy',
+    'astroplan',
     'astroscrappy',
     'getCalspec',
     'numpy',
