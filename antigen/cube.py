@@ -1,9 +1,12 @@
 import numpy as np
+import logging
 
 from scipy.interpolate import griddata, Rbf
 from scipy.spatial import cKDTree
 
 from antigen import fiber
+
+logger = logging.getLogger('antigen.cube')
 
 def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10., -10., 10],
                     pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
@@ -32,7 +35,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
         img (ndarray): synthetic image on uniform grid
         X, Y (ndarray): meshgrid coordinates
     """
-    # Clean NaNs
+    # Clean NaNs in flux and align x/y/flux
     finite_values = np.isfinite(fiber_flux)
     x, y, flux = (fiber_x[finite_values], fiber_y[finite_values], fiber_flux[finite_values])
 
@@ -41,30 +44,56 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     grid_size_y = int((bounds[3] - bounds[2]) / pixel_size) + 1
 
     xi = np.linspace(bounds[0], bounds[0] + (grid_size_x - 1) * pixel_size, grid_size_x)
-    yi = np.linspace(bounds[2], bounds[2] + (grid_size_x - 1) * pixel_size, grid_size_y)
+    yi = np.linspace(bounds[2], bounds[2] + (grid_size_y - 1) * pixel_size, grid_size_y)
     X, Y = np.meshgrid(xi, yi)
 
-    flux_factor = pixel_size **2 / fiber_area
+    # If no valid input points, return zeros image
+    if x.size == 0:
+        img = np.zeros_like(X, dtype=float)
+        # Correct for the area difference between the fiber size and the new pixel area
+        flux_factor = pixel_size ** 2 / fiber_area
+        img = img * flux_factor
+        return img, X, Y
+
+    flux_factor = pixel_size ** 2 / fiber_area
+
     if method in ["linear", "nearest", "cubic"]:
-        img = griddata((x, y), flux, (X, Y), method=method)
+        # griddata can fail for too few points or outside convex hull; fall back to nearest
+        try:
+            img = griddata((x, y), flux, (X, Y), method=method)
+        except Exception:
+            img = griddata((x, y), flux, (X, Y), method="nearest")
 
     elif method == "rbf":
+        # RBF interpolation
         rbf = Rbf(x, y, flux, function=rbf_func)
         img = rbf(X, Y)
 
     elif method == "gdw":
-        # Inverse Distance Weighting
-        tree = cKDTree(np.c_[x, y])
-        dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k)
-        # Gaussian weights based on seeing sigma
-        # dist has shape (n_points, k)
-        weights = np.exp(-0.5 * (dist / sigma) ** 2)
+        # Gaussian Distance Weighting (IDW-style)
+        npts = x.size
+        k_eff = min(k, npts)
+        if k_eff == 0:
+            img = np.zeros_like(X, dtype=float)
+        else:
+            tree = cKDTree(np.c_[x, y])
+            dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k_eff)
 
-        # Normalize
-        weights /= weights.sum(axis=1)[:, None]
+            # Ensure 2D shapes for k_eff == 1
+            if k_eff == 1:
+                dist = dist[:, None]
+                idx = idx[:, None]
 
-        # Weighted sum of flux
-        img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
+            # Gaussian weights based on seeing sigma
+            weights = np.exp(-0.5 * (dist / sigma) ** 2)
+
+            # Normalize rows safely
+            row_sums = weights.sum(axis=1, keepdims=True)
+            with np.errstate(invalid='ignore', divide='ignore'):
+                weights = np.where(row_sums > 0, weights / row_sums, 0.0)
+
+            # Weighted sum of flux
+            img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
 
     else:
         raise ValueError(f"Unknown method {method}")
@@ -74,7 +103,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     return img, X, Y
 
 def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
-              dar_model=None, pixel_size=1.0, method="linear",
+              modeling=None, pixel_size=1.0, method="linear",
               rbf_func="multiquadric", k=5, sigma=1.0):
     """Construct a 3D datacube from fiber spectra and positions.
 
@@ -88,10 +117,12 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         fiber_x (ndarray): 1D array of fiber x-locations.
         fiber_y (ndarray): 1D array of fiber y-locations.
         fiber_area (float): Area of fiber in square arcseconds.
-        dar_model (callable, optional):
-            Function that applies DAR corrections. Must accept arguments
-            `(wavelengths, fiber_x, fiber_y)` and return shifted positions
-            `(x_shifted, y_shifted)`. If None, no DAR correction is applied.
+        modeling (dict, optional): Dictionary containing PSF and DAR modeling results with keys:
+            - dar_model: DAR model for position correction
+            - sources: Detected source catalog  
+            - X: Grid of X coordinates
+            - Y: Grid of Y coordinates
+            If None, no DAR correction is applied.
         pixel_size (float): Pixel size in arcseconds (Default is 1.0).
         method (str, optional): interpolation method
         rbf_func (str, optional): Radial basis function type if `method="rbf"`. Default is "multiquadric".
@@ -113,16 +144,28 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
     nx = int((x_max - x_min) / pixel_size) + 1
     ny = int((y_max - y_min) / pixel_size) + 1
 
+    # Determine spectral dimensions and guard against mismatches
+    n_wave = int(len(wavelength))
+    n_spec = int(fiber_spectra.shape[1])
+    n_lambda = min(n_wave, n_spec)
+    if n_wave != n_spec:
+        logger.warning(
+            "Wavelength grid length (%d) != spectra columns (%d). Proceeding with %d planes. "
+            "This often indicates an incorrect binning setting; check the --binned flag in antigen_make_cubes.py.",
+            n_wave, n_spec, n_lambda
+        )
+
     # Allocate cube
-    cube = np.zeros((len(wavelength), ny, nx), dtype=float)
+    cube = np.zeros((n_lambda, ny, nx), dtype=float)
     bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
 
     # Loop over wavelength bins
-    for i, lam in enumerate(wavelength):
+    for i, lam in enumerate(wavelength[:n_lambda]):
         flux = fiber_spectra[:, i]
 
-        if dar_model is not None:
-            x_shift, y_shift = dar_model(lam, fiber_x, fiber_y)
+        if modeling is not None and 'dar_model' in modeling:
+            # Apply DAR model directly to each fiber position at this wavelength
+            x_shift, y_shift = modeling['dar_model'](lam, fiber_x, fiber_y)
         else:
             x_shift, y_shift = fiber_x, fiber_y
 

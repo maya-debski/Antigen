@@ -1,0 +1,188 @@
+schema:
+  cli:
+    object_name:
+      type: str
+      required: false
+      description: target identifier
+      validate:
+        min_length: 1
+        pattern: "^[A-Za-z0-9_]+$"
+    output_folder:
+      type: path
+      required: true
+      description: Output directory path
+
+    extraction_radius:
+      type: float
+      required: true
+      description: Extraction radius in arcsec
+      units: arcsec
+      default: 10.0
+      validate:
+        min: 0.0
+
+    pixel_size:
+      type: float
+      required: true
+      description: Cube pixel Size
+      units: arcsec
+      default: 1.0
+      validate:
+        min: 0.0
+
+    interpolation_method:
+      type: str
+      required: false
+      default: "gdw"
+      validate:
+        choices: [ "linear", "nearest", "cubic", "rbf", "gdw" ]
+      description: "Interpolation method for cube construction"
+
+    k_neighbors:
+      type: int
+      required: false
+      default: 11
+      validate:
+        min: 1
+      description: "Number of neighbors for GDW interpolation"
+
+    sigma_gdw:
+      type: float
+      required: false
+      default: 2.5
+      validate:
+        min: 0.1
+      description: "Standard deviation for GDW interpolation in arcseconds"
+
+    rbf_function:
+      type: str
+      required: false
+      default: "multiquadric"
+      validate:
+        choices: [ "multiquadric", "inverse", "gaussian", "linear", "cubic", "quintic", "thin_plate" ]
+      description: "Radial basis function type for RBF interpolation"
+
+  dataset:
+    unit_instrument:
+      type: str
+      required: true
+      description: Instrument name
+      validate:
+        choices: ["virus2", "gcms", "virusw"]
+
+    unit_id:
+      type: str
+      required: true
+      description: Instrument unit identifier
+      validate:
+        pattern: "^[A-Z0-9]+$"
+
+    ndithers:
+      type: int
+      required: true
+      description: Number of dithers
+      validate:
+        min: 1
+
+    dither_number:
+      type: "list[int]"
+      required: false
+      description: List of dither numbers
+      validate:
+        min_length: 0
+
+    in_folder:
+      type: str
+      required: false
+      description: Input folder for reduced files
+      default: "./"
+
+    reduced_files:
+      type: "list[str]"
+      required: false
+      description: List of reduced data files
+      default: []
+      validate:
+        min_length: 0
+
+  config:
+    ifu_x:
+      type: ndarray
+      required: true
+      description: "IFU x-coordinates for each fiber"
+      units: "arcsec"
+      validate:
+        min_length: 1
+
+    ifu_y:
+      type: ndarray
+      required: true
+      description: "IFU y-coordinates for each fiber"
+      units: "arcsec"
+      validate:
+        min_length: 1
+
+    fiber_radius:
+      type: float
+      required: true
+      description: "Fiber radius"
+      units: "arcsec"
+      validate:
+        min: 0.0
+
+    start_wavelength:
+      type: float
+      required: true
+      description: "Starting wavelength value in Angstroms"
+      units: "Angstrom"
+      validate:
+        min: 3000.0
+        max: 10000.0
+
+    end_wavelength:
+      type: float
+      required: true
+      description: "Ending wavelength value in Angstroms"
+      units: "Angstrom"
+      validate:
+        min: 3000.0
+        max: 10000.0
+
+    detector_dimensions:
+      type: dict
+      required: true
+      description: "Detector dimensions in pixels"
+      validate:
+        required_keys: ["X", "Y"]
+
+interpolation_method:
+  type: str
+  required: false
+  default: "gdw"
+  validate:
+    choices: ["linear", "nearest", "cubic", "rbf", "gdw"]
+  description: "Interpolation method for cube construction"
+
+k_neighbors:
+  type: int
+  required: false
+  default: 5
+  validate:
+    min: 1
+  description: "Number of neighbors for GDW interpolation"
+
+sigma_gdw:
+  type: float
+  required: false
+  default: 1.5
+  validate:
+    min: 0.1
+  description: "Standard deviation for GDW interpolation in arcseconds"
+
+rbf_function:
+  type: str
+  required: false
+  default: "multiquadric"
+  validate:
+    choices: ["multiquadric", "inverse", "gaussian", "linear", "cubic", "quintic", "thin_plate"]
+  description: "Radial basis function type for RBF interpolation"

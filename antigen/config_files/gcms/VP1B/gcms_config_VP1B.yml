@@ -11,7 +11,7 @@ sample_fiber_indices:
 start_wavelength: 3570
 end_wavelength: 5810
 detector_dimensions:
-  X: 1024 # X
+  X: 2048 # X
   Y: 2048 # Y
 arc_flux_limit: 5
 telescope_diameter: 2.72

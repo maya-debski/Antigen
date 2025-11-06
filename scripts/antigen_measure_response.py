@@ -1,13 +1,12 @@
 #!/usr/bin/env python
-
-import argparse
 from pathlib import Path
-import sys
+import argparse
 
 from antigen.datasets import build_dataset_from_reduced_files
 from antigen.manifest import save_manifest
 from antigen.utils import setup_logging
-from antigen.calibrate import build_response
+from antigen import config
+from antigen.recipe import Recipe
 
 DESCRIPTION = r"""
 Purpose:
@@ -22,82 +21,79 @@ What it does:
         * Builds an instrument response function by comparing the observed
           spectrum with a reference CALSPEC spectrum.
         * Saves the response manifest and response products to the output folder.
-
-Inputs:
-    - Reduced directory: Path containing reduced standard star datasets
-      (already processed with bias, flats, arcs, etc.).
-    - Output folder: Destination for response files (defaults to reduced directory).
-    - Standard star name: Substring to identify the target (e.g., "Feige").
-    - PSF and cube-building settings such as extraction radius and pixel size.
-
-Outputs:
-    - A YAML manifest file for each standard star response dataset.
-    - Instrument response function FITS and diagnostic plots, written to the output folder.
-
-Example:
-    Build a response function from reduced Feige standard star frames:
-
-    $ antigen_build_response.py -r /data/VIRUS2/reduced/ -o /data/VIRUS2/response/ -s Feige
-
-Notes:
-    - This script assumes that the input data have already been reduced
-      (use the main reduction pipeline first).
-    - Logs will report any datasets that do not match the requested standard.
-    - Response functions are required for flux calibration of science targets.
 """
 
-
-
-
 def get_args():
-    parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=DESCRIPTION, 
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-r', '--reduced_dir', required=True,
-                        help='Path to directory with reduced standard star frames.')
+                       help='Path to directory with reduced standard star frames.')
     parser.add_argument('-o', '--output_folder', default=None,
-                        help='Path to output folder for response function.')
+                       help='Path to output folder for response function.')
     parser.add_argument('-s', '--standard_name', required=True,
-                        help='Name for standard star files in reduced-dir (ex: Feige).')
-
-    # PSF/extraction settings
+                       help='Name for standard star files in reduced-dir (ex: Feige).')
     parser.add_argument('-e', '--extraction_radius', type=float, default=10.0,
-                        help='Extraction radius in arcsec.')
+                       help='Extraction radius in arcsec.')
     parser.add_argument('-p', '--pixel_size', type=float, default=1.0,
-                        help='Cube pixel size in arcsec.')
+                       help='Cube pixel size in arcsec.')
     parser.add_argument('-v', '--verbose', action='store_true',
-                   help='if True, print more process details and logger.info to console')
+                       help='if True, print more process details and logger.info to console')
+    parser.add_argument('-d', '--debug', action='store_true',
+                       help='if True, print more process details and logger.debug to console')
+    parser.add_argument('-g', '--binned', action='store_true', default=False,
+                        help='Data is binned in the x-direction?')
     return parser.parse_args()
-
 
 def main():
     args = get_args()
+    logger = setup_logging('antigen', verbose=args.verbose, debug=args.debug)
+    logger.info('Starting application...')
 
-    logger = setup_logging('antigen', verbose=args.verbose)
-    logger.info(f'Starting application...')
-
-    if args.output_folder is None:
-        args.output_folder = args.reduced_dir
-    save_path = Path(args.output_folder).expanduser().resolve()
+    save_path = Path(args.output_folder or args.reduced_dir).expanduser().resolve()
     save_path.mkdir(parents=True, exist_ok=True)
 
-    # Build response manifests
+    # Process manifests
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
 
-    for nr, manifest in enumerate(response_manifest):
-        reduction_name = manifest['reduction_name']
-        element = manifest['unit_id']
-        instrument = manifest['unit_instrument']
-        target_name = manifest['target']
-        logger.info(f'Manifest for {target_name} with instrument={instrument} and unit={element}')
-        if args.standard_name.lower() in target_name.lower():
-            manifest_filename = f'manifest_response_{target_name}.yml'
+    for manifest in response_manifest:
+        if args.standard_name.lower() in manifest['target'].lower():
+            # Save manifest
+            manifest_filename = f'manifest_response_{manifest["target"]}.yml'
             save_filepath = save_path / manifest_filename
             save_manifest(manifest, str(save_filepath))
-            logger.info(f'Processing response for {target_name} with instrument={instrument} and unit={element}')
-            output_response_filename = build_response(manifest, args)
-            logger.info(f'Saved response to {output_response_filename}')
+            
+            logger.info(f'Processing response for {manifest["target"]}')
+            
+            # Get instrument configuration
+            config_dict = config.build_config_for_element(
+                manifest['unit_instrument'].lower(),
+                manifest['unit_id'].upper()
+            )
+
+            # Binning?
+            if args.binned == True:
+                config_dict['detector_dimensions']['X'] = int(config_dict['detector_dimensions']['X'] / 2)
+
+            # Load recipe
+            base_path = config.get_base_config_path()
+            recipe = Recipe.load("measure_response", base_path)
+            
+            # Collect inputs
+            inputs = recipe.collect_inputs(args, manifest, config_dict)
+            
+            # Validate inputs
+            if errors := recipe.validate_inputs(inputs):
+                raise ValueError("Input validation failed:\n" + "\n".join(errors))
+            
+            # Generate and save markdown description
+            md = recipe.describe_markdown(inputs, viz_type='mermaid', output_folder=save_path)
+
+            (save_path / "measure_response.md").write_text(md, encoding="utf-8")
+            
+            # Run recipe
+            outputs = recipe.run(inputs, save_path)
 
     return None
-
-
-if __name__ == '__main__':
-    sys.exit(main())
+    
+if __name__ == "__main__":
+    main()

@@ -15,4 +15,5 @@ dependencies:
   - scikit-learn
   - seaborn
   - photutils
-  - getCalspec
+  - getcalspec
+  - astroplan

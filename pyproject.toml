@@ -17,6 +17,8 @@ maintainers = [
 ]
 dependencies = [
     'astropy',
+    'astroplan',
+    'astroscrappy',
     'getCalspec',
     'numpy',
     'matplotlib',
@@ -39,11 +41,13 @@ include-package-data = true
 script-files = [
     'scripts/antigen_build_manifest.py',
     'scripts/antigen_measure_response.py',
+    'scripts/antigen_make_cubes.py',
     'scripts/antigen_read_manifest.py',
     'scripts/antigen_reduce.py',
     'scripts/antigen_reduce_manifest.py',
     'scripts/antigen_view_fits.py',
-    'scripts/antigen_prepare_gcms_dataset.py',
+    'scripts/antigen_prepare_dataset.py',
+    'scripts/antigen_base_reduction.py'
 ]
 
 [tool.setuptools.package-data]

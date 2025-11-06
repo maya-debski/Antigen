@@ -2,11 +2,13 @@
 
 import argparse
 from pathlib import Path
+import re
 import shutil
 
 from antigen.cli import add_calibration_args, add_common_args
 from antigen.io import load_fits_header, get_fits_files_in_path
 from antigen.utils import setup_logging
+from astropy.io import fits
 
 DESCRIPTION = r"""
 Purpose:
@@ -38,9 +40,9 @@ Outputs:
       instrument, date, observation ID, frame type, configuration element, exposure index, UT time, and object name.
 
 Example:
-    Prepare GCMS data for the night of 20240801 taken with the VP1B configuration:
+    Prepare GCMS data for the night of 20240609 taken with the VP1R configuration:
 
-    $ antigen_prepare_gcms_dataset.py -i /Night1 -o ~/data -c 20240801 -m GCMS -l VP1B
+    $ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -c 20240609 -m GCMS -j VP1R -o ~/data -v
 
 Notes:
     - Frame types are inferred by matching keywords in the OBJECT header card.
@@ -58,6 +60,18 @@ def get_args():
     add_common_args(parser)
     add_calibration_args(parser)
 
+    # Override the generic in_folder help text from add_common_args for this script's context
+    # We only change the help string, leaving defaults and behavior unchanged.
+    for action in parser._actions:
+        if '--in_folder' in action.option_strings:
+            action.help = 'Root path where raw data folder is located, (default: %(default)s)'
+            break
+
+    for action in parser._actions:
+        if '--out_folder' in action.option_strings:
+            action.help = 'Root path modified raw data folder will go, (default: %(default)s)'
+            break
+
     parser.add_argument(
         '-m', '--instrument',
         type=str,
@@ -67,7 +81,7 @@ def get_args():
     )
 
     parser.add_argument(
-        '-l', '--element',
+        '-j', '--element',
         type=str,
         default='VP1B',
         help='Spectrograph setup or configuration element, such as VP1B or VP1R '
@@ -75,6 +89,43 @@ def get_args():
     )
 
     return parser.parse_args()
+
+
+def detect_and_fix_virus_w_header(header, filename, logger):
+    """
+    Detect virus-w style DATE-OBS and split into DATE-OBS and UT if needed.
+
+    Args:
+        header (fits.Header): FITS header to check and potentially modify
+        filename (str): Filename for logging purposes
+        logger: Logger instance
+
+    Returns:
+        bool: True if header was modified, False otherwise
+    """
+    if 'DATE-OBS' not in header:
+        return False
+
+    date_obs = header['DATE-OBS']
+
+    # Check if DATE-OBS contains time (virus-w format): YYYYMMDDTHH:MM:SS.sss or YYYY-MM-DDTHH:MM:SS.sss
+    time_pattern = r'(\d{4}[-]?\d{2}[-]?\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)'
+    match = re.match(time_pattern, str(date_obs))
+
+    if match:
+        date_part = match.group(1)
+        time_part = match.group(2)
+
+        # Update header
+        header['DATE-OBS'] = date_part
+        header['UT'] = time_part
+
+        logger.info(
+            f"Fixed virus-w header format in {filename}: split '{date_obs}' into DATE-OBS='{date_part}' and UT='{time_part}'")
+        return header, True
+
+    return header, False
+
 
 def main():
     args = get_args()
@@ -95,9 +146,12 @@ def main():
     previous_object = ''
     for filename in filenames:
         header, is_header_valid = load_fits_header(filename)
-        if header is None:
+
+        if not is_header_valid:
+            logger.warning(f"Invalid header for {filename}")
             continue
 
+        header, header_was_modified = detect_and_fix_virus_w_header(header, filename, logger)
         object_name = header['OBJECT']
         date = ''.join(header['DATE-OBS'].split('-'))
         ut = ''.join(header['UT'].split(':'))
@@ -129,10 +183,31 @@ def main():
 
         output_path = output_dir / output_filename
 
-        dst_file = Path(output_path)
-        dst_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(filename, dst_file)
-        logger.info(f"Copied {filename} -> {dst_file}")
+        try:
+            dst_file = Path(output_path)
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # If header was modified, write the corrected version
+            if header_was_modified:
+                # Read the full FITS file to preserve data
+                with fits.open(filename) as hdul:
+                    # Update the primary HDU header with corrected values
+                    hdul[0].header['DATE-OBS'] = header['DATE-OBS']
+                    hdul[0].header['UT'] = header['UT']
+                    # Write to destination with corrected header
+                    hdul.writeto(dst_file, overwrite=True)
+                logger.info(f"Copied and corrected header: {filename} -> {dst_file}")
+            else:
+                # Just copy the file as-is
+                shutil.copy2(filename, dst_file)
+                logger.info(f"Copied {filename} -> {dst_file}")
+                
+        except (OSError, IOError, PermissionError) as e:
+            logger.error(f"Failed to copy {filename}: {e}")
+            continue
+        except Exception as e:
+            logger.error(f"Unexpected error copying {filename}: {e}")
+            continue
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,48 @@
+
+description: "Create a 3D datacube from fiber spectra with DAR correction"
+inputs:
+  cli:
+    output_folder: null
+    pixel_size: 1.0
+    interpolation_method: "gdw"
+    k_neighbors: 5
+    sigma_gdw: 1.5
+    rbf_function: "multiquadric"
+  dataset:
+    unit_instrument: null
+    unit_id: null
+    ndithers: null
+    dither_number: []
+    in_folder: "./"
+    reduced_files: []
+  config:
+    fiber_radius: null
+    ifu_x: null
+    ifu_y: null
+    start_wavelength: null
+    end_wavelength: null
+    detector_dimensions:
+      X: null
+      Y: null
+
+workflow:
+  - group: "Setup"
+    steps:
+      - LoadFiberPositions
+      - GetWavelengthGrid
+      - LoadReducedData
+
+  - group: "ModelingAndDAR"
+    steps:
+      - ModelPSFAndDAR
+
+  - group: "CubeConstruction"
+    steps:
+      - MakeCube
+      - SaveCube
+
+outputs:
+  - datacube
+  - x_grid
+  - y_grid
+  - def_wave

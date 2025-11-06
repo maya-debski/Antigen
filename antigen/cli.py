@@ -14,6 +14,7 @@ DEFAULTS = {
     'flat_label': 'flat',
     'twilight_flat_label': 'twi',
     'verbose': False,
+    'debug': False,
 }
 
 TYPES = {
@@ -29,6 +30,7 @@ TYPES = {
     'flat_label': str,
     'twilight_flat_label': str,
     'verbose': bool,
+    'debug': bool,
 }
 
 HELPS = {
@@ -44,6 +46,7 @@ HELPS = {
     'flat_label': 'The object name from the FITS header card for flat files, (default: %(default)s)',
     'twilight_flat_label': 'The object name from the FITS header card for twilight flat files, (default: %(default)s)',
     'verbose': 'if True, print more process details and logger.info to console, (default: %(default)s)',
+    'debug': 'if True, print more process details and logger.debug to console, (default: %(default)s)',
 }
 
 ABBREVS = {
@@ -55,10 +58,11 @@ ABBREVS = {
     'time_radius': 'w',
     'bias_label': 'b',
     'arc_label': 'a',
-    'dark_label': 'd',
+    'dark_label': 'l',
     'flat_label': 'f',
     'twilight_flat_label': 't',
     'verbose': 'v',
+    'debug': 'd',
 }
 
 def add_args_from_dicts(parser, arg_names):
@@ -94,7 +98,7 @@ def add_common_args(parser):
     Returns:
         parser (ArgumentParser): The updated parser with common args.
     """
-    common_args = ['in_folder', 'out_folder', 'obs_date', 'obs_name', 'reduce_all', 'time_radius', 'verbose']
+    common_args = ['in_folder', 'out_folder', 'obs_date', 'obs_name', 'reduce_all', 'time_radius', 'verbose', 'debug']
     return add_args_from_dicts(parser, common_args)
 
 

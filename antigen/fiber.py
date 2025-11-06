@@ -28,14 +28,18 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
     average = biweight(spectrum, axis=0, ignore_nan=True)
 
     # Calculate the initial fiber-to-fiber correction by dividing each fiber by the average spectrum
-    initial_ftf = spectrum / average[np.newaxis, :]
+    # Guard against zeros/NaNs in the average to avoid divide-by-zero/invalid warnings
+    den = average[np.newaxis, :]
+    initial_ftf = np.full_like(spectrum, np.nan)
+    valid = np.isfinite(den) & (den != 0)
+    np.divide(spectrum, den, out=initial_ftf, where=valid)
 
     # Create a wavelength grid and divide it into chunks for smoothing
     columns = np.arange(spectrum.shape[1])
     chunked_columns = np.array([np.mean(chunk) for chunk in np.array_split(columns, n_chunks)])
 
     # Initialize the smoothed correction array
-    ftf = spectrum * 0.
+    ftf = np.zeros_like(spectrum)
 
     # Loop through each fiber to compute the smoothed correction factor
     for i in np.arange(len(spectrum)):
@@ -73,7 +77,7 @@ def get_fiber_bounds(fiber_x, fiber_y):
     bounds = [x_min, x_max, y_min, y_max]
     return bounds
 
-def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
+def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base):
     """
     Load the fiber positions for a given instrument and apply the appropriate dither offsets.
 
@@ -91,19 +95,13 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
         instrument (str): Instrument name (used to locate the correct dither file).
         ndithers (int): Number of dithers in the observing sequence.
         dither_numbers (list of int): Indices of the dithers to apply (1-based).
-        config_dict (dict): Instrument configuration containing 'ifu_x' and 'ifu_y' arrays
-            for the base fiber positions.
+        fiber_x_base (ndarray): X positions of fibers in arcseconds
+        fiber_y_base (ndarray): Y positions of fibers in arcseconds
 
     Returns:
         fiber_x (ndarray): X positions of fibers with dither offsets applied.
         fiber_y (ndarray): Y positions of fibers with dither offsets applied.
     """
-    # --- Input validation ---
-    if "ifu_x" not in config_dict or "ifu_y" not in config_dict:
-        raise ValueError("config_dict must contain 'ifu_x' and 'ifu_y' arrays.")
-
-    fiber_x_base, fiber_y_base = config_dict["ifu_x"], config_dict["ifu_y"]
-
     base_path = config.get_base_config_path()
 
     dither_file = base_path / instrument / f"{instrument}_dither_{ndithers}pt.lis"
@@ -134,6 +132,10 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, config_dict):
         )
 
     # --- Apply dithers ---
+    # Convert dither count to 1...N and not 0...N-1.
+    if np.any(dither_numbers == 0):
+        dither_numbers += 1
+
     dithers_observed = [dither_offsets[int(dither_number - 1)] for dither_number in dither_numbers]
     fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dithers_observed])
     fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dithers_observed])

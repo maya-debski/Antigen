@@ -12,8 +12,8 @@ from antigen.trace import _get_peak_positions
 logger = logging.getLogger('antigen.wavelength')
 
 def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, arc_wavelengths,
-                   use_kernel=True, peak_threshold=5, reference_fiber_index=130,
-                   good_arc_residual_limit=0.2):
+                   peak_threshold=5, reference_fiber_index=130,
+                   good_arc_residual_limit=0.2, binned=False):
     """
     Computes the wavelength solution for each fiber by identifying arc lamp emission line positions
     in each fiber's spectrum, fits a smooth curve across the fiber direction, and derives a polynomial
@@ -25,24 +25,28 @@ def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, ar
         valid_fibers (ndarray): Boolean array indicating which fibers have valid data.
         arc_pixel_guesses (ndarray): Initial pixel location guesses for each arc line.
         arc_wavelengths (ndarray): Known wavelengths of arc lines.
-        use_kernel (bool): Whether to apply kernel smoothing when detecting peaks. Default is True.
         peak_threshold (float, optional): Minimum peak height for a valid arc line (limit = peak_threshold * noise).
         reference_fiber_index (int): Index of the fiber used as the starting point. Default is 130.
         good_arc_residual_limit (float, optional): Maximum residual can be to be still called a good arc line to use
-
+        binned (bool, optional): Whether to bin the wavelength solution. Default is False.
     Returns:
         wavelength_solution (ndarray): Wavelength array for each fiber.
         residuals (ndarray): Residuals from trace fitting per line.
         fitted_trace_positions (ndarray): Smoothed trace-space positions of arc lines.
         arc_pixel_locations (ndarray): Raw arc line pixel positions per fiber.
     """
+    # Correct data to be binned by 2 if binned is True
+    if binned:
+        arc_pixel_guesses = arc_pixel_guesses / 2.
+
+    # Original function code continues below...
     logger.info("Starting wavelength solution fit for %d out of %d fibers",
                 valid_fibers.sum(), spectra.shape[0])
 
     dispersion_axis = np.arange(trace_positions.shape[1])
 
     arc_pixel_locations = _compute_arc_positions(spectra, valid_fibers, reference_fiber_index, arc_pixel_guesses,
-                                                 arc_wavelengths, use_kernel, peak_threshold)
+                                                 arc_wavelengths, peak_threshold)
 
     fitted_arc_line_positions, residuals = _fit_arc_line_positions(arc_pixel_locations, trace_positions, valid_fibers)
 
@@ -101,8 +105,8 @@ def _validate_matched_arc_lines(fitted_arc_line_positions, expected_arc_line_pos
     return fitted_arc_line_positions, expected_arc_line_positions
 
 def _compute_arc_positions(spectra, valid_fibers, reference_index,
-                           arc_pixel_guesses, arc_wavelengths, use_kernel, peak_threshold=5,
-                           match_threshold=2.0):
+                           arc_pixel_guesses, arc_wavelengths, peak_threshold=5,
+                           match_threshold=2.0, use_kernel=True):
     """
     Detects arc line pixel positions for each fiber, starting from a reference and spreading out.
 
@@ -232,8 +236,8 @@ def _fit_wavelength_polynomials(fitted_trace_positions, arc_pixels, arc_waveleng
     wavelength_solution = np.zeros((num_fibers, len(dispersion_axis)))
 
     for fiber_idx in range(num_fibers):
-        if not valid_fibers[fiber_idx]:
-            continue
+        #if not valid_fibers[fiber_idx]:
+        #    continue
         coeffs = np.polyfit(fitted_trace_positions[fiber_idx][good_arc_lines],
                             arc_wavelengths[good_arc_lines], 5)
         wavelength_solution[fiber_idx] = np.polyval(coeffs, dispersion_axis)
@@ -282,14 +286,21 @@ def _get_arclines_fiber(spectrum, init_loc=None, limit=5, use_kernel=True):
 
     return np.array(loc)
 
-def get_rectified_wavelength(config_dict):
-    """
+def get_rectified_wavelength(start_wavelength, end_wavelength, detector_dimensions):
+    """Generate a uniformly spaced wavelength grid.
+
+    Creates a linear wavelength grid between specified start and end wavelengths
+    with the number of points equal to the X dimension of the detector.
+
     Args:
-        config_dict: Dictionary of configuration parameters.
+        start_wavelength (float): Starting wavelength value
+        end_wavelength (float): Ending wavelength value
+        detector_dimensions (dict): Dictionary containing detector dimensions with keys:
+            - X (int): Number of points in the wavelength grid (detector X dimension)
+            - Y (int): Y dimension of the detector (not used)
 
     Returns:
-        def_wavelength (ndarray): 1D rectified wavelength array
+        def_wavelength (ndarray): 1D rectified wavelength array with uniform spacing
     """
-    def_wavelength = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
-                                 config_dict['detector_dimensions']['X'])
+    def_wavelength = np.linspace(start_wavelength, end_wavelength, detector_dimensions['X'])
     return def_wavelength

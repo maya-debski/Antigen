@@ -11,7 +11,6 @@ from antigen import ccd
 from antigen import config
 from antigen import fiber
 from antigen import io
-from antigen import plot
 from antigen import sky
 from antigen import spectra
 from antigen import trace
@@ -145,8 +144,8 @@ def process_calibration(manifest_record, output_path, config_dict):
     def_wave = np.linspace(config_dict['start_wavelength'], config_dict['end_wavelength'],
                            config_dict['detector_dimensions']['X'])
 
-    lines = config_dict['wavelength']
-    xref = config_dict['column']
+    lines = config_dict['arc_lines']
+    xref = config_dict['dispersion_reference_x']
     peak_threshold = config_dict['arc_flux_limit']
     fiber_ref = config_dict['reference_fiber_index']
     use_kernel = True
@@ -181,6 +180,9 @@ def process_calibration(manifest_record, output_path, config_dict):
     logger.info('Getting trace for each master flat')
     trace_array, good_fiber_mask, raw_trace_matrix, x_chunk_centers = trace.get_trace(master_flat_data - master_bias_data,
                                                                                 trace_rows, exclude_fiber)
+
+    # Lazy Loading
+    from antigen import plot
     _, _ = plot.plot_trace(trace_array, raw_trace_matrix, x_chunk_centers,
                            fiber_indices=config_dict['sample_fiber_indices'],
                            outfolder=output_path)
@@ -198,8 +200,6 @@ def process_calibration(manifest_record, output_path, config_dict):
     # save lamp spec data to FITS and PNG
     lamp_spec_test_fits_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.fits'))
     fits.PrimaryHDU(lamp_spec).writeto(lamp_spec_test_fits_filename, overwrite=True)
-    lamp_spec_test_plot_filename = os.path.abspath(os.path.join(output_path, 'lamp_spec.png'))
-    plot.plot_frame(lamp_spec, save_file=lamp_spec_test_plot_filename, title='Lamp Spec')
 
     #TODO: Need to test if binned in a better way.
     if config_dict['detector_dimensions']['X'] < config_dict['detector_dimensions']['Y']:

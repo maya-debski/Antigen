@@ -22,7 +22,10 @@ def identify_sky_pixels(sky, per=50, size=50):
     # Apply a percentile filter to smooth the sky data and estimate the continuum
     cont = percentile_filter(sky, per, size=size)
 
-    mask = sigma_clip(sky - cont, masked=True, maxiters=None, stdfunc=mad_std, sigma=5)
+    # Mask invalid values before sigma clipping to avoid astropy warnings
+    diff = sky - cont
+    diff_ma = np.ma.masked_invalid(diff)
+    mask = sigma_clip(diff_ma, masked=True, maxiters=None, stdfunc=mad_std, sigma=5)
 
     # Return the mask (True for sky pixels) and the filtered continuum
     return mask.mask, cont
@@ -51,11 +54,16 @@ def get_skymask(sky, per=50, size=50, niter=3):
 
         try:
             # Apply sigma-clipping to identify sky pixels using robust statistics
-            mask = sigma_clip(sky - cont, masked=True, maxiters=None,
+            # Mask invalid values before sigma clipping to avoid astropy warnings
+            diff = sky - cont
+            diff_ma = np.ma.masked_invalid(diff)
+            mask = sigma_clip(diff_ma, masked=True, maxiters=None,
                               stdfunc=mad_std, sigma=5, sigma_lower=500)
         except:
             # Fallback for older versions of sigma_clip
-            mask = sigma_clip(sky - cont, iters=None, stdfunc=mad_std,
+            diff = sky - cont
+            diff_ma = np.ma.masked_invalid(diff)
+            mask = sigma_clip(diff_ma, iters=None, stdfunc=mad_std,
                               sigma=5, sigma_lower=500)
 
         # Update the sky values for masked pixels using the continuum
@@ -63,10 +71,15 @@ def get_skymask(sky, per=50, size=50, niter=3):
 
     # Perform a final sigma-clipping pass using the original sky data
     try:
-        mask = sigma_clip(sky_orig - cont, masked=True, maxiters=None,
+        # Final pass with invalids masked to avoid warnings
+        diff_final = sky_orig - cont
+        diff_final_ma = np.ma.masked_invalid(diff_final)
+        mask = sigma_clip(diff_final_ma, masked=True, maxiters=None,
                           stdfunc=mad_std, sigma=5, sigma_lower=500)
     except:
-        mask = sigma_clip(sky_orig - cont, iters=None, stdfunc=mad_std,
+        diff_final = sky_orig - cont
+        diff_final_ma = np.ma.masked_invalid(diff_final)
+        mask = sigma_clip(diff_final_ma, iters=None, stdfunc=mad_std,
                           sigma=5, sigma_lower=500)
 
     # Return the final mask and continuum array
@@ -75,20 +88,24 @@ def get_skymask(sky, per=50, size=50, niter=3):
 
 def subtract_sky(spectra, good):
     """
-    Subtract the sky background from spectra by identifying sky fibers
-    and performing a biweight calculation.
+    Subtracts sky contributions from input spectra using biweight calculations.
 
-    Parameters
-    ----------
-    spectra : 2d numpy array
-        The input spectra data where rows represent fibers and columns represent wavelengths.
-    good : 1d numpy array of bools
-        Boolean mask indicating which fibers are good (non-sky).
+    This function processes the input spectra to calculate and subtract the sky
+    contribution, ensuring accurate data for further analysis. It identifies sky
+    pixels, computes the biweighted sky spectrum, and subtracts the sky spectrum
+    from the original input spectra.
 
-    Returns
-    -------
-    2d numpy array
-        Spectra with the sky background subtracted for each fiber.
+    Args:
+        spectra: ndarray
+            A 2D array where rows represent fibers and columns represent wavelength
+            bins.
+        good: ndarray
+            A 1D boolean array indicating whether a fiber is good (True) or not
+            (False).
+
+    Returns:
+        sky_subtracted_frame: The sky-subtracted spectra.
+        init_sky: The biweighted sky spectrum for each fiber.
     """
 
     # Get the number of fibers and number of wavelength bins
@@ -99,10 +116,17 @@ def subtract_sky(spectra, good):
     n2 = int(2. / 3. * N)
 
     # Calculate the biweight of spectra over the middle third of each fiber's data
-    y = biweight(spectra[:, n1:n2], axis=1, ignore_nan=True)
+    # Prefilter finite values per fiber to avoid astropy warnings
+    biweighted_spectrum = np.full((nfibs,), np.nan, dtype=float)
+    middle = spectra[:, n1:n2]
+    for i in range(nfibs):
+        row = middle[i]
+        sel = np.isfinite(row)
+        if np.any(sel):
+            biweighted_spectrum[i] = biweight(row[sel], ignore_nan=True)
 
     # Identify sky pixels based on the biweighted data and apply a mask
-    mask, cont = identify_sky_pixels(y[good], size=15)
+    mask, cont = identify_sky_pixels(biweighted_spectrum[good], size=15)
 
     # Create a mask for fibers that are not good and are sky fibers
     m1 = ~good
@@ -110,10 +134,19 @@ def subtract_sky(spectra, good):
     skyfibers = ~m1
 
     # Compute the biweighted sky spectrum based on sky fibers
-    init_sky = biweight(spectra[skyfibers], axis=0, ignore_nan=True)
+    # Do per-wavelength finite filtering across selected sky fibers
+    init_sky = np.full((N,), np.nan, dtype=float)
+    if np.any(skyfibers):
+        sub = spectra[skyfibers]
+        for j in range(N):
+            col = sub[:, j]
+            sel = np.isfinite(col)
+            if np.any(sel):
+                init_sky[j] = biweight(col[sel], ignore_nan=True)
 
     # Subtract the sky spectrum from the original spectra
-    return spectra - init_sky[np.newaxis, :]
+    sky_subtracted_frame = spectra - init_sky[np.newaxis, :]
+    return sky_subtracted_frame, init_sky
 
 
 def get_pca_sky_residuals(data, ncomponents=config.DEFAULT_PCA_COMPONENTS_SKY):
@@ -167,20 +200,35 @@ def get_residual_map(data, pca):
         The residual map, which is the difference between the input data and the PCA model.
     """
 
-    # Initialize the residual map with zeros
-    res = data * 0.
+    # Initialize the residual map with zeros without propagating NaNs
+    # Avoid data * 0. which can emit RuntimeWarning when data contains NaNs
+    res = np.zeros_like(data)
 
     # Loop over each column (feature) in the input data
     for i in np.arange(data.shape[1]):
 
-        # Compute the absolute deviation from the median for each column
-        A = np.abs(data[:, i] - np.nanmedian(data[:, i]))
+        # Work on a single column and guard against all-NaN slices
+        col = data[:, i]
+        finite = np.isfinite(col)
+        if not np.any(finite):
+            # No valid data in this column; skip (leave zeros)
+            continue
+
+        # Compute deviations from median using only finite data
+        med = np.nanmedian(col[finite])
+        A = np.abs(col - med)
+        A_finite = A[np.isfinite(A)]
+        if A_finite.size == 0:
+            continue
 
         # Identify the "good" data points (those within 3 times the median deviation)
-        good = A < (3. * np.nanmedian(A))
+        thr = 3.0 * np.nanmedian(A_finite)
+        good = A < thr
 
         # Select finite values and good points for the model fitting
-        sel = np.isfinite(data[:, i]) * good
+        sel = finite & good
+        if not np.any(sel):
+            continue
 
         # Compute the PCA coefficients for the selected data points
         coeff = np.dot(data[sel, i], pca.components_.T[sel])
@@ -269,8 +317,9 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
     """
     # TODO: fix magic number default for nbins, use CONFIG params?
 
-    # Initialize the output array for the continuum with zeros
-    bigcont = skysub * 0.
+    # Initialize the output array for the continuum with zeros without propagating NaNs
+    # Avoid skysub * 0. which can emit RuntimeWarning when skysub contains NaNs
+    bigcont = np.zeros_like(skysub)
 
     # Loop over each row (spectrum) in the sky-subtracted data
     for j in np.arange(skysub.shape[0]):
@@ -282,7 +331,12 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
         x = np.array([np.mean(chunk) for chunk in np.array_split(np.arange(len(y)), nbins)])
 
         # Calculate the biweighted median for each bin
-        z = np.array([biweight(chunk, ignore_nan=True) for chunk in np.array_split(y, nbins)])
+        # Prefilter NaNs/Infs to avoid RuntimeWarnings inside astropy stats
+        z = np.array([
+            (biweight(chunk[np.isfinite(chunk)], ignore_nan=True)
+             if np.isfinite(chunk).sum() > 0 else np.nan)
+            for chunk in np.array_split(y, nbins)
+        ])
 
         # Select bins with finite values for interpolation
         sel = np.isfinite(z)
@@ -297,3 +351,116 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
 
     # Return the computed continuum for all spectra
     return bigcont
+
+def advanced_sky_subtraction(spectra, good_fiber_mask, pca=None, 
+                            skymask_size=25, apply_pca_residuals=True,
+                            continuum_bins=50):
+    """
+    Perform advanced sky subtraction with optional PCA residual correction.
+    
+    This function provides a comprehensive sky subtraction pipeline that can
+    optionally apply PCA-based residual correction for improved sky removal.
+    
+    Args:
+        spectra (numpy.ndarray): Input spectra (fibers x wavelength)
+        good_fiber_mask (numpy.ndarray): Boolean mask of good (non-sky) fibers
+        pca (sklearn.decomposition.PCA, optional): Pre-fitted PCA model for
+            residual correction. If None, no PCA correction is applied.
+        skymask_size (int, optional): Size for sky mask generation. Defaults to 25.
+        apply_pca_residuals (bool, optional): Whether to apply PCA residual
+            correction. Defaults to True.
+        continuum_bins (int, optional): Number of bins for continuum estimation.
+            Defaults to 50.
+            
+    Returns:
+        numpy.ndarray or tuple: Sky-subtracted spectra. If return_intermediates
+            is True, returns tuple of (sky_subtracted, residuals, continuum).
+            
+    Example:
+        >>> # Basic sky subtraction
+        >>> sky_sub = sky.advanced_sky_subtraction(spectra, good_fibers)
+        >>> 
+        >>> # Advanced with PCA correction
+        >>> sky_sub = sky.advanced_sky_subtraction(
+        ...     spectra, good_fibers, pca=pca_model, skymask=mask
+        ... )
+        >>> 
+        >>> # With diagnostics
+        >>> sky_sub, residuals, cont = sky.advanced_sky_subtraction(
+        ...     spectra, good_fibers, pca=pca_model, skymask=mask,
+        ...     return_intermediates=True
+        ... )
+    """
+    # Perform basic sky subtraction
+    sky_subtracted_basic, biweighted_spectrum = subtract_sky(spectra, good_fiber_mask)
+    
+    residuals = None
+    continuum = None
+    sky_subtracted_advanced = sky_subtracted_basic
+    if apply_pca_residuals and pca is not None:
+        # Expand sky mask for better continuum estimation
+        skymask, continuum = get_skymask(biweighted_spectrum, size=skymask_size)
+        expanded_skymask = skymask.copy()
+        expanded_skymask[1:] += skymask[:-1]  # Add previous pixel
+        expanded_skymask[:-1] += skymask[1:]  # Add next pixel
+        
+        # Estimate continuum
+        continuum = get_continuum(sky_subtracted_basic, expanded_skymask,
+                                nbins=continuum_bins)
+        
+        # Calculate residuals after continuum subtraction
+        residual_input = sky_subtracted_basic - continuum
+        residuals = get_residual_map(residual_input, pca)
+        
+        # Mask residuals where sky mask is invalid
+        residuals[:, ~expanded_skymask] = 0.0
+        
+        # Apply residual correction
+        sky_subtracted_advanced = sky_subtracted_basic- residuals
+    
+    return sky_subtracted_advanced, sky_subtracted_basic, residuals, continuum
+
+
+def generate_pca_from_arc_spectra(arc_spectra, good_fiber_mask, ftf_correction, 
+                                  skymask_size=25, pca_components=15):
+    """
+    Generate PCA model from rectified arc lamp spectra for sky subtraction.
+    
+    This function processes arc spectra through the same sky processing pipeline
+    used for science data to create a PCA model that can be applied for 
+    residual sky subtraction in science observations.
+    
+    Args:
+        arc_spectra (numpy.ndarray): Rectified arc lamp spectra (fibers x wavelength)
+        good_fiber_mask (numpy.ndarray): Boolean mask of good fibers
+        ftf_correction (numpy.ndarray): Fiber-to-fiber correction array
+        skymask_size (int, optional): Size for sky mask generation. Defaults to 25.
+        pca_components (int, optional): Number of PCA components. Defaults to 15.
+            
+    Returns:
+        tuple: A tuple containing:
+            - pca (sklearn.decomposition.PCA): Fitted PCA model
+            - skymask (numpy.ndarray): Sky mask used for processing
+            - continuum (numpy.ndarray): Continuum model
+            - biweighted_spectrum (numpy.ndarray): Biweighted spectrum
+    """
+    # Apply fiber-to-fiber correction to arc spectra
+    # Guard against zeros/NaNs in ftf_correction to avoid divide-by-zero/invalid warnings
+    den = ftf_correction
+    valid = np.isfinite(den) & (den != 0)
+    arc_corrected = np.full_like(arc_spectra, np.nan)
+    np.divide(arc_spectra, den, out=arc_corrected, where=valid)
+
+    # Generate biweighted spectrum for sky mask creation
+    biweighted_spectrum = biweight(arc_corrected, axis=0, ignore_nan=True)
+
+    # Generate sky mask and continuum
+    skymask, continuum = get_skymask(biweighted_spectrum, size=skymask_size)
+
+    # Perform sky subtraction on arc spectra  
+    arc_sky_subtracted, arc_biweight_spectrum = subtract_sky(arc_corrected, good_fiber_mask)
+        
+    pca = get_arc_pca(arc_sky_subtracted, good_fiber_mask, skymask, 
+                      components=pca_components)
+    
+    return pca, skymask, continuum, biweighted_spectrum
