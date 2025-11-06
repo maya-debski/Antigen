@@ -106,6 +106,48 @@ options:
 ### Measuring Response
 
 ```plaintext
+options:
+  -h, --help            show this help message and exit
+  -r, --reduced_dir REDUCED_DIR
+                        Path to directory with reduced standard star frames.
+  -o, --output_folder OUTPUT_FOLDER
+                        Path to output folder for response function.
+  -s, --standard_name STANDARD_NAME
+                        Name for standard star files in reduced-dir (ex: Feige).
+  -e, --extraction_radius EXTRACTION_RADIUS
+                        Extraction radius in arcsec.
+  -p, --pixel_size PIXEL_SIZE
+                        Cube pixel size in arcsec.
+  -v, --verbose         if True, print more process details and logger.info to console
+  -d, --debug           if True, print more process details and logger.debug to console
+  -g, --binned          Data is binned in the x-direction?
+```
 
+### Cube Creation
+
+```plaintext
+options:
+  -h, --help            show this help message and exit
+  -r, --reduced_dir REDUCED_DIR
+                        Path to directory with reduced standard star frames.
+  -o, --output_folder OUTPUT_FOLDER
+                        Path to output folder for response function.
+  -s, --object_name OBJECT_NAME
+                        Name for standard star files in reduced-dir (ex: Feige).
+  -e, --extraction_radius EXTRACTION_RADIUS
+                        Extraction radius in arcsec.
+  -p, --pixel_size PIXEL_SIZE
+                        Cube pixel size in arcsec.
+  -v, --verbose         if True, print more process details and logger.info to console
+  -d, --debug           if True, print more process details and logger.debug to console
+  -i, --interpolation_method {linear,nearest,cubic,rbf,gdw}
+                        Interpolation method for cube construction (default: gdw)
+  -k, --k_neighbors K_NEIGHBORS
+                        Number of neighbors for GDW interpolation (default: 11)
+  --sigma_gdw SIGMA_GDW
+                        Standard deviation for GDW interpolation in arcseconds (default: 2.5)
+  --rbf_function {multiquadric,inverse,gaussian,linear,cubic,quintic,thin_plate}
+                        Radial basis function type for RBF interpolation (default: multiquadric)
+  -g, --binned          Data is binned in the x-direction?
 ```
     ```
