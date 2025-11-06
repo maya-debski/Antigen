@@ -196,3 +196,20 @@ options:
 ```
 
 See [make_cubes.md](./docs/scripts/make_cubes.md) for more information about `antigen_make_cubes.py`
+
+## Citation 
+
+If you use Antigen in your research, please cite the following publications:
+- JOSS:
+- Zenodo:
+
+If there is no place to include the relevant citations in the text of the publication, please include the following acknowledgement (provided in LaTeX):
+```plaintext
+This research made use of \texttt{Antigen}, \footnote{\url{https://github.com/maya-debski/Antigen}} the data reduction pipeline for the VIRUS family of integral field spectrographs on the 2.7m Harlan J. Smith Telescope at McDonald Observatory \citep{ADD CITATION HERE}. 
+```
+
+## Developers
+
+- Maya Debski 
+- Gregory Zeimann
+- Jason Vestuto
