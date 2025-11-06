@@ -66,7 +66,7 @@ The arguments for this script are:
                         Spectrograph setup or configuration element, such as VP1B or VP1R (default: VP1B).
   ```
 
-See [prepare_dataset.md](./docs/scripts/prepare_dataset.md) for more information about `antigen_prepare_dataset.py`
+See [prepare_dataset_script.md](docs/scripts/prepare_dataset_script.md) for more information about `antigen_prepare_dataset.py`
 
 ### Base CCD Reduction
 
@@ -118,7 +118,7 @@ options:
   -g, --binned          Data is binned in the x-direction?
 ```
 
-See [base_reduction.md](./docs/scripts/base_reduction.md) for more information about `antigen_base_reduction.py`
+See [base_reduction_script.md](docs/scripts/base_reduction_script.md) for more information about `antigen_base_reduction.py`
 
 ### Measuring Response
 
@@ -155,7 +155,7 @@ options:
   -g, --binned          Data is binned in the x-direction?
 ```
 
-See [measure_response.md](./docs/scripts/measure_response.md) for more information about `antigen_measure_response.py`
+See [measure_response_script.md](docs/scripts/measure_response_script.md) for more information about `antigen_measure_response.py`
 
 ### Cube Creation
 
@@ -195,7 +195,7 @@ options:
   -g, --binned          Data is binned in the x-direction?
 ```
 
-See [make_cubes.md](./docs/scripts/make_cubes.md) for more information about `antigen_make_cubes.py`
+See [make_cubes_script.md](docs/scripts/make_cubes_script.md) for more information about `antigen_make_cubes.py`
 
 ## Citation 
 
