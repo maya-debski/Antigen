@@ -113,6 +113,15 @@ See [base_reduction.md](./docs/scripts/base_reduction.md) for more information a
 
 ### Measuring Response
 
+Antigen allows you to optionally measure response for GCMS/VIRUS-2 given a reduced observation of a standard star using the script [antigen_measure_reponse.py](./scripts/antigen_measure_response.py). This script will:
+ - Scan a directory of reduced datasets for standard star frames.
+ - Generate a dataset manifest for each candidate standard star.
+ - Select the datasets matching the requested standard star name.
+ - For each match:
+     * Build an instrument response function by comparing the observed
+       spectrum with a reference CALSPEC spectrum.
+     * Save the response manifest and response products to the output folder.
+
 An example call might be:
 ```bash
 $ antigen_measure_response.py -r ~/20240607/data/reduced -o ~/20240607/data/response -s Feige110 -v -g
@@ -140,6 +149,10 @@ options:
 See [measure_response.md](./docs/scripts/measure_response.md) for more information about `antigen_measure_response.py`
 
 ### Cube Creation
+
+Antigen creates 3D datacubes from reduced fiber spectra with DAR correction with the script [antigen_make_cubes.py](./scripts/antigen_make_cubes.py). This script will:
+- Process fiber spectra
+- Create a spatial datacube using interpolation methods
 
 An example call might be:
 ```bash
