@@ -32,7 +32,7 @@ Antigen requires a particular folder and file tree structure. Given a folder of 
 An example call might be:
 ```bash
 $ conda activate env_antigen
-$ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -o ~/data -c 20240609 -m GCMS -j VP1R -v
+$ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240607 -o ~/data -c 20240607 -m GCMS -j VP1B -v
 ```
 The arguments for this script are:
 ```plaintext
@@ -66,10 +66,16 @@ The arguments for this script are:
                         Spectrograph setup or configuration element, such as VP1B or VP1R (default: VP1B).
   ```
 
-See [prepare_dataset.md](./docs/scripts/prepare_dataset.md) for more information about `antigen_prepare_dataset.py
+See [prepare_dataset.md](./docs/scripts/prepare_dataset.md) for more information about `antigen_prepare_dataset.py`
 
 ### Base CCD Reduction
 
+An example call might be:
+```bash
+$ antigen_base_reduction.py -i ~/20240607/data -o ~/20240607/data/reduced -c 20240607 -r -m GCMS -g -v
+```
+
+The arguments for this script are:
 ```plaintext
 options:
   -h, --help            show this help message and exit
@@ -103,8 +109,16 @@ options:
   -g, --binned          Data is binned in the x-direction?
 ```
 
+See [base_reduction.md](./docs/scripts/base_reduction.md) for more information about `antigen_base_reduction.py`
+
 ### Measuring Response
 
+An example call might be:
+```bash
+$ antigen_measure_response.py -r ~/20240607/data/reduced -o ~/20240607/data/response -s Feige110 -v -g
+```
+
+The arguments for this script are:
 ```plaintext
 options:
   -h, --help            show this help message and exit
@@ -123,8 +137,16 @@ options:
   -g, --binned          Data is binned in the x-direction?
 ```
 
+See [measure_response.md](./docs/scripts/measure_response.md) for more information about `antigen_measure_response.py`
+
 ### Cube Creation
 
+An example call might be:
+```bash
+$ antigen_make_cubes.py -r ~/20240607/data/reduced -o ~/20240607/data/cubes -v -g
+```
+
+The arguments for this script are:
 ```plaintext
 options:
   -h, --help            show this help message and exit
@@ -150,4 +172,5 @@ options:
                         Radial basis function type for RBF interpolation (default: multiquadric)
   -g, --binned          Data is binned in the x-direction?
 ```
-    ```
+
+See [make_cubes.md](./docs/scripts/make_cubes.md) for more information about `antigen_make_cubes.py`
