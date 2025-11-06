@@ -70,6 +70,15 @@ See [prepare_dataset.md](./docs/scripts/prepare_dataset.md) for more information
 
 ### Base CCD Reduction
 
+Antigen does basic CCD reduction for GCMS/VIRUS-2/VIRUS-W. The script [antigen_base_reduction.py](./scripts/antigen_base_reduction.py) will:
+- Trim the overscan region
+- Orient images
+- Correct for gain
+- Create master calibration frames
+- Calibrate wavelength
+- Process flat fields to find the fiber-to-fiber
+- Model the sky for sky subtraction
+
 An example call might be:
 ```bash
 $ antigen_base_reduction.py -i ~/20240607/data -o ~/20240607/data/reduced -c 20240607 -r -m GCMS -g -v
