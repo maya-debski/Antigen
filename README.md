@@ -1,23 +1,44 @@
 # Antigen
 
-Data Reduction Pipelines for GCMS (VIRUS-P), VIRUS-W, and VIRUS-2
+Data Reduction Pipeline for GCMS (VIRUS-P), VIRUS-W, and VIRUS-2
 
 ## Overview
 
-- Antigen is designed to reduce data from the George and Cynthia Mitchell Spectrograph (GCMS) and VIRUS-W on the 2.7m Harlan J. Smith Telescope at McDonald Observatory. 
-- In its current state, Antigen outputs a fits file for each science exposure in a night of data taken with GCMS that is the fiber-extracted, wavelength-calibrated, but "raw" spectra.  
+Antigen is designed to reduce data from the George and Cynthia Mitchell Spectrograph (GCMS), VIRUS-W, and the forthcoming VIRUS-2 instruments on the 2.7m Harlan J. Smith Telescope at McDonald Observatory. Antigen automates CCD reduction, wavelength and flux calibration, and the generation of science-ready datacubes and outputs FITS files and diagnostic plots at each step of the process (base CCD reduction, response measurement (optional), and cube creation).
 
 ## Contributing
 
-- for collaborative development, see git workflow, see [./git-workflow.md](./git-workflow.md)
+- for collaborative development, see git workflow, see [git-workflow.md](./git-workflow.md)
 - for Issues/Requests, see the data reduction template presented by GitHub when creating a new issue.
 
 ## Installation
 
-- for installing conda, see [./install_conda.sh](./install_conda.sh)
-- for installing the `antigen` python package, see [./INSTALL.md](INSTALL.md)
+- for installing conda, see [install_conda.sh](.docs/installation/install_conda.sh)
+- for installing the `antigen` python package, see [INSTALL.md](./docs/installation/INSTALL.md)
 
 ## Usage
+
+### Dataset Preparation
+
+Antigen requires a particular folder and file tree structure. Given a folder of a night of raw data, the script [antigen_prepare_dataset.py](./scripts/antigen_prepare_dataset.py) will:
+- Scan the specified input folder for all FITS files matching *.fits.
+- Read each file’s FITS header to extract the target name, observation date, and UT time.
+- Determine the frame type (science, bias, flat, arc, or dark) using keywords in the OBJECT header.
+- Create an organized output folder hierarchy:
+```plaintext
+  OUT_FOLDER/<instrument>/<obsdate>/<obsid>/<element>/
+```
+- Rename and copy each file into its target folder using a clear, standardized naming convention:
+```plaintext
+  <instrument>_<obsdate>_<obsid>_<frametype>_<element>_exp<exposureindex>_<utctime>_<objectname>.fits
+```
+An example call might be:
+```bash
+$ conda activate env_antigen
+$ antigen_prepare_dataset.py -i ~/Downloads/VIRUS-P_Data/20240609 -o ~/data -c 20240609 -m GCMS -l VP1R -v
+```
+
+
 
 ### GCMS Usage
 - for GCMS, you will want to copy the data to a folder structure to help the antigen reduction
