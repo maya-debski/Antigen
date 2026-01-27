@@ -11,9 +11,9 @@ Antigen requires a particular folder and file tree structure. Given a folder of 
 - Read each file’s FITS header to extract the target name, observation date, and UT time.
 - Determine the frame type (science, bias, flat, arc, or dark) using keywords in the OBJECT header.
 - Create an organized output folder hierarchy:
-  `OUT_FOLDER/<instrument>/<obsdate>/<obsid>/<element>/`
+`OUT_FOLDER/<instrument>/<obsdate>/<obsid>/<element>/`
 - Rename and copy each file into its target folder using a clear, standardized naming convention:
-  `<instrument>_<obsdate>_<obsid>_<frametype>_<element>_exp<exposureindex>_<utctime>_<objectname>.fits`
+`<instrument>_<obsdate>_<obsid>_<frametype>_<element>_exp<exposureindex>_<utctime>_<objectname>.fits`
 
 An example call might be:
 ```bash
