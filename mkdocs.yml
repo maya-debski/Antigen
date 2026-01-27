@@ -1,0 +1,25 @@
+site_name: Antigen Documentation
+repo_url: https://github.com/maya-debski/Antigen
+docs_dir: docs
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+  - User Guide:
+      - CLI Usage: user-guide/cli.md
+      - Configuration: user-guide/configuration.md
+      - Examples: user-guide/examples.md
+  - Data Products: data-products/overview.md
+  - Algorithms: algorithms/overview.md
+  - API: api/index.md
+  - Community:
+      - Contributing: community/contributing.md
+      - Code of Conduct: community/code_of_conduct.md
+  - Release Info:
+      - Changelog: release_info/changelog.md
+  - Citation: citation/citation.md
+
+theme:
+  name: mkdocs
