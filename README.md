@@ -20,9 +20,9 @@ pip install . --no-deps
 <!--Compatibility note: The environment is pinned to numpy<2.0 with astropy<6 (see [environment.yml](environment.yml) / [pyproject.toml](pyproject.toml)). If you need NumPy 2.x, upgrade Astropy to ≥6 and test locally.-->
 
 ## Quickstart (CLI)
-
 For a step-by-step walkthrough, sample data download, and additional options, see the full Quickstart guide. It complements and expands the brief commands shown here: [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md)
 
+**HAVE QUICKSTART EXAMPLE HERE**
 
 More examples and options: [CLI user guide](docs/user-guide/cli.md) and [Examples](docs/user-guide/examples.md).
 
@@ -42,10 +42,12 @@ More examples and options: [CLI user guide](docs/user-guide/cli.md) and [Example
 - License: BSD‑3‑Clause ([LICENSE](LICENSE))
 
 ## Contributing
-We welcome issues and pull requests. Please read [Contributing guide](docs/community/contributing.md). For a concise developer setup and CI‑equivalent checks, see [Dev quickstart](docs/development/dev-quickstart.md).
+We welcome issues and pull requests. Please read [Contributing guide](docs/community/contributing.md).
 
 ## Developers
-
 - Maya Debski 
 - Gregory Zeimann
 - Jason Vestuto
+
+## Maintainers
+- Gregory Zeimann
