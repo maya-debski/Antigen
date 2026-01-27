@@ -1,6 +1,6 @@
 # Antigen
 
-Welcome to the Panacea docs. This site organizes the previous long README into topic-focused pages.
+Welcome to the Antigen docs. This site organizes the previous long README into topic-focused pages.
 
 ```{toctree}
 :hidden:
