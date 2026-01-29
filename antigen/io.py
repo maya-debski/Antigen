@@ -523,7 +523,7 @@ def get_fits_files_in_path(input_path, pattern='*.fits'):
 
 
 def write_cube(cube, wavelength, header, x_grid, y_grid, pixel_size, 
-               output_folder=None, instrument=None, instrument_element=None, overwrite=True):
+               output_folder=None, instrument=None, instrument_element=None, errorcube=None, overwrite=True):
     """Write a spectral cube to a FITS file with relevant metadata.
 
     The function saves a datacube (lambda, y, x) to a FITS file, carrying
@@ -612,8 +612,25 @@ def write_cube(cube, wavelength, header, x_grid, y_grid, pixel_size,
     output_filename = os.path.abspath(os.path.join(output_folder, cube_name_stem + '.fits'))
 
     # Save FITS
-    hdu = fits.PrimaryHDU(data=cube.astype("float32"), header=hdr)
-    hdu.writeto(output_filename, overwrite=overwrite)
+    primary_hdu = fits.PrimaryHDU(data=cube.astype("float32"), header=hdr)
+    hdus = [primary_hdu]
+    if errorcube is not None:
+        err_hdu = fits.ImageHDU(data=errorcube.astype("float32"), name='ERROR')
+        # replicate minimal WCS meta for clarity on axes
+        err_hdu.header['CTYPE1'] = hdr.get('CTYPE1', 'X')
+        err_hdu.header['CTYPE2'] = hdr.get('CTYPE2', 'Y')
+        err_hdu.header['CTYPE3'] = hdr.get('CTYPE3', 'WAVE')
+        err_hdu.header['CDELT1'] = hdr.get('CDELT1', pixel_size)
+        err_hdu.header['CDELT2'] = hdr.get('CDELT2', pixel_size)
+        err_hdu.header['CDELT3'] = hdr.get('CDELT3', (wavelength[1]-wavelength[0]) if len(wavelength) > 1 else 1.0)
+        err_hdu.header['CRPIX1'] = hdr.get('CRPIX1', 1)
+        err_hdu.header['CRPIX2'] = hdr.get('CRPIX2', 1)
+        err_hdu.header['CRPIX3'] = hdr.get('CRPIX3', 1)
+        err_hdu.header['CRVAL1'] = hdr.get('CRVAL1', x_grid[0][0])
+        err_hdu.header['CRVAL2'] = hdr.get('CRVAL2', y_grid[0][0])
+        err_hdu.header['CRVAL3'] = hdr.get('CRVAL3', wavelength[0])
+        hdus.append(err_hdu)
+    fits.HDUList(hdus).writeto(output_filename, overwrite=overwrite)
     
     return output_filename
 
