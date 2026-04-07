@@ -13,6 +13,7 @@ dependencies:
   - psutil
   - scipy
   - scikit-learn
+  - scikit-image
   - seaborn
   - photutils
   - getcalspec
