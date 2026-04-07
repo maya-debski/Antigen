@@ -5,11 +5,115 @@ from astropy.stats import mad_std
 from astropy.convolution import Gaussian1DKernel, convolve
 import numpy as np
 from scipy.signal import medfilt2d
+from skimage.registration import phase_cross_correlation
 
 from antigen.sky import identify_sky_pixels
 from antigen.trace import _get_peak_positions
 
 logger = logging.getLogger('antigen.wavelength')
+
+def get_wavelength_registration(spectra, trace_positions, valid_fibers, arc_pixel_guesses, arc_wavelengths,
+                   peak_threshold=5, reference_fiber_index=130,
+                   good_arc_residual_limit=0.2, binned=False):
+    """
+    Computes the wavelength solution for each fiber by identifying arc lamp emission line positions
+    in each fiber's spectrum, fits a smooth curve across the fiber direction, and derives a polynomial
+    mapping from pixel position to physical wavelength.
+
+    This 'new' version first performs an initial registration between the provided arc_pixel_guesses
+    and the reference fiber spectrum by cross-correlating a synthetic comb of Gaussian lines (at the
+    guessed positions) with the continuum-subtracted reference spectrum. The measured offset is applied
+    to the arc_pixel_guesses before proceeding with the rest of the wavelength solution.
+
+    Args:
+        spectra (ndarray): 2D array of flux values; each row is a fiber spectrum.
+        trace_positions (ndarray): 2D array with trace column positions for each fiber.
+        valid_fibers (ndarray): Boolean array indicating which fibers have valid data.
+        arc_pixel_guesses (ndarray): Initial pixel location guesses for each arc line.
+        arc_wavelengths (ndarray): Known wavelengths of arc lines.
+        peak_threshold (float, optional): Minimum peak height for a valid arc line (limit = peak_threshold * noise).
+        reference_fiber_index (int): Index of the fiber used as the starting point. Default is 130.
+        good_arc_residual_limit (float, optional): Maximum residual can be to be still called a good arc line to use
+        binned (bool, optional): Whether to bin the wavelength solution. Default is False.
+    Returns:
+        wavelength_solution (ndarray): Wavelength array for each fiber.
+        residuals (ndarray): Residuals from trace fitting per line.
+        fitted_trace_positions (ndarray): Smoothed trace-space positions of arc lines.
+        arc_pixel_locations (ndarray): Raw arc line pixel positions per fiber.
+    """
+    # Correct guesses for binning if requested
+    if binned:
+        arc_pixel_guesses = arc_pixel_guesses / 2.
+
+    logger.info("Starting wavelength solution (new) with initial registration for %d/%d fibers",
+                valid_fibers.sum(), spectra.shape[0])
+
+    # Step 1: Build a synthetic Gaussian comb at the arc_pixel_guesses and cross-correlate with
+    # the continuum-subtracted reference fiber to estimate a global pixel offset.
+    try:
+        n_pixels = spectra.shape[1]
+        # Guard against pathological inputs
+        if arc_pixel_guesses is None or len(arc_pixel_guesses) == 0:
+            logger.warning("No arc_pixel_guesses provided; skipping initial registration.")
+            initial_offset = 0.0
+        else:
+            # Continuum subtraction on the reference fiber
+            ref_flux = spectra[reference_fiber_index]
+            _, ref_cont = identify_sky_pixels(ref_flux, per=5)
+            ref_flux_corr = (ref_flux - ref_cont).astype(float)
+
+            # Do not apply additional normalization; only continuum subtraction as requested
+            # (retain original flux scaling for phase cross-correlation)
+
+            # Construct synthetic comb with unit Gaussians at guessed positions
+            x = np.arange(n_pixels, dtype=float)
+            synth = np.zeros(n_pixels, dtype=float)
+            # Reasonable sigma for unresolved arc lines in pixels
+            sigma = 1.5
+            valid_guesses = np.array(arc_pixel_guesses, dtype=float)
+            # Clip extreme guesses to safe margins to avoid underflow in exp
+            valid_guesses = valid_guesses[np.isfinite(valid_guesses)]
+            if valid_guesses.size == 0:
+                logger.warning("All arc_pixel_guesses are non-finite; skipping initial registration.")
+                initial_offset = 0.0
+            else:
+                for g in valid_guesses:
+                    # Skip wildly out-of-bounds guesses
+                    if g < -5 or g > n_pixels + 5:
+                        continue
+                    synth += np.exp(-0.5 * ((x - g) / sigma) ** 2)
+                # Use phase cross-correlation for subpixel registration (no normalization)
+                shift, error, diffphase = phase_cross_correlation(ref_flux_corr, synth, upsample_factor=10,
+                                                                  normalization=None)
+                # phase_cross_correlation returns the shift required to apply to 'synth' to align to 'ref_flux_corr'
+                # For 1D arrays, shift is a tuple with one element
+                initial_offset = float(shift[0])
+
+        if initial_offset != 0.0:
+            logger.info(f"Initial registration offset estimated: {initial_offset:+.3f} px")
+            # Apply offset to guesses and clip to detector bounds
+            arc_pixel_guesses = np.array(arc_pixel_guesses, dtype=float) + initial_offset
+            arc_pixel_guesses = np.clip(arc_pixel_guesses, 0, n_pixels - 1)
+    except Exception as e:
+        logger.exception("Initial registration step failed; proceeding without it: %s", e)
+
+    dispersion_axis = np.arange(trace_positions.shape[1])
+
+    # Proceed with the standard pipeline using the (possibly) adjusted guesses
+    arc_pixel_locations = _compute_arc_positions(spectra, valid_fibers, reference_fiber_index, arc_pixel_guesses,
+                                                 arc_wavelengths, peak_threshold)
+
+    fitted_arc_line_positions, residuals = _fit_arc_line_positions(arc_pixel_locations, trace_positions, valid_fibers)
+
+    wavelength_solution = _fit_wavelength_polynomials(fitted_arc_line_positions, arc_pixel_locations, arc_wavelengths,
+                                                      valid_fibers, dispersion_axis,
+                                                      good_arc_residual_limit=good_arc_residual_limit)
+
+    num_good_lines = np.sum(residuals < good_arc_residual_limit)
+    logger.info("Wavelength calibration (new) complete using %d out of %d arc lines",
+                num_good_lines, len(residuals))
+
+    return wavelength_solution, residuals, fitted_arc_line_positions, arc_pixel_locations
 
 def get_wavelength(spectra, trace_positions, valid_fibers, arc_pixel_guesses, arc_wavelengths,
                    peak_threshold=5, reference_fiber_index=130,
