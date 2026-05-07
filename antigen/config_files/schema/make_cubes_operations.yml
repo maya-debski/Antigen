@@ -128,6 +128,10 @@ schema:
           type: ndarray
           required: true
           source: state
+        reduced_error:
+          type: ndarray
+          required: true
+          source: state
         fiber_x:
           type: ndarray
           required: true
@@ -169,11 +173,11 @@ schema:
           required: false
           default: "multiquadric"
           source: inputs.cli
-      needs: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "modeling"]
-      provides: ["datacube", "x_grid", "y_grid"]
+      needs: ["def_wave", "reduced_spectra", "reduced_error", "fiber_x", "fiber_y", "modeling"]
+      provides: ["datacube", "errorcube", "x_grid", "y_grid"]
       algorithm:
         function: "antigen.cube.make_cube"
-        args: ["def_wave", "reduced_spectra", "fiber_x", "fiber_y", "fiber_radius", 
+        args: ["def_wave", "reduced_spectra", "reduced_error", "fiber_x", "fiber_y", "fiber_radius", 
                "modeling", "pixel_size", "interpolation_method", "rbf_function",
                "k_neighbors", "sigma_gdw"]
 
@@ -181,6 +185,10 @@ schema:
       description: "Save the datacube and coordinate grids to disk using write_cube function"
       params:
         datacube:
+          type: ndarray
+          required: true
+          source: state
+        errorcube:
           type: ndarray
           required: true
           source: state
@@ -216,10 +224,10 @@ schema:
           type: str
           required: true
           source: inputs.dataset
-      needs: ["datacube", "def_wave", "header", "x_grid", "y_grid"]
+      needs: ["datacube", "errorcube", "def_wave", "header", "x_grid", "y_grid"]
       provides: ["cube_filename"]
       algorithm:
         function: "antigen.io.write_cube"
         args: ["datacube", "def_wave", "header", "x_grid", "y_grid", "pixel_size",
-               "output_folder", "unit_instrument", "unit_id"]
+               "output_folder", "unit_instrument", "unit_id", "errorcube"]
 

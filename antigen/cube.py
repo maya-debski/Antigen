@@ -10,7 +10,7 @@ logger = logging.getLogger('antigen.cube')
 
 def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10., -10., 10],
                     pixel_size=1.0, method="linear", rbf_func="multiquadric", k=5,
-                    sigma=1.0):
+                    sigma=1.0, fiber_error=None, return_error=False):
     """
     Create a synthetic image from non-uniform fiber locations and flux values.
 
@@ -34,10 +34,18 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     Returns:
         img (ndarray): synthetic image on uniform grid
         X, Y (ndarray): meshgrid coordinates
+        (optionally) err_img (ndarray): synthetic error image if return_error=True
     """
     # Clean NaNs in flux and align x/y/flux
     finite_values = np.isfinite(fiber_flux)
     x, y, flux = (fiber_x[finite_values], fiber_y[finite_values], fiber_flux[finite_values])
+
+    # Prepare error values if requested
+    if return_error:
+        if fiber_error is None:
+            raise ValueError("return_error=True but fiber_error is None")
+        # Align error with finite flux mask and convert to variance for propagation
+        fiber_var = np.square(fiber_error)[finite_values]
 
     # Define grid
     grid_size_x = int((bounds[1] - bounds[0]) / pixel_size) + 1
@@ -47,27 +55,52 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     yi = np.linspace(bounds[2], bounds[2] + (grid_size_y - 1) * pixel_size, grid_size_y)
     X, Y = np.meshgrid(xi, yi)
 
-    # If no valid input points, return zeros image
+    # If no valid input points, return zeros image (and error image)
     if x.size == 0:
         img = np.zeros_like(X, dtype=float)
+        err_img = np.zeros_like(X, dtype=float) if return_error else None
         # Correct for the area difference between the fiber size and the new pixel area
         flux_factor = pixel_size ** 2 / fiber_area
         img = img * flux_factor
+        if return_error:
+            err_img = err_img * flux_factor
+            return img, X, Y, err_img
         return img, X, Y
 
     flux_factor = pixel_size ** 2 / fiber_area
 
+    err_img = None
     if method in ["linear", "nearest", "cubic"]:
         # griddata can fail for too few points or outside convex hull; fall back to nearest
         try:
             img = griddata((x, y), flux, (X, Y), method=method)
         except Exception:
             img = griddata((x, y), flux, (X, Y), method="nearest")
+        if return_error:
+            if method == "nearest":
+                # Nearest-neighbor: propagate error directly
+                try:
+                    nearest_idx = griddata((x, y), np.arange(x.size), (X, Y), method="nearest").astype(int)
+                    var_img = fiber_var[nearest_idx]
+                except Exception:
+                    # Fallback: simple nearest on variance values
+                    var_img = griddata((x, y), fiber_var, (X, Y), method="nearest")
+            else:
+                # Approximate: interpolate variance field and take sqrt
+                try:
+                    var_img = griddata((x, y), fiber_var, (X, Y), method=method)
+                except Exception:
+                    var_img = griddata((x, y), fiber_var, (X, Y), method="nearest")
+            err_img = np.sqrt(np.clip(var_img, a_min=0.0, a_max=None))
 
     elif method == "rbf":
         # RBF interpolation
         rbf = Rbf(x, y, flux, function=rbf_func)
         img = rbf(X, Y)
+        if return_error:
+            rbf_var = Rbf(x, y, fiber_var, function=rbf_func)
+            var_img = rbf_var(X, Y)
+            err_img = np.sqrt(np.clip(var_img, a_min=0.0, a_max=None))
 
     elif method == "gdw":
         # Gaussian Distance Weighting (IDW-style)
@@ -75,6 +108,8 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
         k_eff = min(k, npts)
         if k_eff == 0:
             img = np.zeros_like(X, dtype=float)
+            if return_error:
+                err_img = np.zeros_like(X, dtype=float)
         else:
             tree = cKDTree(np.c_[x, y])
             dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k_eff)
@@ -94,15 +129,22 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
 
             # Weighted sum of flux
             img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
+            if return_error:
+                # Variance propagation: sum(w^2 * var)
+                var_val = np.sum((weights ** 2) * fiber_var[idx], axis=1).reshape(X.shape)
+                err_img = np.sqrt(np.clip(var_val, a_min=0.0, a_max=None))
 
     else:
         raise ValueError(f"Unknown method {method}")
 
     # Correct for the area difference between the fiber size and the new pixel area
     img = img * flux_factor
+    if return_error:
+        err_img = err_img * flux_factor
+        return img, X, Y, err_img
     return img, X, Y
 
-def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
+def make_cube(wavelength, fiber_spectra, fiber_error, fiber_x, fiber_y, fiber_area,
               modeling=None, pixel_size=1.0, method="linear",
               rbf_func="multiquadric", k=5, sigma=1.0):
     """Construct a 3D datacube from fiber spectra and positions.
@@ -133,6 +175,8 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         cube (ndarray):
             3D datacube with shape (N_lambda, Ny, Nx), where `Ny` and `Nx`
             are determined by the spatial extent of the fibers and `pixel_size`.
+        errorcube (ndarray):
+            3D error cube with propagated uncertainties matching cube shape.
         x_grid (ndarray): 2D array of x-locations.
         y_grid (ndarray): 2D array of y-locations.
     """
@@ -147,21 +191,28 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
     # Determine spectral dimensions and guard against mismatches
     n_wave = int(len(wavelength))
     n_spec = int(fiber_spectra.shape[1])
-    n_lambda = min(n_wave, n_spec)
-    if n_wave != n_spec:
+    # error spectra expected to match fiber_spectra shape
+    if fiber_error is None:
+        raise ValueError("fiber_error must be provided to compute error cube")
+    if fiber_error.shape != fiber_spectra.shape:
+        logger.warning("fiber_error shape %s != fiber_spectra shape %s; proceeding with min common length along spectral axis", fiber_error.shape, fiber_spectra.shape)
+    n_spec_err = int(fiber_error.shape[1])
+    n_lambda = min(n_wave, n_spec, n_spec_err)
+    if not (n_wave == n_spec == n_spec_err):
         logger.warning(
-            "Wavelength grid length (%d) != spectra columns (%d). Proceeding with %d planes. "
-            "This often indicates an incorrect binning setting; check the --binned flag in antigen_make_cubes.py.",
-            n_wave, n_spec, n_lambda
+            "Wavelength grid length (%d) != spectra columns (%d) and/or error columns (%d). Proceeding with %d planes.",
+            n_wave, n_spec, n_spec_err, n_lambda
         )
 
-    # Allocate cube
+    # Allocate cubes
     cube = np.zeros((n_lambda, ny, nx), dtype=float)
+    errorcube = np.zeros((n_lambda, ny, nx), dtype=float)
     bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
 
     # Loop over wavelength bins
     for i, lam in enumerate(wavelength[:n_lambda]):
         flux = fiber_spectra[:, i]
+        ferr = fiber_error[:, i]
 
         if modeling is not None and 'dar_model' in modeling:
             # Apply DAR model directly to each fiber position at this wavelength
@@ -169,11 +220,14 @@ def make_cube(wavelength, fiber_spectra, fiber_x, fiber_y, fiber_area,
         else:
             x_shift, y_shift = fiber_x, fiber_y
 
-        image, x_grid, y_grid = fibers_to_image(
+        result = fibers_to_image(
             x_shift, y_shift, flux, fiber_area, bounds=bounds,
             pixel_size=pixel_size, method=method,
             rbf_func=rbf_func, k=k, sigma=sigma,
+            fiber_error=ferr, return_error=True,
         )
+        image, x_grid, y_grid, err_image = result
         cube[i] = image
+        errorcube[i] = err_image
 
-    return cube, x_grid, y_grid
+    return cube, errorcube, x_grid, y_grid
