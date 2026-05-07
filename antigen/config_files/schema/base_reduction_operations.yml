@@ -180,7 +180,7 @@ schema:
       needs: [ "trace_array", "good_fiber_mask", "master_arc_spec" ]
       provides: ["wavelength_solution", "fit_diagnostics", "fitted_arc_line_positions", "arc_pixel_locations"]
       algorithm:
-        function: "antigen.wavelength.get_wavelength"
+        function: "antigen.wavelength.get_wavelength_registration"
         args: ["master_arc_spec", "trace_array", "good_fiber_mask", "dispersion_reference_x", "arc_lines",
                "arc_flux_limit", "reference_fiber_index", "good_arc_residual_limit",
                "binned"]
