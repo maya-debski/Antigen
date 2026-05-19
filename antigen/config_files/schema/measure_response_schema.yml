@@ -1,12 +1,12 @@
 schema:
   cli:
-    standard_name:
+    calspec_name:
       type: str
       required: true
-      description: Spectrophotometric standard star identifier
+      description: CALSPEC standard star identifier (can differ from target file name)
       validate:
         min_length: 1
-        pattern: "^[A-Za-z0-9_]+$"
+        pattern: '^[A-Za-z0-9_+-]+$'
 
     output_folder:
       type: path

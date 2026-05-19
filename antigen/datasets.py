@@ -24,7 +24,7 @@ def parse_reduce_file_name(fits_filename):
     """
 
     pattern = (
-        r"reduction_(?P<target>[A-Za-z0-9]+)"
+        r"reduction_(?P<target>[A-Za-z0-9+_\-]+?)"
         r"(?:_dither_(?P<dither>\d+))?"
         r"_(?P<date>\d{8}T\d{6})"
         r"_(?P<instrument>[a-zA-Z0-9]+)"
@@ -39,8 +39,9 @@ def parse_reduce_file_name(fits_filename):
         return None
 
     info = match.groupdict()
-    info["dither_number"] = int(info.pop("dither")) if info.get("dither") else 1
-    info["file_name"] = fits_filename.name
+    d = info.pop("dither", None)
+    info["dither_number"] = int(d) if d else 1
+    info["file_name"] = Path(fits_filename).name
     return info
 
 def parse_fits_file_name(fits_filename, expected_prefix_parts=8, expected_extension='.fits'):

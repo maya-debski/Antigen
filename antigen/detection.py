@@ -92,7 +92,24 @@ def detect_brightest_source(fiber_x, fiber_y, reduced_spectra, fiber_area):
     if len(sources) == 0:
         raise RuntimeError("No sources detected in the collapsed fiber image.")
 
-    j, i = (int(sources['xcentroid']), int(sources['ycentroid']))
+    # sources['xcentroid'] and ['ycentroid'] are Astropy Columns (1-D arrays) even for a single row.
+    # Extract scalar centroids safely from the first row, then map to nearest pixel and clip to bounds.
+    try:
+        row = sources[0]
+        xcen = float(row['xcentroid'])
+        ycen = float(row['ycentroid'])
+        if not np.isfinite(xcen) or not np.isfinite(ycen):
+            raise RuntimeError("Detected source has non-finite centroid coordinates.")
+        # Convert to nearest pixel indices (col=j, row=i) and clip to image bounds
+        j = int(np.rint(xcen))
+        i = int(np.rint(ycen))
+        ny, nx = X.shape
+        j = max(0, min(nx - 1, j))
+        i = max(0, min(ny - 1, i))
+    except Exception as e:
+        # Convert unexpected extraction/typing issues into a RuntimeError so callers can fall back gracefully
+        raise RuntimeError(f"Failed to extract centroid indices from detection catalog: {e}")
+
     x_coord = X[i, j]
     y_coord = Y[i, j]
 

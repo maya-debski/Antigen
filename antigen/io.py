@@ -415,7 +415,7 @@ def get_fits_file_time(fits_file_name, instrument='VIRUS2'):
     return obs_time_mjd
 
 
-def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=False):
+def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=True):
     """Load a CALSPEC spectrum as an Astropy Table.
 
     This function verifies that the requested source is part of the CALSPEC
@@ -443,16 +443,76 @@ def load_calspec_spectrum(name, spec_type="stis", date="latest", check_cache=Fal
         rebuild_tables()
         rebuild_cache()
 
-    # Verify the name
-    if not is_calspec(name):
-        raise ValueError(f"Source '{name}' not found in CALSPEC library.")
 
     # Get the spectrum
     try:
+        # Attempt direct load first
         calspec_obj = Calspec(name)
+        print(f"Loading CALSPEC {spec_type} spectrum for {name}...")
         spectrum = calspec_obj.get_spectrum_table()
     except Exception as e:
-        raise RuntimeError(f"Failed to retrieve CALSPEC spectrum for {name}") from e
+        # If direct load fails, try a minimal normalization and an optional cache refresh
+        refreshed_once = False
+        candidates = [str(name)]
+        if '_' in str(name):
+            alt = str(name).replace('_', '+')
+            if alt not in candidates:
+                candidates.append(alt)
+        last_exc = e
+        for cand in candidates:
+            try:
+                if cand != name:
+                    logger.info("CALSPEC name normalized: '%s' -> '%s'", name, cand)
+                calspec_obj = Calspec(cand)
+                print(f"Loading CALSPEC {spec_type} spectrum for {cand}...")
+                spectrum = calspec_obj.get_spectrum_table()
+                name = cand  # adopt normalized name
+                break
+            except Exception as e1:
+                last_exc = e1
+                # Try one refresh of tables/cache if not already done in this call
+                if not refreshed_once:
+                    try:
+                        logger.info("Refreshing CALSPEC tables/cache and retrying fetch for '%s'...", cand)
+                        rebuild_tables()
+                        rebuild_cache()
+                        refreshed_once = True
+                        calspec_obj = Calspec(cand)
+                        print(f"Loading CALSPEC {spec_type} spectrum for {cand}...")
+                        spectrum = calspec_obj.get_spectrum_table()
+                        name = cand
+                        break
+                    except Exception as e2:
+                        last_exc = e2
+                        continue
+        else:
+            # All retries failed: build a helpful error message and include available names if possible
+            from getCalspec.getCalspec import getCalspecDataFrame
+            names = None
+            try:
+                df = getCalspecDataFrame()
+                if df is not None and 'Name' in df.columns:
+                    names = sorted({str(x) for x in df['Name'].dropna().unique()})
+            except Exception:
+                names = None
+            if names:
+                max_show = 50
+                shown = ", ".join(names[:max_show])
+                extra = "" if len(names) <= max_show else f" ... (+{len(names)-max_show} more)"
+                tried = ", ".join(candidates)
+                msg = (
+                    f"Failed to retrieve CALSPEC spectrum for '{name}'.\n"
+                    f"Tried names: {tried}.\n"
+                    f"Available CALSPEC sources ({len(names)} total, showing up to {max_show}):\n"
+                    f"{shown}{extra}\n"
+                    f"Tip: names are case-insensitive; '+' and '_' are often interchangeable (e.g., bd+75d325 vs bd_75d325)."
+                )
+            else:
+                msg = (
+                    f"Failed to retrieve CALSPEC spectrum for '{name}'.\n"
+                    f"(Could not retrieve the list of available CALSPEC names.)"
+                )
+            raise RuntimeError(msg) from last_exc
 
     # Handle both upper and lower case column names
     wave_col = next((col for col in ['wavelength', 'WAVELENGTH']
