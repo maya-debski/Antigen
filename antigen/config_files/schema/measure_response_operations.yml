@@ -208,7 +208,7 @@ schema:
     LoadCalibrationSpectrum:
       description: "Load CALSPEC standard star spectrum."
       params:
-        standard_name:
+        calspec_name:
           type: str
           required: true
           source: inputs.cli
@@ -216,7 +216,7 @@ schema:
       provides: ["std_star_wave", "std_star_flux"]
       algorithm:
         function: "antigen.io.load_calspec_spectrum"
-        args: ["standard_name"]
+        args: ["calspec_name"]
 
     MeasureResponse:
       description: "Compute instrument response source standard star observation."

@@ -30,8 +30,13 @@ def get_args():
                        help='Path to directory with reduced standard star frames.')
     parser.add_argument('-o', '--output_folder', default=None,
                        help='Path to output folder for response function.')
-    parser.add_argument('-s', '--standard_name', required=True,
-                       help='Name for standard star files in reduced-dir (ex: Feige).')
+    parser.add_argument('-t', '--target_name', required=False,
+                       help='Name used to match reduced-dir target files (e.g., Feige, BD+75, M82_PositionE).')
+    # Backward compatibility: --standard_name behaves like --target_name
+    parser.add_argument('-s', '--standard_name', required=False,
+                       help='[Deprecated] Same as --target_name; name to match reduced-dir target files.')
+    parser.add_argument('-c', '--calspec_name', required=False,
+                       help='CALSPEC star identifier to query (e.g., feige34, bd+75d325). If omitted, defaults to target_name.')
     parser.add_argument('-e', '--extraction_radius', type=float, default=10.0,
                        help='Extraction radius in arcsec.')
     parser.add_argument('-p', '--pixel_size', type=float, default=1.0,
@@ -46,6 +51,13 @@ def get_args():
 
 def main():
     args = get_args()
+    # Derive target_name (for dataset selection) with backward compatibility
+    if getattr(args, 'target_name', None) is None or args.target_name == "":
+        args.target_name = args.standard_name
+    # Default calspec_name to target_name if not provided
+    if getattr(args, 'calspec_name', None) in (None, ""):
+        args.calspec_name = args.target_name
+
     logger = setup_logging('antigen', verbose=args.verbose, debug=args.debug)
     logger.info('Starting application...')
 
@@ -56,7 +68,7 @@ def main():
     response_manifest = build_dataset_from_reduced_files(args.reduced_dir)
 
     for manifest in response_manifest:
-        if args.standard_name.lower() in manifest['target'].lower():
+        if args.target_name and args.target_name.lower() in manifest['target'].lower():
             # Save manifest
             manifest_filename = f'manifest_response_{manifest["target"]}.yml'
             save_filepath = save_path / manifest_filename

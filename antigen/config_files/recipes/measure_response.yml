@@ -1,7 +1,7 @@
 description: "Measure instrument response from standard star observation"
 inputs:
   cli:
-    standard_name: null
+    calspec_name: null
     output_folder: null
     extraction_radius: 10.0
   dataset:
