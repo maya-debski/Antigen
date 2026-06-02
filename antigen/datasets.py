@@ -6,8 +6,97 @@ from pathlib import Path
 import numpy as np
 
 from antigen.io import get_fits_file_time, get_fits_files_in_path
+from antigen import config
 
 logger = logging.getLogger('antigen.datasets')
+
+
+def _match_user_label(user_label: str, any_contains=None, must_contain=None, must_not_contain=None) -> bool:
+    """Return True if user_label satisfies provided substring constraints.
+
+    - any_contains: pass if empty or any term appears (case-insensitive)
+    - must_contain: pass if empty or all terms appear (case-insensitive)
+    - must_not_contain: fail if any term appears (case-insensitive)
+    """
+    ul = (user_label or '').lower()
+    any_contains = [s.lower() for s in (any_contains or []) if s]
+    must_contain = [s.lower() for s in (must_contain or []) if s]
+    must_not_contain = [s.lower() for s in (must_not_contain or []) if s]
+
+    if any_contains:
+        if not any(s in ul for s in any_contains):
+            return False
+    if must_contain:
+        if not all(s in ul for s in must_contain):
+            return False
+    if must_not_contain:
+        if any(s in ul for s in must_not_contain):
+            return False
+    return True
+
+
+def select_files_by_calibration_config(unit_records, selection_cfg):
+    """Select calibration files using config-driven rules.
+
+    Args:
+        unit_records (list[dict]): Records as returned by parse_fits_file_tree.
+        selection_cfg (dict): calibration_selection section from YAML.
+
+    Returns:
+        (cal_dict, sci_files): where cal_dict has keys bias/flat/arc (if present), and sci_files is list of filenames
+                               inferred as non-calibration frames.
+    """
+    if not selection_cfg or not isinstance(selection_cfg, dict):
+        return None, None
+
+    # Normalize keys and pre-extract lists
+    cal_keys = [k for k in selection_cfg.keys() if k in ('bias', 'flat', 'arc', 'dark', 'twilight', 'twilight_flat')]
+
+    # Initialize calibration dict including optional 'dark'
+    cal_dict = {k: [] for k in ('bias', 'flat', 'arc', 'dark')}
+    selected_set = set()
+
+    for cal_type in cal_keys:
+        rules = selection_cfg.get(cal_type, {}) or {}
+        ft_any = [s.lower() for s in rules.get('frametype_any', [])]
+        any_contains = rules.get('userlabel_any_contains', []) or rules.get('userlabel_must_contain', []) or []
+        must_contain = rules.get('userlabel_must_contain_all', [])  # optional, if provided
+        must_not = rules.get('userlabel_must_not_contain', [])
+
+        # Build list for this type
+        matched = []
+        for rec in unit_records:
+            ftype = (rec.get('frame_type') or '').lower()
+            ulabel = rec.get('user_label') or ''
+            if ft_any and ftype not in ft_any:
+                continue
+            if not _match_user_label(ulabel, any_contains=any_contains, must_contain=must_contain, must_not_contain=must_not):
+                continue
+            matched.append(rec['filename'])
+
+        # Map cal_type aliases to manifest keys
+        key_map = {
+            'bias': 'bias',
+            'flat': 'flat',
+            'twilight': 'flat',
+            'twilight_flat': 'flat',
+            'arc': 'arc',
+            'dark': 'dark',  # include optional darks in manifest
+        }
+        manifest_key = key_map.get(cal_type)
+        if manifest_key:
+            cal_dict[manifest_key].extend(matched)
+        selected_set.update(matched)
+
+        # Optional warnings
+        if rules.get('warn_on_empty_selection') and len(matched) == 0:
+            logger.warning(f"Config selection for '{cal_type}' returned 0 files.")
+
+    # Science files = those not selected as calibrations
+    filenames = [rec['filename'] for rec in unit_records]
+    sci_files = [f for f in filenames if f not in selected_set]
+
+    return cal_dict, sci_files
 
 
 def parse_reduce_file_name(fits_filename):
@@ -267,10 +356,14 @@ def build_calibration_groups(calibrations, time_radius):
                                                   new_average_time, time_radius)
 
         final_average_time = np.mean([cal['mjd'] for cal in grouped])
-        # Organize by type
-        group = {'bias': [], 'arc': [], 'flat': []}
+        # Organize by type (including optional 'dark')
+        group = {'bias': [], 'arc': [], 'flat': [], 'dark': []}
         for cal in grouped:
-            group[cal['type']].append(cal['name'])
+            typ = cal['type']
+            if typ not in group:
+                # In case of unexpected type, initialize dynamically
+                group[typ] = []
+            group[typ].append(cal['name'])
 
         # Keep the final average time of the cal group
         group['mjd'] = final_average_time
@@ -310,7 +403,7 @@ def assign_science_to_groups(science_frames, cal_groups):
 
 def get_calibration_and_science_files(unit_records, obs_name,
                                       bias_label, flat_label, twilight_flat_label,
-                                      arc_label, dark_label):
+                                      arc_label, dark_label, selection_cfg=None):
     """
     Categorize files into calibration and science types.
 
@@ -323,6 +416,14 @@ def get_calibration_and_science_files(unit_records, obs_name,
         cal_files_dict (dict): calibration files dictionary
         sci_files (list): science filenames
     """
+    # If a selection config is provided, use it
+    if selection_cfg:
+        cal_by_cfg, sci_by_cfg = select_files_by_calibration_config(unit_records, selection_cfg)
+        if cal_by_cfg is not None:
+            logger.info('Using calibration_selection rules from config to choose files.')
+            return cal_by_cfg, sci_by_cfg
+
+    # Fallback: legacy behavior using label keywords
     filenames = [rec['filename'] for rec in unit_records]
     types = [rec['frame_type'] for rec in unit_records]
 
@@ -340,7 +441,7 @@ def get_calibration_and_science_files(unit_records, obs_name,
         all_cal = set(bias + flats + arc + dark)
         sci_files = [filename for filename in filenames if filename not in all_cal]
 
-    cal_files_dict = {'bias': bias, 'flat': flats, 'arc': arc}
+    cal_files_dict = {'bias': bias, 'flat': flats, 'arc': arc, 'dark': dark}
     return cal_files_dict, sci_files
 
 
@@ -359,6 +460,10 @@ def validate_calibration_counts(cal_files, unit, root_data_path, minimum=1):
     """
     fail = False
     for key, files in cal_files.items():
+        logger.info(f'Checking {key} files for unit={unit} in {root_data_path}, found {len(files)} files')
+        # Dark frames are optional; do not fail if none are present
+        if key == 'dark':
+            continue
         if len(files) < minimum:
             logger.warning(f'Searched {root_data_path}, unit={unit}, found {len(files)} < {minimum} {key} files')
             fail = True
@@ -378,9 +483,10 @@ def prepare_group_input_dicts(cal_files, sci_filenames):
         sci_dict_list (list of dicts): Science file list of dictionaries.
     """
     cal_dict_list = []
-    for typ in ['bias', 'flat', 'arc']:
-        times = [get_fits_file_time(f) for f in cal_files[typ]]
-        cal_dict_list += [{'type': typ, 'mjd': t, 'name': f} for t, f in zip(times, cal_files[typ])]
+    for typ in ['bias', 'flat', 'arc', 'dark']:
+        if typ in cal_files:
+            times = [get_fits_file_time(f) for f in cal_files.get(typ, [])]
+            cal_dict_list += [{'type': typ, 'mjd': t, 'name': f} for t, f in zip(times, cal_files.get(typ, []))]
 
     sci_times = [get_fits_file_time(f) for f in sci_filenames]
     sci_dict_list = [{'type': 'sci', 'mjd': t, 'name': f} for t, f in zip(sci_times, sci_filenames)]
@@ -406,9 +512,6 @@ def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
     now_string = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
 
     for group in cal_groups:
-        if not group['bias'] or not group['flat'] or not group['arc']:
-            continue
-
         record = {
             'reduction_name': f'antigen_manifest_{now_string}',
             'unit_date': 'unknown',
@@ -421,7 +524,8 @@ def build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name):
             'calibration_files': {
                 'bias': group['bias'],
                 'flat': group['flat'],
-                'arc': group['arc']
+                'arc': group['arc'],
+                'dark': group.get('dark', [])
             }
         }
         records.append(record)
@@ -503,17 +607,27 @@ def find_datasets(in_folder, obs_date, obs_name, time_radius,
 
     for unit in unique_units_found:
         unit_records = [record for record in metadata_records if record['spec_id'] == unit]
+
+        # Try to load calibration selection from config for this instrument/element
+        selection_cfg = None
+        try:
+            cfg_yaml = config.read_config_yaml(instrument.lower(), unit.upper(), validate=False)
+            selection_cfg = cfg_yaml.get('calibration_selection') if isinstance(cfg_yaml, dict) else None
+            if selection_cfg:
+                logger.info(f"Loaded calibration_selection from config for {instrument}/{unit}.")
+        except Exception as e:
+            logger.debug(f"Could not load calibration_selection for {instrument}/{unit}: {e}")
+
         cal_files, sci_filenames = get_calibration_and_science_files(
             unit_records, obs_name,
-            bias_label, flat_label, twilight_flat_label, arc_label, dark_label)
+            bias_label, flat_label, twilight_flat_label, arc_label, dark_label,
+            selection_cfg=selection_cfg)
 
         if not sci_filenames:
             logger.warning(f'unit={unit}, no matching science files')
-            continue
 
         if not validate_calibration_counts(cal_files, unit, root_data_path):
             logger.warning(f'unit={unit}, calibration files insufficient. Skipping.')
-            continue
 
         cal_dict_list, sci_dict_list = prepare_group_input_dicts(cal_files, sci_filenames)
 
@@ -521,5 +635,4 @@ def find_datasets(in_folder, obs_date, obs_name, time_radius,
         cal_groups = assign_science_to_groups(sci_dict_list, cal_groups)
 
         dataset_records += build_dataset_records(cal_groups, instrument, unit, obs_date, obs_name)
-
     return dataset_records
