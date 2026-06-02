@@ -50,7 +50,7 @@ def build_registration_image(profile_1d: Array, height: int) -> Array:
     return np.tile(profile_1d[np.newaxis, :], (int(height), 1))
 
 
-def estimate_subpixel_shift_1d_xcorr(ref: Array, src: Array, *, max_lag: int | None = None) -> Tuple[float, float]:
+def estimate_subpixel_shift_1d_xcorr(ref: Array, src: Array, *, max_lag: int | None = None, diag_callback=None) -> Tuple[float, float]:
     """Estimate subpixel (dy, dx) shift mapping src -> ref using 1D cross-correlation.
 
     Approach (robust for small shifts, insensitive to NaNs):
@@ -58,7 +58,15 @@ def estimate_subpixel_shift_1d_xcorr(ref: Array, src: Array, *, max_lag: int | N
     - Mean-center and standardize each profile; replace NaNs with 0 after centering.
     - Compute discrete cross-correlation within a limited lag window.
     - Fit a quadratic to the best peak and its neighbors to get subpixel dx.
+    - Tie-breaker: if a secondary peak within 10% of the best has a smaller |lag|, prefer it.
     - dy is 0 in this 1D scheme by construction.
+
+    Diagnostics:
+    - If diag_callback is provided and the chosen peak index k is at or near the lag boundary,
+      the function calls diag_callback(lags, c, info) where:
+        lags: array of tested integer lags
+        c: cross-correlation values at those lags
+        info: dict with keys {'k','lag0','max_lag'}
     """
     ref = np.asarray(ref, dtype=float)
     src = np.asarray(src, dtype=float)
@@ -98,6 +106,13 @@ def estimate_subpixel_shift_1d_xcorr(ref: Array, src: Array, *, max_lag: int | N
 
     k = int(np.argmax(c))
     lag0 = int(lags[k])
+    # Prefer a near-zero secondary peak if it's close in strength (<=10% lower)
+    if c.size >= 3:
+        locmax = np.where((c[1:-1] > c[:-2]) & (c[1:-1] >= c[2:]))[0] + 1
+        if locmax.size > 0:
+            cand = locmax[np.argmin(np.abs(lags[locmax]))]
+            if (abs(lags[cand]) < abs(lag0)) and (c[cand] >= 0.9 * c[k]):
+                k = int(cand); lag0 = int(lags[k])
 
     def _quad_subpixel(y_minus: float, y0: float, y_plus: float) -> float:
         denom = (y_minus - 2.0 * y0 + y_plus)
@@ -109,6 +124,18 @@ def estimate_subpixel_shift_1d_xcorr(ref: Array, src: Array, *, max_lag: int | N
         delta = np.clip(_quad_subpixel(c[k - 1], c[k], c[k + 1]), -0.5, 0.5)
     else:
         delta = 0.0
+
+    # Boundary diagnostic hook
+    try:
+        if callable(diag_callback):
+            near_boundary = (k == 0) or (k == len(c) - 1) or (max_lag is not None and abs(lag0) >= int(max_lag) - 1)
+            if near_boundary:
+                info = {"k": int(k), "lag0": float(lag0), "max_lag": int(max_lag) if max_lag is not None else None}
+                diag_callback(lags, c, info)
+    except Exception:
+        # Never allow diagnostics to break core computation
+        pass
+
     dy = 0.0
     dx = float(lag0) + float(delta)
     return dy, dx
