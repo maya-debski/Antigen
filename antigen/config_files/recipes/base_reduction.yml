@@ -241,6 +241,10 @@ workflow:
           params:
             frame_type: bias
       - MakeCalibrationFrame:
+          label: "MakeMasterDarkFrame"
+          params:
+            frame_type: dark
+      - MakeCalibrationFrame:
           label: "MakeMasterFlatFrame"
           params:
             frame_type: flat

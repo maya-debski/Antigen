@@ -172,6 +172,11 @@ schema:
           required: true
           description: "Data is binned in the x-direction"
           source: inputs.cli
+        detector_dimensions:
+          type: dict
+          required: true
+          description: "Detector dimensions in X and Y"
+          source: inputs.config
         good_arc_residual_limit:
           type: float
           required: true
@@ -183,7 +188,7 @@ schema:
         function: "antigen.wavelength.get_wavelength_registration"
         args: ["master_arc_spec", "trace_array", "good_fiber_mask", "dispersion_reference_x", "arc_lines",
                "arc_flux_limit", "reference_fiber_index", "good_arc_residual_limit",
-               "binned"]
+               "binned", "out_folder", "detector_dimensions"]
         save:
           function: "antigen.plot.plot_wavelength"
           args: ["arc_lines", "arc_pixel_locations", "wavelength_solution", "out_folder"]
@@ -290,7 +295,7 @@ schema:
 
 
     ProcessScienceFrame:
-      description: "Applies standard CCD reductions including bias subtraction, gain correction to convert 
+      description: "Applies standard CCD reductions including bias subtraction, optional dark subtraction, gain correction to convert 
         ADU to electrons, and error estimation combining read noise and photon noise contributions. 
         Also handles geometric corrections like image flipping and rotation to match calibration frame orientation."
       params:
@@ -304,6 +309,12 @@ schema:
           required: true
           source: state
           description: "Master bias frame for bias subtraction"
+        master_dark_data:
+          type: ndarray
+          required: false
+          default: null
+          source: state
+          description: "Master dark frame for dark subtraction (optional)"
         overscan_length:
           type: int
           required: true
@@ -349,7 +360,7 @@ schema:
       provides: [ "processed_science_data", "processed_science_error", "exposure_time" ]
       algorithm:
         function: "antigen.ccd.base_reduction"
-        args: [ "science_frame_data", "master_bias_data", "overscan_length", "gain",
+        args: [ "science_frame_data", "master_bias_data", "master_dark_data", "overscan_length", "gain",
                 "read_noise", "flip_x", "flip_y", "rotate", "add_rows", "science_frame_header" ]
 
 
