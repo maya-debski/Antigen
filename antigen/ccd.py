@@ -57,7 +57,7 @@ def prep_image(image, overscan_length, flip_x=False, flip_y=False, rotate=False,
     return image
 
 
-def base_reduction(data, master_bias, overscan_length, gain, read_noise, flip_x, flip_y, rotate, add_rows,
+def base_reduction(data, master_bias, master_dark, overscan_length, gain, read_noise, flip_x, flip_y, rotate, add_rows,
                    header):
     """
     Performs basic reduction on raw astronomical image data. This includes preprocessing,
@@ -94,6 +94,19 @@ def base_reduction(data, master_bias, overscan_length, gain, read_noise, flip_x,
     # Subtract the master bias from the image
     image[:] -= master_bias
 
+    # Subtract master dark if provided and compatible
+    try:
+        if master_dark is not None:
+            md = np.asarray(master_dark)
+            if md.size > 0 and md.shape == image.shape:
+                image[:] -= md
+            else:
+                logging.getLogger('antigen.ccd').info(
+                    'base_reduction: master_dark not applied (None/empty or shape mismatch)'
+                )
+    except Exception as e:
+        logging.getLogger('antigen.ccd').warning(f'base_reduction: failed dark subtraction: {e}')
+
     # Apply gain correction to convert counts to electrons
     image[:] *= gain
 
@@ -115,7 +128,7 @@ def make_master_cal(filenames, frame_type, overscan_length, flip_x, flip_y, rota
 
     Args:
         filenames (list(str)): list of filenames
-        frame_type (str): type of frame (e.g., arc, bias, flat)
+        frame_type (str): type of frame (e.g., arc, bias, flat, dark)
         overscan_length (int): Length of overscan region in pixels
         flip_x (bool, optional): Flag to flip image in x direction. Defaults to False
         flip_y (bool, optional): Flag to flip image in y direction. Defaults to False
@@ -126,6 +139,11 @@ def make_master_cal(filenames, frame_type, overscan_length, flip_x, flip_y, rota
         master_cal (np.ndarray): median stacked calibration frame
         master_cal_time (float): average MJD of the frames that were stacked
     """
+    # Handle empty input list gracefully (e.g., optional dark frames)
+    if filenames is None or len(filenames) == 0:
+        # Return an empty array and NaN time; downstream save will skip writing
+        return np.array([], dtype=float), np.nan, f"master_{frame_type}.fits"
+
     # Extract from the files, re-oriented by prep_image()
     # Extract observation times (MJD) for frames in the current chunk
     frames, times = ([], [])
@@ -138,7 +156,7 @@ def make_master_cal(filenames, frame_type, overscan_length, flip_x, flip_y, rota
 
     # Compute median frame and the mean time for the current chunk
     master_cal      = np.nanmedian(frames, axis=0)  # maybe biweight() as an alternate method
-    master_cal_time = np.mean(times)
+    master_cal_time = np.mean(times) if len(times) else np.nan
     return master_cal, master_cal_time, f"master_{frame_type}.fits"
 
 
