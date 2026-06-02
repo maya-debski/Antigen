@@ -42,6 +42,18 @@ def write_image(image, out_folder, filename):
         filename: filename string
     """
 
+    # Gracefully handle empty or None images (e.g., no dark frames available)
+    try:
+        if image is None:
+            logger.warning(f"write_image: No image provided for {filename}; skipping write.")
+            return None
+        arr = np.asarray(image)
+        if arr.size == 0:
+            logger.info(f"write_image: Empty image for {filename}; skipping write.")
+            return None
+    except Exception:
+        pass
+
     primary_hdu = fits.PrimaryHDU(data=image)
     primary_hdu.writeto(Path(out_folder) / filename, overwrite=True)
 
