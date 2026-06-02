@@ -1,0 +1,48 @@
+instrument_element: "D2R"
+gain: 2.017
+read_noise: 3.09
+fiber_radius: 1.2415
+pca_components_arc: 15
+reference_fiber_index: 130
+sample_fiber_indices:
+  - 5
+  - 130
+  - 230
+start_wavelength: 5880
+end_wavelength: 7630
+detector_dimensions:  # 2064x2064
+  X: 2064 # X
+  Y: 2064 # Y
+arc_flux_limit: 5
+telescope_diameter: 2.72
+overscan_length: 32
+flip_x: true
+flip_y: false
+rotate: false
+add_rows: 0
+
+calibration_selection:
+  bias:
+    frametype_any: ["bias", "zero"]
+    userlabel_must_contain: []
+    userlabel_must_not_contain: ["test", "junk"]
+    warn_on_empty_selection: true
+    warn_on_userlabel_mismatch: true
+  arc:
+    frametype_any: ["arc", "cal"]
+    userlabel_any_contains: ["ne"]
+    userlabel_must_not_contain: ["test"]
+    warn_on_empty_selection: true
+    warn_on_userlabel_mismatch: true
+  flat:
+    frametype_any: ["flat", "arc"]
+    userlabel_any_contains: ["flat", "domeflat", "ldls"]
+    userlabel_must_not_contain: ["test"]
+    warn_on_empty_selection: true
+    warn_on_userlabel_mismatch: true
+  dark:
+    frametype_any: ["dark"]
+    userlabel_any_contains: []
+    userlabel_must_not_contain: ["test"]
+    warn_on_empty_selection: true
+    warn_on_userlabel_mismatch: true
