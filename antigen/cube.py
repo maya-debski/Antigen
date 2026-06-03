@@ -36,36 +36,86 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
         X, Y (ndarray): meshgrid coordinates
         (optionally) err_img (ndarray): synthetic error image if return_error=True
     """
-    # Clean NaNs in flux and align x/y/flux
-    finite_values = np.isfinite(fiber_flux)
-    x, y, flux = (fiber_x[finite_values], fiber_y[finite_values], fiber_flux[finite_values])
+    # Coerce to 1D arrays
+    fx = np.asarray(fiber_x).ravel()
+    fy = np.asarray(fiber_y).ravel()
+    ff = np.asarray(fiber_flux).ravel()
 
-    # Prepare error values if requested
+    # Align lengths to common minimum to avoid broadcasting issues
+    lengths = [fx.size, fy.size, ff.size]
+    if return_error and fiber_error is not None:
+        fe = np.asarray(fiber_error).ravel()
+        lengths.append(fe.size)
+    else:
+        fe = None
+    n_common = int(min(lengths))
+    if not (fx.size == fy.size == ff.size and (fe is None or fe.size == n_common)):
+        logger.warning(
+            "Length mismatch in fibers_to_image: x=%d, y=%d, flux=%d%s; truncating to %d",
+            fx.size, fy.size, ff.size,
+            " , err=" + str(fe.size) if fe is not None else "",
+            n_common,
+        )
+    fx = fx[:n_common]; fy = fy[:n_common]; ff = ff[:n_common]
+    if fe is not None:
+        fe = fe[:n_common]
+
+    # Mask non-finite entries across x, y, flux
+    m = np.isfinite(fx) & np.isfinite(fy) & np.isfinite(ff)
+    bad_x = int(np.count_nonzero(~np.isfinite(fx)))
+    bad_y = int(np.count_nonzero(~np.isfinite(fy)))
+    bad_f = int(np.count_nonzero(~np.isfinite(ff)))
+    if (bad_x + bad_y + bad_f) > 0:
+        logger.warning(
+            "Non-finite entries detected in fibers_to_image: bad_x=%d, bad_y=%d, bad_flux=%d; using finite subset.",
+            bad_x, bad_y, bad_f,
+        )
+    fx = fx[m]; fy = fy[m]; ff = ff[m]
     if return_error:
         if fiber_error is None:
             raise ValueError("return_error=True but fiber_error is None")
-        # Align error with finite flux mask and convert to variance for propagation
-        fiber_var = np.square(fiber_error)[finite_values]
+        fiber_var = np.square(fe[m]) if fe is not None else None
 
-    # Define grid
-    grid_size_x = int((bounds[1] - bounds[0]) / pixel_size) + 1
-    grid_size_y = int((bounds[3] - bounds[2]) / pixel_size) + 1
+    # Validate pixel_size
+    if not np.isfinite(pixel_size) or pixel_size <= 0:
+        logger.warning("Invalid pixel_size=%s; defaulting to 1.0", str(pixel_size))
+        pixel_size = 1.0
 
-    xi = np.linspace(bounds[0], bounds[0] + (grid_size_x - 1) * pixel_size, grid_size_x)
-    yi = np.linspace(bounds[2], bounds[2] + (grid_size_y - 1) * pixel_size, grid_size_y)
+    # Validate/repair bounds if needed
+    b = np.asarray(bounds, dtype=float).ravel()
+    if b.size != 4 or not np.all(np.isfinite(b)) or (b[1] <= b[0]) or (b[3] <= b[2]):
+        if fx.size > 0:
+            xmin = float(np.nanmin(fx)); xmax = float(np.nanmax(fx))
+            ymin = float(np.nanmin(fy)); ymax = float(np.nanmax(fy))
+            if not (np.isfinite(xmin) and np.isfinite(xmax) and xmin < xmax):
+                xmin, xmax = -5.0, 5.0
+            if not (np.isfinite(ymin) and np.isfinite(ymax) and ymin < ymax):
+                ymin, ymax = -5.0, 5.0
+            b = np.array([xmin, xmax, ymin, ymax], dtype=float)
+            logger.warning("Invalid bounds provided; using data-driven bounds [%.2f, %.2f, %.2f, %.2f]", xmin, xmax, ymin, ymax)
+        else:
+            b = np.array([-5.0, 5.0, -5.0, 5.0], dtype=float)
+            logger.warning("Invalid bounds and no data; using default [-5,5,-5,5]")
+
+    # Define grid sizes safely
+    span_x = float(b[1] - b[0])
+    span_y = float(b[3] - b[2])
+    nx = max(1, int(np.floor(span_x / pixel_size)) + 1)
+    ny = max(1, int(np.floor(span_y / pixel_size)) + 1)
+
+    xi = np.linspace(b[0], b[0] + (nx - 1) * pixel_size, nx)
+    yi = np.linspace(b[2], b[2] + (ny - 1) * pixel_size, ny)
     X, Y = np.meshgrid(xi, yi)
 
     # If no valid input points, return zeros image (and error image)
-    if x.size == 0:
+    if fx.size == 0:
         img = np.zeros_like(X, dtype=float)
-        err_img = np.zeros_like(X, dtype=float) if return_error else None
-        # Correct for the area difference between the fiber size and the new pixel area
-        flux_factor = pixel_size ** 2 / fiber_area
-        img = img * flux_factor
         if return_error:
-            err_img = err_img * flux_factor
-            return img, X, Y, err_img
-        return img, X, Y
+            err_img = np.zeros_like(X, dtype=float)
+            flux_factor = pixel_size ** 2 / fiber_area
+            return img * flux_factor, X, Y, err_img * flux_factor
+        flux_factor = pixel_size ** 2 / fiber_area
+        return img * flux_factor, X, Y
 
     flux_factor = pixel_size ** 2 / fiber_area
 
@@ -73,45 +123,45 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     if method in ["linear", "nearest", "cubic"]:
         # griddata can fail for too few points or outside convex hull; fall back to nearest
         try:
-            img = griddata((x, y), flux, (X, Y), method=method)
+            img = griddata((fx, fy), ff, (X, Y), method=method)
         except Exception:
-            img = griddata((x, y), flux, (X, Y), method="nearest")
-        if return_error:
+            img = griddata((fx, fy), ff, (X, Y), method="nearest")
+        if return_error and fiber_var is not None:
             if method == "nearest":
                 # Nearest-neighbor: propagate error directly
                 try:
-                    nearest_idx = griddata((x, y), np.arange(x.size), (X, Y), method="nearest").astype(int)
+                    nearest_idx = griddata((fx, fy), np.arange(fx.size), (X, Y), method="nearest").astype(int)
                     var_img = fiber_var[nearest_idx]
                 except Exception:
                     # Fallback: simple nearest on variance values
-                    var_img = griddata((x, y), fiber_var, (X, Y), method="nearest")
+                    var_img = griddata((fx, fy), fiber_var, (X, Y), method="nearest")
             else:
                 # Approximate: interpolate variance field and take sqrt
                 try:
-                    var_img = griddata((x, y), fiber_var, (X, Y), method=method)
+                    var_img = griddata((fx, fy), fiber_var, (X, Y), method=method)
                 except Exception:
-                    var_img = griddata((x, y), fiber_var, (X, Y), method="nearest")
+                    var_img = griddata((fx, fy), fiber_var, (X, Y), method="nearest")
             err_img = np.sqrt(np.clip(var_img, a_min=0.0, a_max=None))
 
     elif method == "rbf":
         # RBF interpolation
-        rbf = Rbf(x, y, flux, function=rbf_func)
+        rbf = Rbf(fx, fy, ff, function=rbf_func)
         img = rbf(X, Y)
-        if return_error:
-            rbf_var = Rbf(x, y, fiber_var, function=rbf_func)
+        if return_error and fiber_var is not None:
+            rbf_var = Rbf(fx, fy, fiber_var, function=rbf_func)
             var_img = rbf_var(X, Y)
             err_img = np.sqrt(np.clip(var_img, a_min=0.0, a_max=None))
 
     elif method == "gdw":
         # Gaussian Distance Weighting (IDW-style)
-        npts = x.size
+        npts = fx.size
         k_eff = min(k, npts)
         if k_eff == 0:
             img = np.zeros_like(X, dtype=float)
             if return_error:
                 err_img = np.zeros_like(X, dtype=float)
         else:
-            tree = cKDTree(np.c_[x, y])
+            tree = cKDTree(np.c_[fx, fy])
             dist, idx = tree.query(np.c_[X.ravel(), Y.ravel()], k=k_eff)
 
             # Ensure 2D shapes for k_eff == 1
@@ -128,8 +178,8 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
                 weights = np.where(row_sums > 0, weights / row_sums, 0.0)
 
             # Weighted sum of flux
-            img = np.sum(weights * flux[idx], axis=1).reshape(X.shape)
-            if return_error:
+            img = np.sum(weights * ff[idx], axis=1).reshape(X.shape)
+            if return_error and fiber_var is not None:
                 # Variance propagation: sum(w^2 * var)
                 var_val = np.sum((weights ** 2) * fiber_var[idx], axis=1).reshape(X.shape)
                 err_img = np.sqrt(np.clip(var_val, a_min=0.0, a_max=None))
@@ -140,7 +190,7 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     # Correct for the area difference between the fiber size and the new pixel area
     img = img * flux_factor
     if return_error:
-        err_img = err_img * flux_factor
+        err_img = err_img * flux_factor if err_img is not None else np.zeros_like(X, dtype=float)
         return img, X, Y, err_img
     return img, X, Y
 
@@ -180,13 +230,17 @@ def make_cube(wavelength, fiber_spectra, fiber_error, fiber_x, fiber_y, fiber_ar
         x_grid (ndarray): 2D array of x-locations.
         y_grid (ndarray): 2D array of y-locations.
     """
-    # Precompute output grid extent based on fiber positions
-    x_min, x_max = np.min(fiber_x), np.max(fiber_x)
-    y_min, y_max = np.min(fiber_y), np.max(fiber_y)
-
-    # Estimate output dimensions
-    nx = int((x_max - x_min) / pixel_size) + 1
-    ny = int((y_max - y_min) / pixel_size) + 1
+    # Precompute output grid extent based on fiber positions (NaN-safe)
+    bounds = fiber.get_fiber_bounds(fiber_x, fiber_y)
+    # Validate pixel_size
+    if not np.isfinite(pixel_size) or pixel_size <= 0:
+        logger.warning("Invalid pixel_size=%s; defaulting to 1.0", str(pixel_size))
+        pixel_size = 1.0
+    # Estimate output dimensions safely
+    span_x = float(bounds[1] - bounds[0])
+    span_y = float(bounds[3] - bounds[2])
+    nx = max(1, int(np.floor(span_x / pixel_size)) + 1)
+    ny = max(1, int(np.floor(span_y / pixel_size)) + 1)
 
     # Determine spectral dimensions and guard against mismatches
     n_wave = int(len(wavelength))

@@ -280,13 +280,18 @@ class DARModel:
             Z_rad = np.arccos(1.0 / np.asarray(airmass, dtype=float))
         elif altitude_deg is not None:
             Z_rad = np.deg2rad(90.0 - float(altitude_deg))
-        else:
-            if obstime is None or ra_deg is None or dec_deg is None:
-                raise ValueError("Need (airmass) or (altitude_deg) or (ra_deg, dec_deg, obstime) to determine Z.")
+        elif not (obstime is None or ra_deg is None or dec_deg is None):
             t = Time(obstime) if not isinstance(obstime, Time) else obstime
             target = FixedTarget(coord=SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs"))
             altaz = observer.altaz(t, target.coord)
             Z_rad = (90.0 * u.deg - altaz.alt).to_value(u.rad)
+        else:
+            # Simple fallback: assume airmass 1.2 if nothing else is available
+            logger.warning(
+                "No airmass/altitude/RA,DEC,obstime found; assuming airmass=1.2 to compute DAR. "
+                "Provide proper keywords to improve accuracy."
+            )
+            Z_rad = np.arccos(1.0 / 1.2)
 
         # Parallactic angle (East of North)
         if (ra_deg is not None) and (dec_deg is not None) and (obstime is not None):

@@ -9,6 +9,7 @@ from antigen import extinction
 from antigen import io
 from antigen import psf
 from antigen import spectra
+from antigen import dar
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger('antigen.calibrate')
@@ -149,15 +150,21 @@ def apply_extinction(def_wave, spectrum, spectrum_error, extinction_table, airma
 
 
 def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error,
-                      extraction_radius, fiber_radius, output_dir=".",  header=None, ndithers=None, psf_seeing_grid=None):
-    """Create the PSF interpolator, detect a bright source, and fit the DAR model.
+                      extraction_radius, fiber_radius, output_dir=".",  header=None, ndithers=None, psf_seeing_grid=None,
+                      enable_advanced=False):
+    """Create a DAR model and optionally perform PSF/star-based advanced modeling.
 
-    This function:
-      1) Builds a radially symmetric PSF interpolator on a radius grid sized
-         relative to the extraction radius.
-      2) Detects the brightest source in a collapsed frame for PSF anchoring.
-      3) Fits the PSF as a function of wavelength to derive a DAR model and
-         measures the seeing (FWHM) as a function of wavelength.
+    Simple-by-default behavior:
+    - If enable_advanced is False (default), return a basic DAR model built from the
+      provided header and wavelength grid, without attempting source detection,
+      PSF interpolation, or seeing estimation. This supports science-cube creation
+      without bright stars.
+
+    Advanced behavior (enable_advanced=True):
+    - Builds a radially symmetric PSF interpolator on a radius grid sized relative
+      to the extraction radius.
+    - Detects a bright source in a collapsed frame for PSF anchoring.
+    - Fits the PSF vs wavelength to inform DAR and seeing measurements.
 
     Args:
         fiber_x (np.ndarray): Fiber x-positions after dithering adjustments.
@@ -182,6 +189,17 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
     Raises:
         RuntimeError: If source detection or PSF/DAR fitting fails.
     """
+    # Simple path: build a default DAR model and return, skipping PSF/star steps
+    if not enable_advanced:
+        return {
+            "dar_model": dar.DARModel(wave=def_wave, header=header),
+            "measured_fwhm": None,
+            "psf_interp": None,
+            "sources": None,
+            "X": None,
+            "Y": None,
+        }
+
     fiber_area = np.pi * (fiber_radius ** 2)
 
     # PSF interpolator grid
@@ -279,7 +297,8 @@ def build_psf_and_dar(fiber_x, fiber_y, def_wave, reduced_spectra, reduced_error
     dar_model, measured_fwhm = psf.fit_psf_and_build_dar_model(
         reduced_spectra, reduced_error, fiber_x, fiber_y,
         psf_interp, x_coord, y_coord, def_wave,
-        extraction_radius=extraction_radius, nchunks=20, output_dir=output_dir, header=header
+        extraction_radius=extraction_radius, nchunks=20, output_dir=output_dir, header=header,
+        enable_advanced=True
     )
 
     return {

@@ -274,7 +274,8 @@ def build_psf_weights(source_x, source_y, source_fwhm, fiber_x, fiber_y,
 
 def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y,
                                 psf_interp, x_coord, y_coord, def_wave,
-                                extraction_radius=2.0, nchunks=20, output_dir=".", header=None):
+                                extraction_radius=2.0, nchunks=20, output_dir=".", header=None,
+                                enable_advanced=False):
     """
     Fit the PSF to the reduced spectra and construct a DAR model.
 
@@ -290,11 +291,18 @@ def fit_psf_and_build_dar_model(reduced_spectra, reduced_error, fiber_x, fiber_y
         extraction_radius (float, optional): Extraction radius in arcsec. Defaults to 2.0.
         nchunks (int, optional): Number of wavelength chunks for fitting. Defaults to 20.
         output_dir (str, optional): Directory to save diagnostics. Defaults to ".".
+        header (Header|dict, optional): FITS-like header for DAR computation. Defaults to None.
+        enable_advanced (bool, optional): If True, run PSF fitting and advanced DAR; otherwise
+            return a simple header-based DAR model. Defaults to False.
     Returns:
         tuple:
             dar_model (DARModel): Differential atmospheric refraction model.
-            measured_fwhm (ndarray): FWHM of PSF per chunk.
+            measured_fwhm (ndarray|None): FWHM of PSF per chunk if advanced fitting is enabled; otherwise None.
     """
+    # Simple first: if not explicitly asked, return a basic DAR model
+    if not enable_advanced:
+        return dar.DARModel(wave=def_wave, header=header), None
+
     params = fit_psf(
         reduced_spectra, reduced_error, fiber_x, fiber_y, psf_interp,
         x_coord, y_coord, def_wave,

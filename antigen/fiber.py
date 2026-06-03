@@ -63,19 +63,48 @@ def get_fiber_to_fiber(spectrum, n_chunks=100):
 
 def get_fiber_bounds(fiber_x, fiber_y):
     """
-    Computes the upper and lower bounds for the fiber x,y positions
+    Computes robust bounds [x_min, x_max, y_min, y_max] for fiber positions.
+
+    - Ignores non-finite entries (NaN/Inf).
+    - If all entries are non-finite, returns a small default box [-5, 5, -5, 5].
+    - Ensures non-degenerate bounds by expanding zero-width ranges slightly.
 
     Args:
         fiber_x (ndarray): Fiber x coordinates.
         fiber_y (ndarray): Fiber y coordinates.
 
     Returns:
-        bounds (list): Bounds around input fibers fiber
+        list[float]: [x_min, x_max, y_min, y_max]
     """
-    x_min, x_max = np.min(fiber_x), np.max(fiber_x)
-    y_min, y_max = np.min(fiber_y), np.max(fiber_y)
-    bounds = [x_min, x_max, y_min, y_max]
-    return bounds
+    fx = np.asarray(fiber_x, dtype=float).ravel()
+    fy = np.asarray(fiber_y, dtype=float).ravel()
+    m = np.isfinite(fx) & np.isfinite(fy)
+    if not np.any(m):
+        logger.warning("All fiber positions are non-finite; using default bounds [-5,5,-5,5].")
+        return [-5.0, 5.0, -5.0, 5.0]
+
+    fx = fx[m]
+    fy = fy[m]
+    try:
+        x_min = float(np.nanmin(fx))
+        x_max = float(np.nanmax(fx))
+        y_min = float(np.nanmin(fy))
+        y_max = float(np.nanmax(fy))
+    except Exception:
+        logger.warning("Failed to compute finite bounds; using default [-5,5,-5,5].")
+        return [-5.0, 5.0, -5.0, 5.0]
+
+    # Ensure non-degenerate ranges
+    if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+        mu = np.nanmean(fx) if np.isfinite(np.nanmean(fx)) else 0.0
+        x_min, x_max = mu - 5.0, mu + 5.0
+        logger.warning("Degenerate/invalid X bounds; expanded to [%.2f, %.2f] around mean.", x_min, x_max)
+    if not np.isfinite(y_min) or not np.isfinite(y_max) or y_min == y_max:
+        mu = np.nanmean(fy) if np.isfinite(np.nanmean(fy)) else 0.0
+        y_min, y_max = mu - 5.0, mu + 5.0
+        logger.warning("Degenerate/invalid Y bounds; expanded to [%.2f, %.2f] around mean.", y_min, y_max)
+
+    return [x_min, x_max, y_min, y_max]
 
 def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base):
     """
