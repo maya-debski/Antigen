@@ -67,6 +67,44 @@ schema:
         function: "antigen.io.load_reduced_data"
         args: ["in_folder", "reduced_files"]
 
+    FilterVirus2SkyFibers:
+      description: "For VIRUS2 only: drop dedicated sky fibers (head_id like S1 or _S17_) before cube construction"
+      params:
+        unit_instrument:
+          type: str
+          required: true
+          source: inputs.dataset
+        head_id:
+          type: ndarray
+          required: true
+          source: inputs.config
+        fiber_x:
+          type: ndarray
+          required: true
+          source: state
+        fiber_y:
+          type: ndarray
+          required: true
+          source: state
+        reduced_spectra:
+          type: ndarray
+          required: true
+          source: state
+        reduced_error:
+          type: ndarray
+          required: true
+          source: state
+        drop_sky_fibers_in_cubes:
+          type: bool
+          required: false
+          default: true
+          source: inputs.cli
+      needs: ["fiber_x", "fiber_y", "reduced_spectra", "reduced_error"]
+      provides: ["fiber_x", "fiber_y", "reduced_spectra", "reduced_error"]
+      algorithm:
+        function: "antigen.fiber.filter_virus2_sky_fibers"
+        args: ["unit_instrument", "head_id", "fiber_x", "fiber_y", "reduced_spectra", "reduced_error", "drop_sky_fibers_in_cubes"]
+
     ModelPSFAndDAR:
       description: "Build PSF interpolator, detect source, and fit PSF/DAR model"
       params:

@@ -45,6 +45,10 @@ def get_args():
                         help='Radial basis function type for RBF interpolation (default: %(default)s)')
     parser.add_argument('-g', '--binned', action='store_true', default=False,
                         help='Data is binned in the x-direction?')
+    # VIRUS2: control dropping dedicated sky fibers (head_id like S1, _S17_)
+    parser.add_argument('--no-drop-sky-fibers-in-cubes', dest='drop_sky_fibers_in_cubes', action='store_false',
+                        help='Do not drop VIRUS2 dedicated sky fibers when building cubes (default is to drop them).')
+    parser.set_defaults(drop_sky_fibers_in_cubes=True)
     return parser.parse_args()
 
 

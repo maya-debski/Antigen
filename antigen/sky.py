@@ -5,6 +5,7 @@ from scipy.ndimage import percentile_filter
 from sklearn.decomposition import PCA
 
 from antigen import config
+from antigen.fiber import virus2_sky_mask
 
 
 def identify_sky_pixels(sky, per=50, size=50):
@@ -86,7 +87,7 @@ def get_skymask(sky, per=50, size=50, niter=3):
     return mask.mask, cont
 
 
-def subtract_sky(spectra, good):
+def subtract_sky(spectra, good, unit_instrument=None, head_id=None):
     """
     Subtracts sky contributions from input spectra using biweight calculations.
 
@@ -125,13 +126,29 @@ def subtract_sky(spectra, good):
         if np.any(sel):
             biweighted_spectrum[i] = biweight(row[sel], ignore_nan=True)
 
-    # Identify sky pixels based on the biweighted data and apply a mask
-    mask, cont = identify_sky_pixels(biweighted_spectrum[good], size=15)
+    # Prefer dedicated VIRUS2 sky fibers if provided
+    skyfibers = None
+    try:
+        inst = (unit_instrument or '').strip().lower()
+    except Exception:
+        inst = ''
+    if inst == 'virus2' and head_id is not None:
+        try:
+            vid_mask = virus2_sky_mask(head_id)
+            if vid_mask.size == nfibs:
+                # Only allow sky fibers that are also marked good
+                skyfibers = np.asarray(vid_mask, dtype=bool) & np.asarray(good, dtype=bool)
+        except Exception:
+            skyfibers = None
 
-    # Create a mask for fibers that are not good and are sky fibers
-    m1 = ~good
-    m1[good] = mask
-    skyfibers = ~m1
+    if skyfibers is None:
+        # Identify sky pixels based on the biweighted data and apply a mask
+        mask, cont = identify_sky_pixels(biweighted_spectrum[good], size=15)
+
+        # Create a mask for fibers that are not good and are sky fibers
+        m1 = ~good
+        m1[good] = mask
+        skyfibers = ~m1
 
     # Compute the biweighted sky spectrum based on sky fibers
     # Do per-wavelength finite filtering across selected sky fibers
@@ -354,7 +371,7 @@ def get_continuum(skysub, masksky, nbins=config.DEFAULT_SKY_CONTINUUM_BINS):
 
 def advanced_sky_subtraction(spectra, good_fiber_mask, pca=None, 
                             skymask_size=25, apply_pca_residuals=True,
-                            continuum_bins=50):
+                            continuum_bins=50, unit_instrument=None, head_id=None):
     """
     Perform advanced sky subtraction with optional PCA residual correction.
     
@@ -391,8 +408,10 @@ def advanced_sky_subtraction(spectra, good_fiber_mask, pca=None,
         ...     return_intermediates=True
         ... )
     """
-    # Perform basic sky subtraction
-    sky_subtracted_basic, biweighted_spectrum = subtract_sky(spectra, good_fiber_mask)
+    # Perform basic sky subtraction (prefer dedicated VIRUS2 sky fibers when available)
+    sky_subtracted_basic, biweighted_spectrum = subtract_sky(
+        spectra, good_fiber_mask, unit_instrument=unit_instrument, head_id=head_id
+    )
     
     residuals = None
     continuum = None

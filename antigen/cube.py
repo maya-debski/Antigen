@@ -65,11 +65,17 @@ def fibers_to_image(fiber_x, fiber_y, fiber_flux, fiber_area, bounds=[-10., 10.,
     bad_x = int(np.count_nonzero(~np.isfinite(fx)))
     bad_y = int(np.count_nonzero(~np.isfinite(fy)))
     bad_f = int(np.count_nonzero(~np.isfinite(ff)))
+    n_all = fx.size
+    n_good = int(np.count_nonzero(m))
+    n_bad_any = n_all - n_good
     if (bad_x + bad_y + bad_f) > 0:
-        logger.warning(
-            "Non-finite entries detected in fibers_to_image: bad_x=%d, bad_y=%d, bad_flux=%d; using finite subset.",
-            bad_x, bad_y, bad_f,
-        )
+        frac_bad = (n_bad_any / n_all) if n_all > 0 else 0.0
+        msg = ("Non-finite entries detected in fibers_to_image: bad_x=%d, bad_y=%d, bad_flux=%d "
+               "(%.1f%% of points affected); using finite subset.")
+        if frac_bad >= 0.5:
+            logger.warning(msg, bad_x, bad_y, bad_f, 100.0 * frac_bad)
+        else:
+            logger.debug(msg, bad_x, bad_y, bad_f, 100.0 * frac_bad)
     fx = fx[m]; fy = fy[m]; ff = ff[m]
     if return_error:
         if fiber_error is None:

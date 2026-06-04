@@ -11,6 +11,11 @@ schema:
       type: path
       required: true
       description: Output directory path
+    drop_sky_fibers_in_cubes:
+      type: bool
+      required: false
+      default: true
+      description: "For VIRUS2 only: drop dedicated sky fibers (head_id like S1, _S17_) from cube inputs"
 
     extraction_radius:
       type: float
@@ -121,6 +126,13 @@ schema:
       units: "arcsec"
       validate:
         min_length: 1
+
+    head_id:
+      type: ndarray
+      required: false
+      description: "Fiber head identifiers (used to drop VIRUS2 dedicated sky fibers)"
+      validate:
+        min_length: 0
 
     fiber_radius:
       type: float

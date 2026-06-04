@@ -49,6 +49,10 @@ schema:
       type: float
       required: true
       description: "Starting wavelength for detector grid"
+    head_id:
+      type: ndarray
+      required: false
+      description: "Fiber head identifiers (used to select VIRUS2 dedicated sky fibers)"
     end_wavelength:
       type: float
       required: true

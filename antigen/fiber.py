@@ -6,6 +6,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 from antigen import config
+import re
+import numpy as np
 
 logger = logging.getLogger('antigen.fiber')
 
@@ -106,6 +108,137 @@ def get_fiber_bounds(fiber_x, fiber_y):
 
     return [x_min, x_max, y_min, y_max]
 
+def virus2_sky_mask(head_ids):
+    """
+    Identify VIRUS2 dedicated sky fibers by head_id string.
+    Rules: matches tokens like 'S<number>' or '_S<number>_'.
+    Returns a boolean mask True for sky fibers.
+    """
+    if head_ids is None:
+        return np.zeros((0,), dtype=bool)
+    arr = np.asarray(head_ids)
+    mask = np.zeros(arr.shape, dtype=bool)
+    pattern1 = re.compile(r'^S\d+$', re.IGNORECASE)
+    pattern2 = re.compile(r'_S\d+_', re.IGNORECASE)
+    it = np.nditer(arr, flags=['refs_ok', 'multi_index'], op_flags=['readonly'])
+    for x in it:
+        s = x.item()
+        if s is None:
+            continue
+        try:
+            sstr = str(s).strip()
+        except Exception:
+            continue
+        if pattern1.search(sstr) or pattern2.search(sstr):
+            mask[it.multi_index] = True
+    return mask
+
+
+def filter_virus2_sky_fibers(unit_instrument, head_id, fiber_x, fiber_y, reduced_spectra, reduced_error, drop_sky_fibers_in_cubes=True):
+    """
+    If instrument is VIRUS2 and drop flag is True, drop fibers whose head_id
+    indicates dedicated sky fibers from the cube inputs. Otherwise passthrough.
+    Returns filtered (fiber_x, fiber_y, reduced_spectra, reduced_error).
+    """
+    try:
+        inst = (unit_instrument or '').strip().lower()
+    except Exception:
+        inst = ''
+    if not (inst == 'virus2' and bool(drop_sky_fibers_in_cubes)):
+        return fiber_x, fiber_y, reduced_spectra, reduced_error
+
+    sky_mask = virus2_sky_mask(head_id)
+    if sky_mask.size == 0:
+        logger.info("[VIRUS2] No head_id available to filter sky fibers; passing through.")
+        return fiber_x, fiber_y, reduced_spectra, reduced_error
+
+    # Basic diagnostics
+    fx = np.asarray(fiber_x)
+    fy = np.asarray(fiber_y)
+    spec = np.asarray(reduced_spectra)
+    err = np.asarray(reduced_error)
+    try:
+        nfib_spec = spec.shape[0]
+        nfib_pos = fx.shape[0]
+    except Exception:
+        nfib_spec = -1
+        nfib_pos = -1
+    logger.debug(f"[VIRUS2][DEBUG] Shapes: spec={getattr(spec, 'shape', None)}, err={getattr(err, 'shape', None)}, fx={getattr(fx, 'shape', None)}, fy={getattr(fy, 'shape', None)}, head_id={np.asarray(head_id).shape if head_id is not None else None}")
+
+    if sky_mask.size not in (nfib_spec, nfib_pos):
+        # Attempt to broadcast/tile the head_id-derived mask to match concatenated spectra/positions
+        base_len = int(sky_mask.size)
+        target_len = None
+        reps = None
+        # Prefer matching the spectra length (rows of spectra)
+        if nfib_spec > 0 and nfib_spec % base_len == 0:
+            target_len = nfib_spec
+            reps = nfib_spec // base_len
+        # Else try matching positions length
+        elif nfib_pos > 0 and nfib_pos % base_len == 0:
+            target_len = nfib_pos
+            reps = nfib_pos // base_len
+        if target_len is not None and reps is not None and reps >= 1:
+            logger.info(
+                "[VIRUS2] Broadcasting head_id sky mask from %d to %d by repeating %d time(s) to match concatenated fibers.",
+                base_len, target_len, reps
+            )
+            try:
+                sky_mask = np.tile(np.asarray(sky_mask, dtype=bool), reps)
+            except Exception as e:
+                logger.warning(
+                    "[VIRUS2] Failed to broadcast head_id sky mask due to %s; passing through without dropping sky fibers.",
+                    str(e)
+                )
+                return fiber_x, fiber_y, reduced_spectra, reduced_error
+        else:
+            logger.warning("[VIRUS2] Head_id mask length (%d) does not match spectra (%d) or positions (%d). Passing through without dropping sky fibers.", sky_mask.size, nfib_spec, nfib_pos)
+            return fiber_x, fiber_y, reduced_spectra, reduced_error
+
+    keep = ~sky_mask
+    n_sky = int(np.sum(sky_mask))
+    n_keep = int(np.sum(keep))
+    logger.info(f"[VIRUS2] Dropping {n_sky} dedicated sky fibers from cube inputs; keeping {n_keep} science fibers.")
+
+    # Detailed debug about which fibers are being dropped/kept (truncated for readability)
+    if logger.isEnabledFor(logging.DEBUG):
+        sky_idx = np.where(sky_mask)[0]
+        keep_idx = np.where(keep)[0]
+        # Prepare head-id array as strings
+        hid = np.asarray(head_id) if head_id is not None else np.array([])
+        def _preview(arr, maxn=25):
+            if arr.size <= maxn:
+                return arr.tolist()
+            return arr[:maxn].tolist() + [f"... (+{arr.size-maxn} more)"]
+        dropped_ids = hid[sky_idx] if sky_idx.size and hid.size == sky_mask.size else []
+        dropped_xy = None
+        try:
+            # Align positions to spectra rows: assume 1:1 mapping in our pipeline
+            dropped_xy = list(zip(fx[sky_idx].tolist(), fy[sky_idx].tolist())) if sky_idx.size == fx.shape[0] == fy.shape[0] else None
+        except Exception:
+            dropped_xy = None
+        logger.debug(f"[VIRUS2][DEBUG] Dropped sky fiber indices: {_preview(sky_idx)}")
+        if isinstance(dropped_ids, np.ndarray) and dropped_ids.size:
+            logger.debug(f"[VIRUS2][DEBUG] Dropped head_id sample: {_preview(dropped_ids.astype(str))}")
+        if dropped_xy is not None:
+            logger.debug(f"[VIRUS2][DEBUG] Dropped fiber positions sample (x,y): {_preview(np.array(dropped_xy, dtype=object))}")
+        logger.debug(f"[VIRUS2][DEBUG] Kept fiber indices sample: {_preview(keep_idx)}")
+
+    # Apply mask consistently; handle concatenated dithers (fiber_x flat array assumed aligned to spectra rows)
+    # Expect shapes: spec (nfibers, nwave), fx (nfibers) when repeated per dither like spectra rows
+    try:
+        fx_f = fx[keep]
+        fy_f = fy[keep]
+        spec_f = spec[keep, :]
+        err_f = err[keep, :]
+    except Exception as e:
+        # Fallback: if dimensions mismatch, do safest pass-through with warning
+        logger.warning("[VIRUS2] Filter failed due to shape mismatch (%s); passing through without dropping sky fibers.", str(e))
+        return fiber_x, fiber_y, reduced_spectra, reduced_error
+
+    return fx_f, fy_f, spec_f, err_f
+
+
 def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base):
     """
     Load the fiber positions for a given instrument and apply the appropriate dither offsets.
@@ -137,8 +270,25 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fib
 
     # --- Handle single-dither (no offset) case ---
     if ndithers == 1:
-        logger.info(f"No dither pattern needed for {instrument}, ndithers=1")
-        return fiber_x_base.copy(), fiber_y_base.copy()
+        # Historical behavior returned just the base positions once. However, when
+        # multiple exposures are provided with ndithers=1, downstream arrays (e.g.,
+        # spectra) are often concatenated per exposure. To keep shapes aligned,
+        # repeat the base positions once per requested dither_number entry, but
+        # with zero offset for all (i.e., identical positions).
+        try:
+            nrep = int(len(dither_numbers)) if hasattr(dither_numbers, "__len__") else 1
+        except Exception:
+            nrep = 1
+        if nrep <= 1:
+            logger.info(f"No dither pattern needed for {instrument}, ndithers=1 (single set of positions)")
+            return fiber_x_base.copy(), fiber_y_base.copy()
+        else:
+            logger.info(
+                f"No dither pattern needed for {instrument}, ndithers=1; repeating base positions {nrep} time(s) with zero offset"
+            )
+            fiber_x = np.hstack([fiber_x_base for _ in range(nrep)])
+            fiber_y = np.hstack([fiber_y_base for _ in range(nrep)])
+            return fiber_x, fiber_y
 
     # --- Load dither offsets ---
     if not dither_file.exists():

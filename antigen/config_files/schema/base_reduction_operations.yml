@@ -657,13 +657,23 @@ schema:
           required: false
           default: 50
           description: "Number of bins for continuum estimation"
+        unit_instrument:
+          type: str
+          required: false
+          source: inputs.dataset.unit_instrument
+          description: "Instrument name (used to prefer VIRUS2 dedicated sky fibers)"
+        head_id:
+          type: ndarray
+          required: false
+          source: inputs.config.head_id
+          description: "Fiber head identifiers (used to select VIRUS2 dedicated sky fibers)"
       needs: ["{spec_type}_calibrated", "good_fiber_mask"]
       provides: ["{spec_type}_sky_subtracted", "{spec_type}_sky_subtracted_basic",
                  "{spec_type}_residuals", "{spec_type}_continuum"]
       algorithm:
         function: "antigen.sky.advanced_sky_subtraction"
         args: ["spectra", "good_fiber_mask", "pca_model", "skymask_size", "apply_pca_residuals",
-               "continuum_bins"]
+               "continuum_bins", "unit_instrument", "head_id"]
 
     SaveReducedSpectra:
       description: "Writes processed spectra to FITS files with headers and 

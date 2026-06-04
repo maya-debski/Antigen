@@ -456,6 +456,8 @@ def plot_scattered_light_fit(x_norm, y_norm, group_values, residuals, poly_order
         Path(outfolder).mkdir(parents=True, exist_ok=True)
         outfile = os.path.join(outfolder, "scattered_light_fit_diagnostics.png")
         plt.savefig(outfile, dpi=200, bbox_inches='tight')
+        # Close the figure to prevent accumulation of open figures when called repeatedly
+        plt.close(fig)
         
     return fig, ax
 

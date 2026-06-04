@@ -8,6 +8,7 @@ inputs:
     k_neighbors: 5
     sigma_gdw: 1.5
     rbf_function: "multiquadric"
+    drop_sky_fibers_in_cubes: true  # VIRUS2: drop dedicated sky fibers from cube inputs
   dataset:
     unit_instrument: null
     unit_id: null
@@ -19,6 +20,7 @@ inputs:
     fiber_radius: null
     ifu_x: null
     ifu_y: null
+    head_id: null  # VIRUS2: used to identify dedicated sky fibers
     start_wavelength: null
     end_wavelength: null
     detector_dimensions:
@@ -31,6 +33,7 @@ workflow:
       - LoadFiberPositions
       - GetWavelengthGrid
       - LoadReducedData
+      - FilterVirus2SkyFibers
 
   - group: "ModelingAndDAR"
     steps:
