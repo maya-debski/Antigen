@@ -72,14 +72,19 @@ def main():
     if args.manifest:
         manifest_file_path = Path(args.manifest)
         if manifest_file_path.is_file():
-            manifest_record = read_manifest(args.manifest)
+            # temporary hack, step1: read and validate the manifest file
+            manifest_record = read_manifest(args.manifest, validate=False, path_type='pathlib')
             manifest_is_valid = validate_manifest(manifest_record)
             if manifest_is_valid:
                 print(f'PASS: user-provided manifest file is valid. Skipped find_datasets().')
-                dataset_manifests = [manifest_record]
             else:
                 print(f'FAIL: user-provided manifest file is NOT valid. Exiting!')
                 return 1
+            # temporary hack, step2: reread manifest file as STRINGS because something down-stream
+            # requires string paths not pathlib.Path objects
+            if manifest_is_valid:
+                manifest_record = read_manifest(args.manifest, validate=False, path_type='string')
+                dataset_manifests = [manifest_record]
 
     base_save_path = Path(args.out_folder or args.reduced_dir).expanduser().resolve()
     base_save_path.mkdir(parents=True, exist_ok=True)
@@ -93,6 +98,10 @@ def main():
 
     # Process base reduction for each manifest record in list dataset_manifests
     for manifest in dataset_manifests:
+
+        for key, val in manifest.items():
+            logger.info(f'manifest[{key}] = {val}')
+
         # If a specific unit-id was requested, skip non-matching manifests
         if getattr(args, 'unit_id', None):
             try:
