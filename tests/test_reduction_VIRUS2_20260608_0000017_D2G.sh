@@ -9,7 +9,7 @@
 #---------------------------------------------------------
 
 ANTIGEN_ROOT=$HOME/Code/github-com/mcdo-hjst/Antigen
-DATA_DATE=20260518
+DATA_DATE=20260608
 DATA_ROOT=${ANTIGEN_ROOT}/tests/oppor_20260608_night
 REDUCED_ROOT=${DATA_ROOT}/reduced/VIRUS2/${DATA_DATE}
 MANIFEST_FILE=${ANTIGEN_ROOT}/tests/manifest_reduction_VIRUS2_20260608_0000017_D2G.yml
