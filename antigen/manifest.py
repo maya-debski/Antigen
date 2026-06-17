@@ -140,25 +140,39 @@ def save_manifest(manifest, filename):
         # yaml.safe_dump(convert_manifest_paths_to_stings(manifest), fob, default_flow_style=False)
 
 
-def normalize_manifest(manifest):
+def normalize_manifest(manifest, path_type='pathlib'):
     """
-    Purpose: Replace file strings and relative file paths with fully resolved file paths as pathlib.Path objects.
+    Purpose: Replace file strings and relative file paths with
+             fully resolved file paths as EITHER (1) pathlib.Path objects or (2) strings.
 
     Args:
         manifest (dict): data structure loaded from manifest YAML file
+        path_type (str): set to 'pathlib' for Path objects (default) or set to 'string' for string paths
     Returns:
         manifest (dict): same structure, but with all file paths updated to prepend 'in_folder'
     """
-    manifest['in_folder'] = Path(manifest['in_folder']).expanduser().resolve(strict=False)
+    in_folder_path = Path(manifest['in_folder']).expanduser().resolve(strict=False)
+
+    if path_type == 'string':
+        manifest['in_folder'] = str(in_folder_path)
+    else:
+        manifest['in_folder'] = in_folder_path
 
     calibration_files = manifest[MANIFEST_CALIBRATION_LIST_KEY]
     for category, relative_paths in calibration_files.items():
-        calibration_files[category] = [manifest['in_folder'] / Path(file) for file in relative_paths]
+        if path_type == 'string':
+            calibration_files[category] = [str(in_folder_path / Path(file)) for file in relative_paths]
+        else:
+            calibration_files[category] = [in_folder_path / Path(file) for file in relative_paths]
     manifest[MANIFEST_CALIBRATION_LIST_KEY] = calibration_files
 
     obs_files_relative_paths = manifest[MANIFEST_OBSERVATION_LIST_KEY]
-    observation_files = [manifest['in_folder'] / Path(file) for file in obs_files_relative_paths]
+    if path_type == 'string':
+        observation_files = [str(in_folder_path / Path(file)) for file in obs_files_relative_paths]
+    else:
+        observation_files = [in_folder_path / Path(file) for file in obs_files_relative_paths]
     manifest[MANIFEST_OBSERVATION_LIST_KEY] = observation_files
+
     return manifest
 
 
@@ -246,7 +260,7 @@ def print_manifest(manifest):
     return None
 
 
-def read_manifest(filename, validate=False, verbose=False):
+def read_manifest(filename, validate=False, verbose=False, path_type='pathlib'):
     """
     Purpose: Read, Normalize, and validate manifest file
 
@@ -254,11 +268,14 @@ def read_manifest(filename, validate=False, verbose=False):
         filename (str): Full-path filename of manifest file
         validate (bool): if True, test manifest structure and existence and all files listed therein
         verbose (bool): if True, pretty-print manifest structure to console
+        path_type (str): type out resulting paths in manifest dict, set to 'pathlib' for Path objects (default) or set to 'string' for string paths
     Returns:
         manifest_normalized (dict): data structure loaded from manifest YAML file
     """
     manifest_raw = load_manifest(filename)
-    manifest_normalized = normalize_manifest(manifest_raw)
+    manifest_normalized = normalize_manifest(manifest_raw, path_type=path_type)
+    if verbose:
+        print_manifest(manifest_normalized)
     if verbose:
         print_manifest(manifest_normalized)
     if validate:
