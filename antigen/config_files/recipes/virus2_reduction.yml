@@ -305,9 +305,6 @@ workflow:
           label: "ConvertSpectralUnits"
           params:
             spec_type: processed_science
-      - AdvancedSkySubtraction:
-          params:
-            spec_type: processed_science
       - SaveReducedSpectra:
           params:
             spec_type: processed_science
