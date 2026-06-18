@@ -1,0 +1,327 @@
+# =============================================================================
+# ANTIGEN RECIPE SYSTEM - YAML CONFIGURATION GUIDE
+# =============================================================================
+#
+# This file defines a data processing recipe using the Antigen recipe system.
+# A recipe consists of inputs, workflow steps, and outputs that define how
+# astronomical data should be processed.
+#
+# =============================================================================
+# FILE STRUCTURE
+# =============================================================================
+#
+# A complete recipe consists of three files:
+#   1. recipe.yml           - Main recipe definition (this file)
+#   2. recipe_operations.yml - Step/operation definitions
+#   3. recipe_schema.yml     - Input validation rules
+#
+# =============================================================================
+# RECIPE SECTIONS
+# =============================================================================
+#
+# description: Brief description of what this recipe does
+#
+# inputs: Define all inputs the recipe expects
+#   cli:      Command-line arguments
+#   dataset:  Dataset-specific parameters
+#   config:   Configuration parameters
+#
+# workflow: Define the processing steps and their organization
+#   - group: Logical groupings of related steps
+#     steps: List of operations to execute
+#     iterate_over: (optional) Loop over dataset items
+#     iterator_var: (optional) Variable name for current item
+#
+# outputs: List of final outputs this recipe produces
+#
+# =============================================================================
+# WORKFLOW PATTERNS
+# =============================================================================
+#
+# Basic Step:
+#   - StepName
+#
+# Step with Parameters:
+#   - StepName:
+#       params:
+#         parameter_name: value
+#         parameter_with_source:
+#           source: state.some_variable
+#
+# Step with Label (for multiple uses of same operation):
+#   - StepName:
+#       label: "UniqueLabel"
+#       params:
+#         parameter: value
+#
+# Grouped Steps:
+#   - group: "GroupName"
+#     steps:
+#       - Step1
+#       - Step2
+#
+# Iterative Processing:
+#   - group: "ProcessFiles"
+#     iterate_over: inputs.dataset.file_list
+#     iterator_var: current_file
+#     steps:
+#       - ProcessFile:
+#           params:
+#             filename:
+#               source: current_file
+#
+# =============================================================================
+# PARAMETER SOURCING
+# =============================================================================
+#
+# Parameters can be sourced from different locations:
+#
+# From inputs:
+#   parameter:
+#     source: inputs.cli.output_folder       # Command-line argument
+#     source: inputs.dataset.unit_id         # Dataset parameter
+#     source: inputs.config.start_wavelength # Configuration value
+#
+# From state (previous step outputs):
+#   parameter:
+#     source: state.wavelength_solution      # From previous step
+#     source: state.master_flat_data         # Master calibration frame
+#
+# From iterator variables:
+#   parameter:
+#     source: current_file                   # When iterating over files
+#
+# Direct values:
+#   parameter: "direct_string_value"
+#   parameter: 42                           # Direct numeric value
+#   parameter: true                         # Direct boolean value
+#
+# =============================================================================
+# DYNAMIC NAMING WITH PLACEHOLDERS
+# =============================================================================
+#
+# Use {placeholder} syntax for dynamic naming:
+#
+# Frame type placeholder:
+#   - MakeCalibrationFrame:
+#       params:
+#         frame_type: bias
+#   # Creates: master_bias_data, master_bias_time
+#
+# Spectrum type placeholder:
+#   - RectifySpectra:
+#       params:
+#         spec_type: processed_science
+#   # Uses: processed_science_spec, processed_science_error
+#   # Creates: processed_science_rect, processed_science_error_rect
+#
+# Image type placeholder:
+#   - ExtractSpectra:
+#       params:
+#         image_type: master_arc
+#   # Uses: master_arc_data
+#   # Creates: master_arc_spec, master_arc_error
+#
+# =============================================================================
+# COMMON WORKFLOW PATTERNS
+# =============================================================================
+#
+# 1. CALIBRATION PROCESSING:
+#    Create master frames from multiple calibration files
+#
+# 2. TRACE AND WAVELENGTH:
+#    Extract fiber positions and solve wavelength calibration
+#
+# 3. FLAT FIELD PROCESSING:
+#    Process flat fields and calculate fiber-to-fiber variations
+#
+# 4. SCIENCE PROCESSING:
+#    Iterate over science files, applying all corrections
+#
+# 5. MEASUREMENT/ANALYSIS:
+#    Perform scientific measurements on processed data
+#
+# =============================================================================
+# ERROR HANDLING AND VALIDATION
+# =============================================================================
+#
+# The recipe system provides:
+# - Input validation based on recipe_schema.yml
+# - State validation between steps
+# - Automatic error propagation
+# - Graceful handling of missing optional parameters
+#
+# =============================================================================
+# DEBUGGING TIPS
+# =============================================================================
+#
+# 1. Check parameter sources match available state variables
+# 2. Verify all required inputs are provided
+# 3. Ensure step dependencies are satisfied
+# 4. Use descriptive labels for multiple instances of same operation
+# 5. Test iterative sections with small datasets first
+#
+# =============================================================================
+# EXAMPLE WORKFLOWS
+# =============================================================================
+#
+# Simple Linear Processing:
+# workflow:
+#   - group: "Calibration"
+#     steps:
+#       - LoadData
+#       - ProcessData
+#       - SaveResults
+#
+# File Iteration:
+# workflow:
+#   - group: "ProcessMultipleFiles"
+#     iterate_over: inputs.dataset.observation_files
+#     iterator_var: current_file
+#     steps:
+#       - LoadFile:
+#           params:
+#             filename:
+#               source: current_file
+#       - ProcessFile
+#
+# Parameter Passing:
+# workflow:
+#   - group: "FlexibleProcessing"
+#     steps:
+#       - ExtractSpectra:
+#           label: "ExtractArcSpectra"
+#           params:
+#             image_type: master_arc
+#       - ExtractSpectra:
+#           label: "ExtractScienceSpectra"
+#           params:
+#             image_type: processed_science
+#
+# =============================================================================
+
+description: "Base reduction pipeline to process GCMS/VIRUS2/VIRUSW observation files"
+inputs:
+  cli:
+    out_folder: null
+    good_arc_residual_limit: null
+    binned: null
+  dataset:
+    unit_instrument: null
+    unit_id: null
+    calibration_files: {}
+    observation_files: []
+    in_folder: "./"
+  config:
+    arc_lines: []
+    dispersion_reference_x: []
+    arc_flux_limit: null
+    reference_fiber_index: null
+    trace_row: []
+    exclude_fiber: []
+    sample_fiber_indices: []
+    start_wavelength: null
+    end_wavelength: null
+    overscan_length: null
+    gain: null
+    read_noise: null
+    flip_x: null
+    flip_y: null
+    rotate: null
+    add_rows: 0
+    detector_dimensions:
+      X: null
+      Y: null
+
+workflow:
+  - group: "CalibrationFrames"
+    steps:
+      - MakeCalibrationFrame:
+          label: "MakeMasterBiasFrame"
+          params:
+            frame_type: bias
+      - MakeCalibrationFrame:
+          label: "MakeMasterDarkFrame"
+          params:
+            frame_type: dark
+      - MakeCalibrationFrame:
+          label: "MakeMasterFlatFrame"
+          params:
+            frame_type: flat
+      - MakeCalibrationFrame:
+          label: "MakeMasterArcFrame"
+          params:
+            frame_type: arc
+
+  - group: "TraceAndWavelength"
+    steps:
+      - GetTraceData
+      - ExtractSpectra:
+          label: "ExtractArcSpectra"
+          params:
+            image_type: master_arc
+      - WavelengthCalibration
+      - GetWavelengthGrid
+
+  - group: "FlatFieldProcessing"
+    steps:
+      - ExtractSpectra:
+          label: "ExtractFlatSpectra"
+          params:
+            image_type: master_flat
+      - RectifySpectra:
+          label: "RectifyFlatSpectra"
+          params:
+            spec_type: master_flat
+      - GetFiberToFiber
+
+  - group: "PCASkyModel"
+    steps:
+      - RectifySpectra:
+          label: "RectifyArcSpectra"
+          params:
+            spec_type: master_arc
+      - GeneratePCAModel
+
+
+  - group: "ScienceFrameProcessing"
+    iterate_over: inputs.dataset.observation_files
+    iterator_var: current_observation_file  # Creates variable in state
+    steps:
+      - LoadScienceFrame
+      - ProcessScienceFrame
+      - DetectCosmicRays:
+          label: "CleanScienceCosmicRays"
+          params:
+            image_type: processed_science
+            sigclip: 5.0  # More conservative detection
+            niter: 5      # More iterations for science data
+
+      - RemoveScatteredLight
+      - ExtractSpectra:
+            label: "ExtractScienceSpectra"
+            params:
+              image_type: processed_science
+      - RectifySpectra:
+          label: "RectifyScienceSpectra"
+          params:
+            spec_type: processed_science
+      - CorrectFiberToFiber:
+          label: "CorrectFiberToFiber"
+          params:
+            spec_type: processed_science
+      - ConvertSpectralUnits:
+          label: "ConvertSpectralUnits"
+          params:
+            spec_type: processed_science
+      - AdvancedSkySubtraction:
+          params:
+            spec_type: processed_science
+      - SaveReducedSpectra:
+          params:
+            spec_type: processed_science
+
+
+
+outputs:
+  - wavelength_solution
