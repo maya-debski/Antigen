@@ -56,6 +56,14 @@ def get_args():
         help='Data is binned in the x-direction?'
     )
 
+    parser.add_argument(
+        '--recipe',
+        type=str,
+        default='base_reduction',
+        help='File name stem of the recipe/schema/operations files under config_files/recipes and config_files/schema'
+             '(default: %(default)s). Example: virus2_reduction'
+    )
+
     args = parser.parse_args()
     return args
 
@@ -143,7 +151,7 @@ def main():
 
         # Load recipe
         base_path = config.get_base_config_path()
-        recipe = Recipe.load("base_reduction", base_path)
+        recipe = Recipe.load(args.recipe, base_path)
 
         # Ensure recipe steps use the per-spectrograph folder by overriding CLI out_folder
         old_out_folder = getattr(args, 'out_folder', None)
