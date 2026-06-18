@@ -275,15 +275,6 @@ workflow:
             spec_type: master_flat
       - GetFiberToFiber
 
-  - group: "PCASkyModel"
-    steps:
-      - RectifySpectra:
-          label: "RectifyArcSpectra"
-          params:
-            spec_type: master_arc
-      - GeneratePCAModel
-
-
   - group: "ScienceFrameProcessing"
     iterate_over: inputs.dataset.observation_files
     iterator_var: current_observation_file  # Creates variable in state
