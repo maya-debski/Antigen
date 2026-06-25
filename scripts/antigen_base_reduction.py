@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 from pathlib import Path
 import argparse
+import sys
 
 from antigen.datasets import find_datasets
-from antigen.manifest import save_manifest, read_manifest
+from antigen.manifest import save_manifest, read_manifest, validate_manifest
 from antigen.utils import setup_logging
 from antigen import config
 from antigen.recipe import Recipe
@@ -55,22 +56,60 @@ def get_args():
         help='Data is binned in the x-direction?'
     )
 
-    return parser.parse_args()
+    parser.add_argument(
+        '--recipe',
+        type=str,
+        default='base_reduction',
+        help='File name stem of the recipe/schema/operations files under config_files/recipes and config_files/schema'
+             '(default: %(default)s). Example: virus2_reduction'
+    )
+
+    args = parser.parse_args()
+    return args
 
 
 def main():
     args = get_args()
+
     logger = setup_logging('antigen', verbose=args.verbose, debug=args.debug)
     logger.info('Starting application...')
+
+
+    # Try to populate dataset_manifests records list with user-provided manifest file
+    dataset_manifests = []
+    if args.manifest:
+        manifest_file_path = Path(args.manifest)
+        if manifest_file_path.is_file():
+            # temporary hack, step1: read and validate the manifest file
+            manifest_record = read_manifest(args.manifest, validate=False, path_type='pathlib')
+            manifest_is_valid = validate_manifest(manifest_record)
+            if manifest_is_valid:
+                print(f'PASS: user-provided manifest file is valid. Skipped find_datasets().')
+            else:
+                print(f'FAIL: user-provided manifest file is NOT valid. Exiting!')
+                return 1
+            # temporary hack, step2: reread manifest file as STRINGS because something down-stream
+            # requires string paths not pathlib.Path objects
+            if manifest_is_valid:
+                manifest_record = read_manifest(args.manifest, validate=False, path_type='string')
+                dataset_manifests = [manifest_record]
 
     base_save_path = Path(args.out_folder or args.reduced_dir).expanduser().resolve()
     base_save_path.mkdir(parents=True, exist_ok=True)
 
-    # Process manifests
-    dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
-                                      args.bias_label, args.arc_label, args.dark_label,
-                                      args.flat_label, args.twilight_flat_label, instrument=args.instrument)
+    # If user manifest not provided or not valid,
+    # then search the input file tree, identify datasets, and build manifest files for each.
+    if not dataset_manifests:
+        dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
+                                          args.bias_label, args.arc_label, args.dark_label,
+                                          args.flat_label, args.twilight_flat_label, instrument=args.instrument)
+
+    # Process base reduction for each manifest record in list dataset_manifests
     for manifest in dataset_manifests:
+
+        for key, val in manifest.items():
+            logger.info(f'manifest[{key}] = {val}')
+
         # If a specific unit-id was requested, skip non-matching manifests
         if getattr(args, 'unit_id', None):
             try:
@@ -112,7 +151,7 @@ def main():
 
         # Load recipe
         base_path = config.get_base_config_path()
-        recipe = Recipe.load("base_reduction", base_path)
+        recipe = Recipe.load(args.recipe, base_path)
 
         # Ensure recipe steps use the per-spectrograph folder by overriding CLI out_folder
         old_out_folder = getattr(args, 'out_folder', None)
@@ -139,4 +178,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,19 @@
+reduction_name: manifest_test_20260617_vestuto
+unit_date: unknown
+unit_instrument: VIRUS2
+unit_id: D2G
+obs_date: '20260608'
+obs_name: null
+in_folder: ~/Code/github-com/mcdo-hjst/Antigen/tests/oppor_20260608_night/VIRUS2/20260608
+out_folder: ~/Code/github-com/mcdo-hjst/Antigen/tests/oppor_20260608_night/reduced/VIRUS2/20260608
+observation_files:
+- 0000017/D2G/VIRUS2_20260608_0000017_science_D2G_exp01_20260609T031920.2_Hz44.fits
+calibration_files:
+  bias:
+  - 0000038/D2G/VIRUS2_20260606_0000038_bias_D2G_exp01_20260607T010930.9_bias_0sec.fits
+  flat:
+  - 0000011/D2G/VIRUS2_20260608_0000011_flat_D2G_exp01_20260609T021128.8_twiflat.fits
+  arc:
+  - 0000001/D2G/VIRUS2_20260608_0000001_arc_D2G_exp01_20260609T010056.3_fear_300sec.fits
+  dark:
+  - 0000030/D2G/VIRUS2_20260608_0000030_dark_D2G_exp01_20260609T102118.5_dark_1sec.fits

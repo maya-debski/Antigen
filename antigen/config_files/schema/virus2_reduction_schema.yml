@@ -1,0 +1,129 @@
+description: "Data reduction pipeline to process VIRUS2 observation files"
+schema:
+  cli:
+    out_folder:
+      type: path
+      required: true
+      description: "Path where reduction output files will be written"
+    good_arc_residual_limit:
+      type: float
+      required: false
+      description: "Number of rows to add as padding"
+      default: 0.2
+      validate:
+        min: 0
+    binned:
+      type: bool
+      required: true
+      default: false
+      description: "Data is binned in the x-direction"
+  dataset:
+    unit_instrument:
+      type: str
+      required: true
+      description: "Name of the instrument (e.g. virus2, gcms)"
+      validate:
+        choices: [ "virus2", "gcms", "virusw" ]
+    unit_id:
+      type: str
+      required: true
+      description: "Instrument unit identifier"
+    calibration_files:
+      type: dict
+      required: true
+      description: "Dictionary of calibration file paths"
+      validate:
+        required_keys: ["bias", "flat", "arc"]
+    observation_files:
+      type: list[str]
+      required: true
+      description: "List of science observation files to process"
+    in_folder:
+      type: str
+      required: false
+      description: Input folder for reduced files
+      default: "./"
+
+  config:
+    start_wavelength:
+      type: float
+      required: true
+      description: "Starting wavelength for detector grid"
+    head_id:
+      type: ndarray
+      required: false
+      description: "Fiber head identifiers (used to select VIRUS2 dedicated sky fibers)"
+    end_wavelength:
+      type: float
+      required: true
+      description: "Ending wavelength for detector grid"
+    detector_dimensions:
+      type: dict
+      required: true
+      description: "Detector dimensions in X and Y"
+      validate:
+        required_keys: ["X", "Y"]
+    arc_lines:
+      type: ndarray
+      required: true
+      description: "Wavelength calibration lines"
+    dispersion_reference_x:
+      type: ndarray
+      required: true
+      description: "Reference columns for wavelength calibration"
+    arc_flux_limit:
+      type: float
+      required: true
+      description: "Flux threshold for arc line detection"
+    reference_fiber_index:
+      type: int
+      required: true
+      description: "Reference fiber index for wavelength solution"
+    trace_row:
+      type: ndarray
+      required: true
+      description: "Initial trace list for central wavelength of the detector"
+    exclude_fiber:
+      type: ndarray
+      required: true
+      description: "List of fibers to exclude from processing"
+    sample_fiber_indices:
+      type: list[int]
+      required: true
+      description: "Fibers to use for diagnostic plots"
+    overscan_length:
+      type: int
+      required: true
+      description: "Length of overscan region in pixels"
+    flip_x:
+      type: bool
+      required: true
+      description: "Flag to flip image in x direction"
+    flip_y:
+      type: bool
+      required: true
+      description: "Flag to flip image in y direction"
+    rotate:
+      type: bool
+      required: true
+      description: "Flag to rotate image 90 degrees"
+    add_rows:
+      type: int
+      required: false
+      description: "Number of rows to add as padding"
+      default: 0
+      validate:
+        min: 0
+    gain:
+      type: float
+      required: True
+      description: "Detector Gain"
+      validate:
+        min: 0
+    read_noise:
+      type: float
+      required: True
+      description: "Detector Read Noise"
+      validate:
+        min: 0
+
