@@ -33,6 +33,7 @@ antigen_base_reduction.py \
     --unit-id ${CHAN_ID} \
     --time_radius 7 \
     --good_arc_residual_limit 1 \
+    --recipe base_reduction \
     -v \
     -d \
 

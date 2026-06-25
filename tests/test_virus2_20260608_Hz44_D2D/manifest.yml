@@ -1,10 +1,10 @@
-reduction_name: antigen_manifest_20260614_055444
+reduction_name: test_virus2_20260608_Hz44_D2D
 unit_date: unknown
 unit_instrument: VIRUS2
 unit_id: D2D
 obs_date: '20260608'
 obs_name: null
-in_folder: ../test_data_virus2_20260608/VIRUS2/20260608
+in_folder: ../../data/20260608/VIRUS2/20260608/
 out_folder: ./reduced
 observation_files:
 - 0000017/D2D/VIRUS2_20260608_0000017_science_D2D_exp01_20260609T031920.2_Hz44.fits
