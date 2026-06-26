@@ -248,6 +248,18 @@ def make_cube(wavelength, fiber_spectra, fiber_error, fiber_x, fiber_y, fiber_ar
     nx = max(1, int(np.floor(span_x / pixel_size)) + 1)
     ny = max(1, int(np.floor(span_y / pixel_size)) + 1)
 
+    # Diagnostics: report calculated spatial bounds, pixel size, and grid size
+    try:
+        m_finite = np.isfinite(fiber_x) & np.isfinite(fiber_y)
+        n_finite = int(np.count_nonzero(m_finite))
+    except Exception:
+        n_finite = int(len(np.asarray(fiber_x).ravel()))
+    logger.info(
+        "Cube grid setup: bounds=[%.3f, %.3f, %.3f, %.3f], pixel_size=%.3f, method=%s, dims=(ny=%d, nx=%d), finite_fibers=%d",
+        float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3]),
+        float(pixel_size), str(method), int(ny), int(nx), n_finite,
+    )
+
     # Determine spectral dimensions and guard against mismatches
     n_wave = int(len(wavelength))
     n_spec = int(fiber_spectra.shape[1])
