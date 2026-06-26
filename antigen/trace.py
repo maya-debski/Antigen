@@ -214,7 +214,7 @@ def _evaluate_trace_chunk(flat_column, x_center, chunk_index, nominal_positions,
 
     if len(peak_indices) == 0:
         logger.warning(f"No initial peaks found at chunk {x_center:.1f}")
-        return np.zeros(total_fibers)
+        return np.full(total_fibers, np.nan)
 
     peak_values = flat_column[peak_indices + 1]
     
@@ -226,7 +226,7 @@ def _evaluate_trace_chunk(flat_column, x_center, chunk_index, nominal_positions,
 
     if len(strong_peaks) == 0:
         logger.warning(f"No strong peaks found at chunk {x_center:.1f}")
-        return np.zeros(total_fibers)
+        return np.full(total_fibers, np.nan)
 
     # Refine peak positions
     refined_peaks = _get_peak_positions(flat_column, strong_peaks)
@@ -259,8 +259,69 @@ def _evaluate_trace_chunk(flat_column, x_center, chunk_index, nominal_positions,
     return fiber_trace
 
 
+def _plot_trace_central_quarters(center_column, nominal_trace_positions, exclude_fiber_mask, out_folder=None, filename="trace_central_chunk_examination.png"):
+    """
+    Save a 4-panel diagnostic plot for the center chunk column, with the column
+    split into four vertical sections. Overlays nominal_trace_positions, using
+    distinct styles for good vs excluded fibers.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        from pathlib import Path
+
+        y = np.arange(center_column.size)
+        H = center_column.size
+        # Compute indices that define the four vertical sections (quarters)
+        q = [0, H // 4, H // 2, 3 * H // 4, H]
+
+        # Determine good vs excluded fibers
+        good_mask = ~np.asarray(exclude_fiber_mask, dtype=bool)
+        nom = np.asarray(nominal_trace_positions, dtype=float)
+
+        fig, axes = plt.subplots(4, 1, figsize=(8, 10))
+        for i in range(4):
+            y0, y1 = q[i], q[i + 1]
+            ax = axes[i]
+            # Plot the center column intensity for this quarter
+            ax.plot(y[y0:y1], center_column[y0:y1], color='black', lw=0.8)
+            # Overlay nominal positions as horizontal lines within this quarter
+            # good fibers in green, excluded in red dashed
+            # A nominal position falls in this quarter if y0 <= nom < y1
+            in_q = (nom >= y0) & (nom < y1) & np.isfinite(nom)
+            if np.any(in_q & good_mask):
+                for yy in nom[in_q & good_mask]:
+                    ax.axvline(yy, color='tab:green', lw=0.7, alpha=0.9)
+            if np.any(in_q & ~good_mask):
+                for yy in nom[in_q & ~good_mask]:
+                    ax.axvline(yy, color='tab:red', lw=0.7, ls='--', alpha=0.9)
+            ax.grid(alpha=0.2, ls=':')
+        # Legend proxies
+        from matplotlib.lines import Line2D
+        legend_elems = [
+            Line2D([0], [0], color='tab:green', lw=1.2, label='good fibers'),
+            Line2D([0], [0], color='tab:red', lw=1.2, ls='--', label='excluded fibers'),
+        ]
+        axes[0].legend(handles=legend_elems, loc='upper right', fontsize=8)
+        fig.suptitle("Center chunk: 4-section trace examination", fontsize=12)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+        # Resolve output path
+        if out_folder is None:
+            out_path = Path("trace_central_chunk_examination.png")
+        else:
+            out_path = Path(out_folder) / filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=140)
+        plt.close(fig)
+        logger.info(f"Saved trace central chunk diagnostic: {out_path}")
+    except Exception as e:
+        logger.debug(f"Trace central chunk diagnostic plotting failed: {e}")
+
+
 def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunks=80, 
-              peak_fraction_threshold=0.1, trace_poly_order=5):
+              out_folder=None, peak_fraction_threshold=0.1, trace_poly_order=5):
     """
     Extracts fiber traces from a flat image by performing robust polynomial fits to fiber positions
     in segmented image chunks. This function processes the image to identify fiber traces,
@@ -317,6 +378,12 @@ def get_trace(flat_image, nominal_trace_positions, exclude_fiber_mask, num_chunk
     raw_trace_matrix[:, center_idx] = center_trace
     initial_offset = np.nanmedian(center_trace - nominal_trace_positions)
     logger.info(f"Best fiber position offset for central chunk: {initial_offset:.2f}")
+
+    # Save 4-panel central chunk diagnostic
+    try:
+        _plot_trace_central_quarters(center_column, nominal_trace_positions, exclude_fiber_mask, out_folder)
+    except Exception as e:
+        logger.debug(f"Central chunk diagnostic failed: {e}")
 
     # Estimate global offset once using center
 

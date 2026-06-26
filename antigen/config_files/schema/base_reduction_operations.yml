@@ -76,15 +76,17 @@ schema:
           required: true
           description: "Output folder for plot files"
           source: inputs.cli
-        number_chunks:
+        num_chunks:
           type: int
           required: false
+          default: 40
           description: "Number of chunks in column direction for measuring trace"
+          source: inputs.config
       needs: ["master_flat_data"]
       provides: ["trace_array", "good_fiber_mask", "raw_trace_matrix", "x_chunk_centers"]
       algorithm:
         function: "antigen.trace.get_trace"
-        args: ["master_flat_data", "trace_row", "exclude_fiber"]
+        args: ["master_flat_data", "trace_row", "exclude_fiber", "num_chunks", "out_folder"]
         save:
           function: "antigen.plot.plot_trace"
           args: ["trace_array", "raw_trace_matrix", "x_chunk_centers", "sample_fiber_indices", "out_folder"]
@@ -726,6 +728,11 @@ schema:
           required: true
           source: inputs.dataset.unit_id
           description: "Instrument element identifier"
+        observation_filename:
+          type: str
+          required: true
+          source: state.current_observation_file
+          description: "Full path of the current science observation file; used to derive user_label when OBJECT header is blank"
         def_wave:
           type: ndarray
           required: true
@@ -743,4 +750,4 @@ schema:
         function: "antigen.io.write_reduced_spectra_fits"
         args: [ "sky_subtracted_advanced", "sky_subtracted_basic", "rectified_spectra",
                 "rectified_error", "observation_header", "output_folder", "instrument",
-                "instrument_element", "def_wave" ]
+                "instrument_element", "def_wave", "observation_filename" ]

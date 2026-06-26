@@ -39,7 +39,7 @@ schema:
       required: true
       description: "List of science observation files to process"
     in_folder:
-      type: str
+      type: path
       required: false
       description: Input folder for reduced files
       default: "./"
@@ -91,6 +91,11 @@ schema:
       type: list[int]
       required: true
       description: "Fibers to use for diagnostic plots"
+    num_chunks:
+      type: int
+      required: false
+      default: 80
+      description: "Number of chunks in column direction for measuring trace"
     overscan_length:
       type: int
       required: true
