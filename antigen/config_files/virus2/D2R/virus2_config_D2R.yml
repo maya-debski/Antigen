@@ -8,7 +8,7 @@ sample_fiber_indices:
   - 5
   - 130
   - 230
-start_wavelength: 5880
+start_wavelength: 5900
 end_wavelength: 7630
 detector_dimensions:  # 2064x2064
   X: 2064 # X
