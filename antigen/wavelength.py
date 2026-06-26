@@ -122,6 +122,11 @@ class WavelengthCalibrator:
         self.pcc_poly_order = 3
         # Default PCC max correlation lag: solid default per spectrograph is 24 px
         self.pcc_max_corr_lag = 24
+        # New: optional pre-alignment of arc_pixel_guesses via 1D xcorr with synthetic Gaussians
+        self.enable_guess_xcorr = True
+        self.guess_xcorr_gauss_sigma = 1.5  # pixels
+        self.guess_xcorr_max_lag = 24
+        self.guess_xcorr_min_lines = 3
         # Apply optional overrides from config first, then constructor params override
         self._apply_overrides_from_config()
         if detection_window is not None:
@@ -151,6 +156,7 @@ class WavelengthCalibrator:
         Supported keys:
         - detection_window, poly_order, pcc_tile_h, pcc_tile_w, pcc_step_y, pcc_step_x,
           pcc_poly_order, pcc_max_corr_lag
+        - enable_guess_xcorr, guess_xcorr_gauss_sigma, guess_xcorr_max_lag, guess_xcorr_min_lines
         """
         cfg = self.detector_dimensions or {}
         wl = cfg.get('wavelength') if isinstance(cfg, dict) else None
@@ -166,6 +172,15 @@ class WavelengthCalibrator:
         self.pcc_max_corr_lag = wl.get('pcc_max_corr_lag', self.pcc_max_corr_lag)
         if self.pcc_max_corr_lag is not None:
             self.pcc_max_corr_lag = int(self.pcc_max_corr_lag)
+        # New xcorr guess pre-alignment overrides
+        if 'enable_guess_xcorr' in wl:
+            self.enable_guess_xcorr = bool(wl.get('enable_guess_xcorr'))
+        if 'guess_xcorr_gauss_sigma' in wl:
+            self.guess_xcorr_gauss_sigma = float(wl.get('guess_xcorr_gauss_sigma'))
+        if 'guess_xcorr_max_lag' in wl:
+            self.guess_xcorr_max_lag = int(wl.get('guess_xcorr_max_lag'))
+        if 'guess_xcorr_min_lines' in wl:
+            self.guess_xcorr_min_lines = int(wl.get('guess_xcorr_min_lines'))
 
     # ------------------------- Public API -------------------------
     def run(self) -> Tuple[Array, Array, Array, Array]:
@@ -188,11 +203,34 @@ class WavelengthCalibrator:
             ref_profile = reg_match_width(ref_profile, rect_clip.shape[1])
         reg_img = reg_build_registration_image(ref_profile, rect_clip.shape[0])
 
+        # 3aa: Pre-align arc pixel guesses via 1D xcorr of ref_profile vs synthetic Gaussians
+        if self.enable_guess_xcorr:
+            try:
+                dx_shift, adjusted = self._xcorr_adjust_pixel_guesses_with_gaussians(
+                    ref_profile,
+                    self.arc_pixel_guesses,
+                    sigma_px=self.guess_xcorr_gauss_sigma,
+                    max_lag=self.guess_xcorr_max_lag,
+                    min_lines=self.guess_xcorr_min_lines,
+                )
+                if np.isfinite(dx_shift) and np.any(np.isfinite(adjusted)):
+                    logger.info("3aa: XCorr pre-alignment shift=%.2f px applied to arc guesses", dx_shift)
+                    self.arc_pixel_guesses = adjusted
+            except Exception as e:
+                logger.debug("3aa: XCorr pre-alignment skipped due to error: %s", e)
+
         # 3: PCC diagnostics and shift surface
         pcc_res = self._run_pcc_diagnostics(rect_clip, reg_img, y_start, good_mask)
 
         # 3a: Detect reference arc lines on the ref profile (1D)
         ref_detected = self._detect_ref_arclines(ref_profile, self.arc_pixel_guesses, window=self.detection_window)
+
+        # If initial detection missed lines or plotting is enabled, create a compact diagnostic
+        if self.enable_plots and self.out_folder is not None:
+            try:
+                self._plot_ref_profile_quarters(ref_profile, self.arc_pixel_guesses, ref_detected)
+            except Exception as e:
+                logger.debug(f"Ref-profile diagnostic plot failed: {e}")
 
         # 3b: Build base ref positions and propagate to all fibers using dx map
         arc_pixel_locations = self._build_arc_positions_from_dx_map(ref_detected, pcc_res, good_mask)
@@ -332,6 +370,66 @@ class WavelengthCalibrator:
         if not np.isfinite(p98) or p98 <= 0:
             raise ValueError("Invalid reference profile scale")
         return prof / p98
+
+    # 3aa: pre-alignment via cross-correlation of synthetic Gaussians at pixel guesses
+    def _xcorr_adjust_pixel_guesses_with_gaussians(
+        self,
+        ref_profile: Array,
+        guesses: Array,
+        *,
+        sigma_px: float = 1.5,
+        max_lag: int = 24,
+        min_lines: int = 3,
+    ) -> Tuple[float, Array]:
+        """
+        Estimate a global subpixel shift between the reference 1D profile and a synthetic
+        comb of Gaussians placed at the provided pixel guesses, then adjust the guesses.
+
+        Returns (dx, adjusted_guesses) where dx is the estimated shift mapping synthetic -> ref.
+        A positive dx means the synthetic needs to move right to match the ref; we therefore
+        apply guesses + dx.
+        """
+        prof = np.asarray(ref_profile, dtype=float).ravel()
+        W = prof.shape[0]
+        g = np.asarray(guesses, dtype=float)
+        finite = np.isfinite(g)
+        gfinite = g[finite]
+        if gfinite.size < int(min_lines):
+            logger.debug("3aa: insufficient finite guesses (%d < %d); skipping xcorr pre-alignment", gfinite.size, int(min_lines))
+            return np.nan, g.copy()
+        # Clip guesses to bounds for synthetic construction
+        gfinite = gfinite[(gfinite >= -max(3 * sigma_px, 6)) & (gfinite <= (W - 1 + max(3 * sigma_px, 6)))]
+        if gfinite.size < int(min_lines):
+            logger.debug("3aa: too few in-bounds guesses after clipping; skipping")
+            return np.nan, g.copy()
+        x = np.arange(W, dtype=float)
+        if not np.isfinite(sigma_px) or sigma_px <= 0:
+            sigma_px = float(self.guess_xcorr_gauss_sigma)
+        inv2s2 = 0.5 / float(sigma_px ** 2)
+        synth = np.zeros(W, dtype=float)
+        for gg in gfinite:
+            # Use center-aligned Gaussian; contributions outside [0,W) are simply truncated
+            synth += np.exp(-((x - gg) ** 2) * inv2s2)
+        # Normalize to avoid trivial scaling effects
+        m = np.isfinite(synth)
+        if not np.any(m):
+            return np.nan, g.copy()
+        mx = np.nanmax(synth[m])
+        if mx > 0:
+            synth = synth / mx
+        # Provide 2D (1xW) tiles to the xcorr estimator
+        ref_tile = prof[np.newaxis, :]
+        src_tile = synth[np.newaxis, :]
+        # Bound max_lag reasonably relative to width
+        ml = int(max(0, min(int(max_lag), max(1, W // 2))))
+        # Estimate shift mapping src -> ref
+        _, dx = reg_estimate_subpixel_shift(ref_tile, src_tile, max_lag=ml)
+        dx = float(np.clip(dx, -ml, ml))
+        adjusted = g.copy()
+        adjusted[finite] = g[finite] + dx
+        # Clip adjusted guesses into detector bounds
+        np.clip(adjusted, 0, self.num_pixels - 1, out=adjusted)
+        return dx, adjusted
 
 
     def _run_pcc_diagnostics(self, rect_img: Array, reg_img: Array, y_start: int, good_mask: Array) -> _PCCResult:
@@ -611,6 +709,77 @@ class WavelengthCalibrator:
         fig.tight_layout()
         out = Path(self.out_folder) / "ref_fiber_arc_windows.png"
         fig.savefig(out, dpi=150)
+        plt.close(fig)
+
+    def _plot_ref_profile_quarters(self, ref_profile: Array, arc_pixel_guesses: Array, ref_detected: Array) -> None:
+        """Four-row diagnostic: ref_profile split into X-quarters with guesses vs detections.
+
+        - Blue dashed lines: initial arc_pixel_guesses inside each quarter
+        - Green solid lines: detected peaks (ref_detected)
+        - Red 'x' markers along the top highlight guesses with missing detections (NaNs)
+        Clean, compact, and saved to out_folder/ref_profile_quarters.png
+        """
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        prof = np.asarray(ref_profile, dtype=float)
+        n = int(prof.size)
+        if n == 0:
+            return
+        x = np.arange(n)
+        # Build 4 quarters in X
+        idx_edges = np.linspace(0, n, 5, dtype=int)
+        qs = [(idx_edges[i], idx_edges[i+1]) for i in range(4)]
+        guesses = np.asarray(arc_pixel_guesses, dtype=float)
+        det = np.asarray(ref_detected, dtype=float)
+        missing = ~np.isfinite(det) & np.isfinite(guesses)
+
+        # Robust y-limits ignoring extreme outliers
+        finite = prof[np.isfinite(prof)]
+        if finite.size:
+            lo, hi = np.percentile(finite, [1, 99])
+            if hi <= lo:
+                hi = lo + 1e-6
+        else:
+            lo, hi = 0.0, 1.0
+
+        fig, axes = plt.subplots(4, 1, figsize=(10, 6))
+        for r, (lo_i, hi_i) in enumerate(qs):
+            ax = axes[r]
+            # Local slice and robust y-limits from the slice only
+            slice_y = prof[lo_i:hi_i]
+            finite_slice = slice_y[np.isfinite(slice_y)]
+            if finite_slice.size:
+                lo_p, hi_p = np.percentile(finite_slice, [1, 97])
+                if hi_p <= lo_p:
+                    hi_p = lo_p + 1e-6
+            else:
+                lo_p, hi_p = 0.0, 1.0
+            
+            ax.plot(x[lo_i:hi_i], slice_y, color='0.2', lw=0.8)
+            # Overlay guesses within this slice
+            m_q = np.isfinite(guesses) & (guesses >= lo_i) & (guesses < hi_i)
+            if np.any(m_q):
+                ax.vlines(guesses[m_q], lo_p, hi_p, colors='tab:blue', linestyles='--', alpha=0.5, lw=1.0, label='guess')
+            # Overlay detections within this slice
+            m_d = np.isfinite(det) & (det >= lo_i) & (det < hi_i)
+            if np.any(m_d):
+                ax.vlines(det[m_d], lo_p, hi_p, colors='tab:green', linestyles='-', alpha=0.7, lw=1.2, label='detected')
+            # Mark missing detections that have guesses in this quarter
+            m_miss = missing & (guesses >= lo_i) & (guesses < hi_i)
+            if np.any(m_miss):
+                gx = guesses[m_miss]
+                ax.plot(gx, np.full_like(gx, hi_p), 'x', color='tab:red', ms=6, mew=1.2, label='missing')
+            ax.set_xlim(lo_i, hi_i-1)
+            ax.set_ylim(lo_p, hi_p)
+            ax.grid(alpha=0.15)
+            if r == 0:
+                ax.legend(ncol=3, frameon=False, loc='upper right')
+        axes[-1].set_xlabel('Pixel (dispersion axis)')
+        fig.supylabel('Ref profile (arb)')
+        fig.tight_layout(rect=(0.02, 0.02, 1, 1))
+        out = Path(self.out_folder) / 'ref_profile_quarters.png'
+        fig.savefig(out, dpi=160)
         plt.close(fig)
 
     def _fit_arc_line_positions(self, arc_pixels: Array, pre_refined_arc_pixels: Array | None = None) -> Tuple[Array, Array]:
