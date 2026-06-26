@@ -296,8 +296,7 @@ workflow:
             image_type: processed_science
             sigclip: 5.0  # More conservative detection
             niter: 5      # More iterations for science data
-
-      - RemoveScatteredLight
+      #- RemoveScatteredLight
       - ExtractSpectra:
             label: "ExtractScienceSpectra"
             params:
