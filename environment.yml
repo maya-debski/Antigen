@@ -19,3 +19,6 @@ dependencies:
   - getcalspec
   - astroplan
   - astroscrappy
+  - pip
+  - setuptools
+  - wheel
