@@ -1,0 +1,20 @@
+reduction_name: antigen_manifest_20260614_055444
+unit_date: unknown
+unit_instrument: VIRUS2
+unit_id: D2D
+obs_date: '20260608'
+obs_name: null
+in_folder: ../test_data_virus2_20260608/VIRUS2/20260608
+out_folder: ./reduced
+observation_files:
+- 0000017/D2D/VIRUS2_20260608_0000017_science_D2D_exp01_20260609T031920.2_Hz44.fits
+calibration_files:
+  bias:
+  - 0000038/D2D/VIRUS2_20260606_0000038_bias_D2D_exp01_20260607T010930.9_bias0sec.fits
+  flat:
+  - 0000011/D2D/VIRUS2_20260608_0000011_flat_D2D_exp01_20260609T021128.8_twiflat.fits
+  arc:
+  - 0000015/D2D/VIRUS2_20260608_0000015_arc_D2D_exp01_20260609T030050.9_ne1sec.fits
+  - 0000003/D2D/VIRUS2_20260608_0000003_arc_D2D_exp01_20260609T013056.0_xe10sec.fits
+  dark:
+  - 0000030/D2D/VIRUS2_20260608_0000030_dark_D2D_exp01_20260609T102118.5_dark1sec.fits
