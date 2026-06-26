@@ -155,6 +155,11 @@ class FunctionExecutor:
             elif param_name in value:
                 value = value[param_name]
             else:
+                # If the dictionary exists but does not contain the key:
+                # - For optional params, fall back to the parameter default
+                # - For required params, raise a clear error
+                if not param_def.required:
+                    return param_def.default
                 raise ValueError(f"Required parameter {param_name} from '{param_def.source}' is missing")
 
         if value is None and param_def.required:
