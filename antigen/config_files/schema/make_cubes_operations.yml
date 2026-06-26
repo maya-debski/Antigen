@@ -15,6 +15,10 @@ schema:
           type: "list[int]"
           required: true
           source: inputs.dataset
+        dither_file:
+          type: path
+          required: false
+          source: inputs.dataset
         ifu_x:
           type: ndarray
           required: true
@@ -27,7 +31,7 @@ schema:
       provides: ["fiber_x", "fiber_y"]
       algorithm:
         function: "antigen.fiber.load_fiber_positions"
-        args: ["unit_instrument", "ndithers", "dither_number", "ifu_x", "ifu_y"]
+        args: ["unit_instrument", "ndithers", "dither_number", "ifu_x", "ifu_y", "dither_file"]
 
     GetWavelengthGrid:
       description: "Generate a uniformly spaced wavelength grid for the detector"
@@ -61,11 +65,16 @@ schema:
           type: "list[str]"
           required: true
           source: inputs.dataset
+        extname:
+          type: str
+          required: false
+          default: "SKYSUB"
+          source: inputs.cli
       needs: []
       provides: ["reduced_spectra", "reduced_error", "header"]
       algorithm:
         function: "antigen.io.load_reduced_data"
-        args: ["in_folder", "reduced_files"]
+        args: ["in_folder", "reduced_files", "extname"]
 
     FilterVirus2SkyFibers:
       description: "For VIRUS2 only: drop dedicated sky fibers (head_id like S1 or _S17_) before cube construction"

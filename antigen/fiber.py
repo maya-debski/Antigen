@@ -8,6 +8,7 @@ from scipy.interpolate import interp1d
 from antigen import config
 import re
 import numpy as np
+from pathlib import Path
 
 logger = logging.getLogger('antigen.fiber')
 
@@ -195,6 +196,17 @@ def filter_virus2_sky_fibers(unit_instrument, head_id, fiber_x, fiber_y, reduced
             logger.warning("[VIRUS2] Head_id mask length (%d) does not match spectra (%d) or positions (%d). Passing through without dropping sky fibers.", sky_mask.size, nfib_spec, nfib_pos)
             return fiber_x, fiber_y, reduced_spectra, reduced_error
 
+    # Log bounds before filtering
+    try:
+        pre_bounds = get_fiber_bounds(fx, fy)
+        nfin_pre = int((np.isfinite(fx) & np.isfinite(fy)).sum())
+        logger.info(
+            "[VIRUS2] Pre-filter bounds: [%.3f, %.3f, %.3f, %.3f] (finite=%d)",
+            pre_bounds[0], pre_bounds[1], pre_bounds[2], pre_bounds[3], nfin_pre
+        )
+    except Exception:
+        pass
+
     keep = ~sky_mask
     n_sky = int(np.sum(sky_mask))
     n_keep = int(np.sum(keep))
@@ -236,10 +248,21 @@ def filter_virus2_sky_fibers(unit_instrument, head_id, fiber_x, fiber_y, reduced
         logger.warning("[VIRUS2] Filter failed due to shape mismatch (%s); passing through without dropping sky fibers.", str(e))
         return fiber_x, fiber_y, reduced_spectra, reduced_error
 
+    # Log bounds after filtering
+    try:
+        post_bounds = get_fiber_bounds(fx_f, fy_f)
+        nfin_post = int((np.isfinite(fx_f) & np.isfinite(fy_f)).sum())
+        logger.info(
+            "[VIRUS2] Post-filter bounds: [%.3f, %.3f, %.3f, %.3f] (finite=%d)",
+            post_bounds[0], post_bounds[1], post_bounds[2], post_bounds[3], nfin_post
+        )
+    except Exception:
+        pass
+
     return fx_f, fy_f, spec_f, err_f
 
 
-def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base):
+def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fiber_y_base, dither_file=None):
     """
     Load the fiber positions for a given instrument and apply the appropriate dither offsets.
 
@@ -259,14 +282,36 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fib
         dither_numbers (list of int): Indices of the dithers to apply (1-based).
         fiber_x_base (ndarray): X positions of fibers in arcseconds
         fiber_y_base (ndarray): Y positions of fibers in arcseconds
+        dither_file (str or Path, optional): Explicit path to the dither file. If provided,
+            overrides the default instrument-based lookup. Defaults to None.
 
     Returns:
         fiber_x (ndarray): X positions of fibers with dither offsets applied.
         fiber_y (ndarray): Y positions of fibers with dither offsets applied.
     """
-    base_path = config.get_base_config_path()
 
-    dither_file = base_path / instrument / f"{instrument}_dither_{ndithers}pt.lis"
+    dither_file = Path(dither_file) if dither_file is not None else None
+
+    # Normalize inputs to arrays (no auto sign normalization here; diagnostics only)
+    fx0 = np.asarray(fiber_x_base, dtype=float)
+    fy0 = np.asarray(fiber_y_base, dtype=float)
+
+    def _count_near(arr, val, tol=5.0):
+        m = np.isfinite(arr)
+        return int(np.sum(m & (np.abs(arr - float(val)) <= float(tol))))
+
+    try:
+        c_pos600 = _count_near(fy0, 600.0)
+        c_neg600 = _count_near(fy0, -600.0)
+        ymin = float(np.nanmin(fy0)) if np.isfinite(np.nanmin(fy0)) else np.nan
+        ymax = float(np.nanmax(fy0)) if np.isfinite(np.nanmax(fy0)) else np.nan
+        logger.info(
+            "[Positions] IFU-Y sign check: near +600=%d, near -600=%d, min=%.3f, max=%.3f (no auto-flip applied)",
+            int(c_pos600), int(c_neg600), ymin, ymax
+        )
+    except Exception:
+        # Never fail due to diagnostics
+        pass
 
     # --- Handle single-dither (no offset) case ---
     if ndithers == 1:
@@ -279,15 +324,32 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fib
             nrep = int(len(dither_numbers)) if hasattr(dither_numbers, "__len__") else 1
         except Exception:
             nrep = 1
+        # Log base IFU bounds for visibility
+        try:
+            base_bounds = get_fiber_bounds(fx0, fy0)
+            logger.info(
+                "[Positions] Base IFU bounds before dithers: [%.3f, %.3f, %.3f, %.3f] (n=%d)",
+                base_bounds[0], base_bounds[1], base_bounds[2], base_bounds[3], int(np.isfinite(fx0).sum())
+            )
+        except Exception:
+            pass
         if nrep <= 1:
             logger.info(f"No dither pattern needed for {instrument}, ndithers=1 (single set of positions)")
-            return fiber_x_base.copy(), fiber_y_base.copy()
+            return fx0.copy(), fy0.copy()
         else:
             logger.info(
                 f"No dither pattern needed for {instrument}, ndithers=1; repeating base positions {nrep} time(s) with zero offset"
             )
-            fiber_x = np.hstack([fiber_x_base for _ in range(nrep)])
-            fiber_y = np.hstack([fiber_y_base for _ in range(nrep)])
+            fiber_x = np.hstack([fx0 for _ in range(nrep)])
+            fiber_y = np.hstack([fy0 for _ in range(nrep)])
+            try:
+                rep_bounds = get_fiber_bounds(fiber_x, fiber_y)
+                logger.info(
+                    "[Positions] Expanded (repeated) bounds: [%.3f, %.3f, %.3f, %.3f] (n=%d)",
+                    rep_bounds[0], rep_bounds[1], rep_bounds[2], rep_bounds[3], int(np.isfinite(fiber_x).sum())
+                )
+            except Exception:
+                pass
             return fiber_x, fiber_y
 
     # --- Load dither offsets ---
@@ -316,8 +378,8 @@ def load_fiber_positions(instrument, ndithers, dither_numbers, fiber_x_base, fib
         dither_numbers += 1
 
     dithers_observed = [dither_offsets[int(dither_number - 1)] for dither_number in dither_numbers]
-    fiber_x = np.hstack([fiber_x_base - dx for dx, dy in dithers_observed])
-    fiber_y = np.hstack([fiber_y_base - dy for dx, dy in dithers_observed])
+    fiber_x = np.hstack([fx0 - dx for dx, dy in dithers_observed])
+    fiber_y = np.hstack([fy0 - dy for dx, dy in dithers_observed])
 
     logger.info(f"Loaded positions for {instrument} with {len(dithers_observed)} dithers and {dither_file} pattern.")
 

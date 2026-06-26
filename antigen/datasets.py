@@ -563,7 +563,8 @@ def build_dataset_from_reduced_files(file_directory):
                 "in_folder": file_directory,
                 "ndithers": 0,  # will update later
                 "reduced_files": [],
-                "dither_number": []
+                "dither_number": [],
+                # Will set 'dither_file' after ndithers is known
             }
 
         record = records_by_target[target]
@@ -571,6 +572,18 @@ def build_dataset_from_reduced_files(file_directory):
         record["dither_number"].append(info["dither_number"])
         # Ensure ndithers reflects unique dithers
         record["ndithers"] = len(set(record["dither_number"]))
+
+    # After collecting all, compute dither_file paths per target using same logic as fiber.load_fiber_positions
+    base_path = config.get_base_config_path()
+    for target, rec in records_by_target.items():
+        instr = str(rec.get("unit_instrument", "")).lower()
+        ndith = int(rec.get("ndithers", 1) or 1)
+        # Build default path; if ndithers==1 we still record the 1pt file if present
+        try:
+            dither_path = (Path(base_path) / instr / f"{instr}_dither_{ndith}pt.lis").expanduser().resolve()
+            rec["dither_file"] = str(dither_path)
+        except Exception:
+            rec["dither_file"] = None
 
     logger.info(f"Built dataset with {len(records_by_target)} targets and {len(file_list)} files.")
     return list(records_by_target.values())

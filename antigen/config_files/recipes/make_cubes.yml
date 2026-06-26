@@ -9,6 +9,7 @@ inputs:
     sigma_gdw: 1.5
     rbf_function: "multiquadric"
     drop_sky_fibers_in_cubes: true  # VIRUS2: drop dedicated sky fibers from cube inputs
+    extname: "SKYSUB"  # Extension to read from reduced spectra; overrides io.load_reduced_data default
   dataset:
     unit_instrument: null
     unit_id: null

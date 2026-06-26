@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse
 
 from antigen.datasets import build_dataset_from_reduced_files
-from antigen.manifest import save_manifest
+from antigen.manifest import save_manifest, load_manifest
 from antigen.utils import setup_logging
 from antigen import config
 from antigen.recipe import Recipe
@@ -19,8 +19,8 @@ Purpose:
 def get_args():
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
 
-    parser.add_argument('-r', '--reduced_dir', required=True,
-                       help='Path to directory with reduced standard star frames.')
+    parser.add_argument('-r', '--reduced_dir', required=False,
+                       help='Path to directory with reduced spectra (used when no input manifest is provided).')
     parser.add_argument('-o', '--output_folder', default=None,
                        help='Path to output folder for response function.')
     parser.add_argument('-s', '--object_name', required=False, default=None,
@@ -45,9 +45,16 @@ def get_args():
                         help='Radial basis function type for RBF interpolation (default: %(default)s)')
     parser.add_argument('-g', '--binned', action='store_true', default=False,
                         help='Data is binned in the x-direction?')
+    # Optional input manifest to drive cube creation directly
+    parser.add_argument('-m', '--input-manifest', dest='input_manifest', default=None,
+                        help='Path to an input manifest YAML; if provided, use it instead of scanning reduced_dir.')
     # VIRUS2: control dropping dedicated sky fibers (head_id like S1, _S17_)
     parser.add_argument('--no-drop-sky-fibers-in-cubes', dest='drop_sky_fibers_in_cubes', action='store_false',
                         help='Do not drop VIRUS2 dedicated sky fibers when building cubes (default is to drop them).')
+    # Extension name to load from reduced spectra; defaults to SKYSUB via recipe unless overridden here
+    parser.add_argument('--extname', type=str, default=argparse.SUPPRESS,
+                        help='FITS extension to load from reduced spectra (e.g., SKYSUB, SKYSUB_PCA).\n'
+                             'If omitted, the make_cubes recipe default (SKYSUB) is used.')
     parser.set_defaults(drop_sky_fibers_in_cubes=True)
     return parser.parse_args()
 
@@ -60,17 +67,30 @@ def main():
     save_path = Path(args.output_folder or './cubes').expanduser().resolve()
     save_path.mkdir(parents=True, exist_ok=True)
 
-    # Process manifests
-    cube_manifests = build_dataset_from_reduced_files(args.reduced_dir)
+    # Process manifests: either read provided manifest or build from reduced_dir
+    if args.input_manifest:
+        manifest_path = Path(args.input_manifest).expanduser().resolve()
+        logger.info(f"Reading input manifest: {manifest_path}")
+        manifest = load_manifest(str(manifest_path))
+        cube_manifests = [manifest]
+        # Optional: allow object_name filtering when manifest has a 'target' field
+        if args.object_name and isinstance(manifest, dict):
+            tgt = manifest.get('target') or manifest.get('obs_name') or ''
+            if args.object_name.lower() not in str(tgt).lower():
+                logger.warning(f"Provided input_manifest does not match object_name='{args.object_name}'. Proceeding anyway.")
+    else:
+        if not args.reduced_dir:
+            raise ValueError("Either --input-manifest must be provided or --reduced_dir must be specified.")
+        cube_manifests = build_dataset_from_reduced_files(args.reduced_dir)
 
-    # If an object name is provided, only process manifests matching that target
-    if args.object_name:
-        filtered = [m for m in cube_manifests if args.object_name.lower() in m.get('target', '').lower()]
-        if not filtered:
-            logger.warning(f"No manifests matched object_name='{args.object_name}'. Nothing to do.")
-            return None
-        logger.info(f"Filtering manifests by object_name='{args.object_name}'. {len(filtered)} match(es) will be processed.")
-        cube_manifests = filtered
+        # If an object name is provided, only process manifests matching that target
+        if args.object_name:
+            filtered = [m for m in cube_manifests if args.object_name.lower() in m.get('target', '').lower()]
+            if not filtered:
+                logger.warning(f"No manifests matched object_name='{args.object_name}'. Nothing to do.")
+                return None
+            logger.info(f"Filtering manifests by object_name='{args.object_name}'. {len(filtered)} match(es) will be processed.")
+            cube_manifests = filtered
 
     for manifest in cube_manifests:
         # Save manifest
@@ -85,6 +105,15 @@ def main():
             manifest['unit_instrument'].lower(),
             manifest['unit_id'].upper()
         )
+        # Log orientation flags from config for diagnostics
+        try:
+            flip_x = bool(config_dict.get('flip_x'))
+            flip_y = bool(config_dict.get('flip_y'))
+            rotate = bool(config_dict.get('rotate'))
+            logger.info("[Config] Orientation flags: flip_x=%s, flip_y=%s, rotate=%s for unit %s",
+                        flip_x, flip_y, rotate, manifest.get('unit_id'))
+        except Exception:
+            pass
 
         # Binning?
         if args.binned == True:

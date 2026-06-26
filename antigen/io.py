@@ -162,7 +162,7 @@ def get_airmass(header):
     """
     return float(header['AIRMASS'])
 
-def load_reduced_data(base_folder, filenames, extname='SKYSUB_PCA'):
+def load_reduced_data(base_folder, filenames, extname='SKYSUB'):
     """
     Load fiber bundle data and error arrays from target reduced products
     made by Antigen at an earlier step
@@ -189,6 +189,7 @@ def load_reduced_data(base_folder, filenames, extname='SKYSUB_PCA'):
     data = np.vstack(data_list)
     error = np.vstack(err_list)
     header = fits.getheader(Path(base_folder) /  filenames[0], 0)
+    header['EXTNAME'] = extname
 
     return data, error, header
 
@@ -709,7 +710,7 @@ def write_cube(cube, wavelength, header, x_grid, y_grid, pixel_size,
 def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic, 
                               rectified_spectra, rectified_error, observation_header,
                               output_folder, instrument, instrument_element,
-                              def_wave):
+                              def_wave, observation_filename=None, user_label=None):
     """
     Write processed spectra to FITS file with proper WCS and metadata.
     
@@ -749,11 +750,32 @@ def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic,
     
     # Create output filename
     obj_time_string = Time(observation_header['DATE-OBS'] + 'T' + observation_header['UT']).strftime('%Y%m%dT%H%M%S')
-    header_card_object = observation_header['OBJECT']
-    if len(header_card_object.strip()) > 0:
-        obj_name_string = '_'.join(observation_header['OBJECT'].split())
+    header_card_object = str(observation_header.get('OBJECT', '') or '')
+    used_fallback_object = False
+    derived_object_label_raw = None  # keep the raw (un-sanitized) label for header recording
+    derived_object_source = None  # 'observation_filename' | 'user_label'
+    if header_card_object.strip():
+        obj_name_string = '_'.join(header_card_object.split())
     else:
-        obj_name_string = 'ObjectCardEmpty'
+        parsed_label = None
+        # Prefer deriving per-exposure label from observation_filename when available
+        if observation_filename:
+            try:
+                from antigen import datasets as _ag_datasets
+                meta = _ag_datasets.parse_fits_file_name(str(observation_filename))
+                parsed_label = (meta or {}).get('user_label')
+            except Exception:
+                parsed_label = None
+        if parsed_label and str(parsed_label).strip():
+            derived_object_label_raw = str(parsed_label).strip()
+            obj_name_string = '_'.join(derived_object_label_raw.split())
+            used_fallback_object = True
+        elif user_label and str(user_label).strip():  # legacy fallback
+            derived_object_label_raw = str(user_label).strip()
+            obj_name_string = '_'.join(derived_object_label_raw.split())
+            used_fallback_object = True
+        else:
+            obj_name_string = 'ObjectCardEmpty'
     
     image_name_stem = f'reduction_{obj_name_string}_{obj_time_string}_{instrument}_{instrument_element}_multi'
     
@@ -772,7 +794,7 @@ def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic,
     # Create wavelength grid for WCS
     wavelength_step = def_wave[1] - def_wave[0]
     
-    for data_array, hdu_type, ext_name in zip(data_arrays, hdu_types, ext_names):
+    for idx, (data_array, hdu_type, ext_name) in enumerate(zip(data_arrays, hdu_types, ext_names)):
         # Create HDU with float32 precision
         hdu = hdu_type(np.array(data_array, dtype='float32'))
         hdu.header["EXTNAME"] = ext_name
@@ -812,6 +834,16 @@ def write_reduced_spectra_fits(sky_subtracted_advanced, sky_subtracted_basic,
             except (ValueError, TypeError):
                 # Skip problematic header cards
                 continue
+
+        # If the OBJECT card was blank in the input header but we derived a label,
+        # record it in the primary HDU so downstream steps can use it.
+        if idx == 0 and used_fallback_object and derived_object_label_raw and obj_name_string != 'ObjectCardEmpty':
+            try:
+                hdu.header['OBJECT'] = derived_object_label_raw
+                hdu.header.add_history('OBJECT set by Antigen from user_label/observation filename because original header OBJECT was blank')
+            except Exception:
+                # If for any reason we cannot set header value, silently continue
+                pass
         
         hdulist.append(hdu)
     

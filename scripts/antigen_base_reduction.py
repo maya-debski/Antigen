@@ -66,10 +66,16 @@ def main():
     base_save_path = Path(args.out_folder or args.reduced_dir).expanduser().resolve()
     base_save_path.mkdir(parents=True, exist_ok=True)
 
-    # Process manifests
-    dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
-                                      args.bias_label, args.arc_label, args.dark_label,
-                                      args.flat_label, args.twilight_flat_label, instrument=args.instrument)
+    # Process manifests: manual manifest if provided, else auto-discovery
+    if args.manifest:
+        manifest_path = Path(args.manifest).expanduser().resolve()
+        logger.info(f"Reading input manifest: {manifest_path}")
+        manifest = read_manifest(str(manifest_path), validate=False, verbose=args.verbose)
+        dataset_manifests = [manifest]
+    else:
+        dataset_manifests = find_datasets(args.in_folder, args.obs_date, args.obs_name, args.time_radius,
+                                          args.bias_label, args.arc_label, args.dark_label,
+                                          args.flat_label, args.twilight_flat_label, instrument=args.instrument)
     for manifest in dataset_manifests:
         # If a specific unit-id was requested, skip non-matching manifests
         if getattr(args, 'unit_id', None):

@@ -16,6 +16,11 @@ schema:
       required: false
       default: true
       description: "For VIRUS2 only: drop dedicated sky fibers (head_id like S1, _S17_) from cube inputs"
+    extname:
+      type: str
+      required: false
+      description: "FITS extension name to load from reduced spectra"
+      default: "SKYSUB"
 
     extraction_radius:
       type: float
@@ -74,6 +79,12 @@ schema:
       description: Instrument name
       validate:
         choices: ["virus2", "gcms", "virusw"]
+
+    dither_file:
+      type: path
+      required: false
+      description: "Path to the dither pattern file for this dataset"
+      default: null
 
     unit_id:
       type: str
